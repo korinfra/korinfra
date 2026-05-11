@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src=".github/logo_korinfra.png" alt="KorInfra" width="360">
+<img src=".github/logo_korinfra.png" alt="KorInfra" width="600">
 
 ### Your AWS bill has waste. KorInfra finds it in minutes
 
