@@ -59,7 +59,7 @@ export const evaluateRulesTool: ToolDefinition = {
       let config: Awaited<ReturnType<typeof loadConfig>>;
       try {
         config = await loadConfig();
-      } catch (err) {
+      } catch {
         config = defaults() as Awaited<ReturnType<typeof loadConfig>>;
       }
       if (config.scan.savings_multipliers) {
