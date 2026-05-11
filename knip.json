@@ -1,0 +1,42 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/index.ts",
+    "src/github/index.ts",
+    "src/output/index.ts",
+    "src/terraform/index.ts",
+    "src/utils/index.ts",
+    "src/mcp/index.ts",
+    "src/tools/index.ts",
+    "src/agent/index.ts",
+    "src/classifier/index.ts",
+    "src/redaction/index.ts",
+    "src/pricing/index.ts",
+    "src/config/index.ts",
+    "src/rules/index.ts",
+    "src/storage/index.ts",
+    "src/anomaly/index.ts",
+    "scripts/compile.ts",
+    "scripts/patch-ink-types.mjs",
+    "tsdown.config.ts",
+    "vitest.config.ts",
+    "eslint.config.js"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx,mjs,js}",
+    "tests/**/*.{ts,tsx}",
+    "scripts/**/*.{ts,mjs,js}",
+    "*.{ts,mjs,js}"
+  ],
+  "ignore": [
+    "src/storage/drivers/bun.ts"
+  ],
+  "ignoreDependencies": [
+    "@anthropic-ai/sdk",
+    "pino-pretty",
+    "@secretlint/secretlint-rule-aws",
+    "@secretlint/secretlint-rule-npm",
+    "@types/gradient-string"
+  ],
+  "ignoreUnresolved": []
+}

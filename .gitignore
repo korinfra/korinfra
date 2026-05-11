@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+bin/
+
+# TypeScript
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+
+# Environment & credentials — NEVER commit real keys
+.env
+.env.local
+.korinfra/.env
+.korinfra/data.db
+
+# SQLite databases (any location)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / editor
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# korinfra local data directory (contains credentials + cached data)
+.korinfra/
+
+# AI assistant local config — not part of the project source
+.claude/
+.claude.json
+CLAUDE.md
+AGENTS.md
+.cursorrules
+.cursor/
+.windsurfrules
+.aider*
+.continue/
+.github/copilot-instructions.md
+
+# Code exploration / graphify
+graphify-out/
+
