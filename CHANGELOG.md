@@ -7,6 +7,7 @@ All notable changes to KorInfra are documented here.
 ### Initial release
 
 **AWS collectors (9 services)**
+
 - EC2: instances, EBS volumes, snapshots, Elastic IPs, NAT Gateways
 - RDS: DB instances with connection metrics
 - S3: buckets with encryption, versioning, lifecycle, intelligent tiering
@@ -19,6 +20,7 @@ All notable changes to KorInfra are documented here.
 - Cost Explorer: daily spend with service/region/tag breakdown
 
 **Cost optimization — 66 rules**
+
 - EC2: idle instances, stopped with attached EBS, previous-gen families, rightsizing, RI coverage gaps, Graviton migration, IMDSv2
 - RDS: idle databases, Multi-AZ on non-prod, gp2→gp3 storage, Graviton, public accessibility
 - EBS: unattached volumes, gp2→gp3, old snapshots
@@ -31,12 +33,14 @@ All notable changes to KorInfra are documented here.
 - NAT Gateway: high data transfer costs
 
 **Security scanning — 46 rules (Terraform)**
+
 - IAM: overly permissive policies, missing MFA, public S3 buckets
 - Network: unrestricted security group ingress, public RDS, unencrypted EBS/RDS/S3
 - Logging: CloudTrail disabled, VPC flow logs missing
 - Encryption: KMS key rotation, SSL/TLS enforcement
 
 **Core features**
+
 - 4-pass Terraform matcher: exact ID → ARN → name tag → fuzzy
 - Scenario A/B/C classification with confidence scoring
 - Z-score anomaly detection with 30-day trend forecasting

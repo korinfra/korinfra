@@ -130,6 +130,7 @@ korinfra changes --filter read-only           # exclude read-only events (defaul
 ```
 
 Keyboard shortcuts in the TUI:
+
 - `j` — cycle time window (24h → 48h → 7d)
 - `r` — refresh data from CloudTrail
 - `f` — open filter overlay (user, service, resource type)
