@@ -1,0 +1,48 @@
+# Code ownership for korinfra
+# GitHub uses this file to automatically assign reviewers to PRs
+
+# Global owners
+* @vladimirmocanu
+
+# AWS integration & cost explorer
+src/aws/ @vladimirmocanu
+src/pricing/ @vladimirmocanu
+
+# CLI & TUI
+src/cli/ @vladimirmocanu
+src/utils/ @vladimirmocanu
+
+# Agent system & AI providers
+src/agent/ @vladimirmocanu
+src/classifier/ @vladimirmocanu
+
+# Storage & migrations
+src/storage/ @vladimirmocanu
+
+# Security scanning & rules
+src/rules/ @vladimirmocanu
+src/redaction/ @vladimirmocanu
+
+# Terraform & IaC
+src/terraform/ @vladimirmocanu
+
+# MCP server
+src/mcp/ @vladimirmocanu
+
+# Configuration & setup
+src/config/ @vladimirmocanu
+
+# Workflows & CI/CD
+.github/workflows/ @vladimirmocanu
+
+# Build configuration
+tsconfig.json @vladimirmocanu
+tsdown.config.ts @vladimirmocanu
+eslint.config.js @vladimirmocanu
+vitest.config.ts @vladimirmocanu
+package.json @vladimirmocanu
+
+# Documentation
+docs/ @vladimirmocanu
+README.md @vladimirmocanu
+CONTRIBUTING.md @vladimirmocanu

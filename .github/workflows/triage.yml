@@ -1,0 +1,39 @@
+name: Triage
+
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    name: Label stale issues
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Stale issue management
+        uses: actions/stale@7c9cc5d65c1cee64568ee59eb347c471580ba833 # v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-message: |
+            This issue hasn't been updated in 30 days. It will be closed in 14 days if there's no activity.
+
+            If you're still experiencing this issue:
+            - Add a comment to keep it open
+            - Update with the latest korinfra version
+            - Share any new context or steps to reproduce
+          close-issue-message: |
+            This issue was closed due to inactivity (44 days without updates).
+
+            If you're still experiencing this problem, feel free to reopen the issue or create a new one with the latest details.
+          days-before-stale: 30
+          days-before-close: 14
+          stale-issue-label: 'stale'
+          exempt-issue-labels: 'bug,blocked'
+          only-labels: ''
+          remove-stale-when-updated: true

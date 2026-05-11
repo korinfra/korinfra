@@ -1,0 +1,47 @@
+name: Feature Request
+description: Suggest a new feature or improvement (includes AI provider requests)
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem this solves
+      description: Describe the problem you're trying to solve or improvement you'd like to see.
+      placeholder: "Currently, there's no way to...\n\nFor AI provider requests: I'd like korinfra to support OpenAI because [reason]. It has [capabilities] which would benefit [use case]."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe how you'd like this feature to work or what the implementation should look like.
+      placeholder: "I'd like a new command `korinfra forecast` that...\n\nOr: Add support for OpenAI GPT-4 as an AI provider. Link to SDK/docs: [url]"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you consider? Why was your proposal best?
+      placeholder: "Alternative 1: [description]. Why not: [reason].\nAlternative 2: [description]. Why not: [reason]."
+    validations:
+      required: false
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case / impact
+      description: How will this benefit you and other users? What's the impact or cost savings?
+      placeholder: "This would help teams that [scenario] by [benefit]. Estimated impact: [metrics or description]."
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to contribute a PR for this feature
+          required: false

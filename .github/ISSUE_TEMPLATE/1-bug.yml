@@ -1,0 +1,118 @@
+name: Bug Report
+description: Report a bug in korinfra
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: "## Security Reminder\nPlease **DO NOT** include AWS account IDs, ARNs, API keys, IP addresses, or other sensitive data in this report. You can redact sensitive values with `[redacted]`."
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug description
+      description: A clear, concise description of what the bug is and when it started occurring (if you know).
+      placeholder: "When I run `korinfra scan`, the command fails with an error.\nThis started happening after I updated to version X."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the issue (be as specific as possible).
+      placeholder: |
+        1. Run `korinfra init` and select AWS profile 'production'
+        2. Run `korinfra scan --prompt "check idle EC2"`
+        3. Press `p` to save report
+        4. Observe error message (see Error output section below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behavior
+      description: What did you expect to happen, and what actually happened instead?
+      placeholder: |
+        **Expected:** Report saved to korinfra.html in the current directory
+        **Actual:** Screen shows 'ERROR: Failed to write file' and no report is created
+    validations:
+      required: true
+
+  - type: textarea
+    id: error_output
+    attributes:
+      label: Error output
+      description: Paste the complete error message, stack trace, or logs. Redact all credentials, account IDs, ARNs, and IP addresses.
+      render: shell
+      placeholder: |
+        Error: Failed to fetch CloudWatch metrics
+        at getCostData (src/aws/collectors/costs.ts:45)
+        Error code: throttling_error
+        Timestamp: 2026-04-18T14:32:10Z
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`korinfra doctor` output"
+      description: |
+        Paste the output of `korinfra doctor` here (it diagnostics environment and connectivity).
+        Redact sensitive values like AWS account IDs and API keys.
+      render: text
+      placeholder: |
+        ✓ Node.js version: v22.4.1
+        ✓ AWS credentials found
+        ✓ AWS STS getCallerIdentity: arn:aws:iam::[redacted]:user/[redacted]
+        ✓ Storage path: ~/.config/korinfra/data.db
+        ✗ Anthropic API key: not found
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: korinfra version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - Linux
+        - Windows (WSL2)
+        - Windows (native)
+      required: true
+
+  - type: input
+    id: node_version
+    attributes:
+      label: Node.js version
+      description: Run `node --version`
+      placeholder: "v22.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: region
+    attributes:
+      label: AWS region (if relevant)
+      placeholder: "us-east-1"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have removed all AWS account IDs, ARNs, API keys, IP addresses, and other sensitive information from this report
+          required: true
+        - label: I can consistently reproduce this issue
+          required: false

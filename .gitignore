@@ -61,3 +61,7 @@ AGENTS.md
 # Code exploration / graphify
 graphify-out/
 
+# Demo recording — local only, never commit
+.github/demo.tape
+.github/demo.gif
+

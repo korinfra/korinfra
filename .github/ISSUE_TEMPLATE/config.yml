@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/korinfra/korinfra/tree/main/docs
+    about: Check the docs first — your question may already be answered
+  - name: Discussions
+    url: https://github.com/korinfra/korinfra/discussions
+    about: General questions, feature ideas, and help
+  - name: Security Policy
+    url: https://github.com/korinfra/korinfra/security/policy
+    about: Report vulnerabilities responsibly

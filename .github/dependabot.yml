@@ -1,0 +1,49 @@
+version: 2
+updates:
+  # npm dependencies: weekly updates, grouped by type
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:00'
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: 'chore(deps)'
+      include: 'scope'
+    groups:
+      aws-sdk:
+        patterns:
+          - '@aws-sdk/*'
+      anthropic-providers:
+        patterns:
+          - '@anthropic-ai/*'
+      openai-providers:
+        patterns:
+          - '@openai/*'
+      ink-react:
+        patterns:
+          - 'ink*'
+          - 'react*'
+          - '@inkjs/*'
+      development:
+        dependency-type: development
+    # Always allow patch and minor updates
+    allow:
+      - dependency-type: direct
+    reviewers:
+      - vladimirmocanu
+
+  # GitHub Actions: weekly updates
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '08:30'
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'ci(actions)'
+      include: 'scope'
+    reviewers:
+      - vladimirmocanu

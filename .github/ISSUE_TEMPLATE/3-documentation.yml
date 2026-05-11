@@ -1,0 +1,61 @@
+name: Documentation Issue
+description: Report a documentation error, unclear explanation, or missing information
+labels: [documentation, needs-triage]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: File and section
+      description: Which file and section has the issue? Provide a specific heading or line number if possible.
+      placeholder: "docs/configuration.md section 'AI Provider Setup'\nor README.md heading 'Installation'"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Type of issue
+      description: What's wrong with the documentation?
+      options:
+        - Incorrect information (doesn't match the code)
+        - Unclear or confusing explanation
+        - Missing information or examples
+        - Outdated (refers to old commands or versions)
+        - Typo or grammar
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem?
+      description: Explain what's wrong, unclear, or missing. Be specific — include the exact text if relevant.
+      placeholder: |
+        The 'Configuration Reference' section claims that `ai.model` defaults to 'claude-sonnet-4' but the code shows 'claude-haiku-4-5-20251001'.
+
+        Or: The getting-started.md guide doesn't explain how to handle the case when AWS credentials are missing, which is confusing for new users.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested fix
+      description: How should the documentation be changed? Include suggested wording, code examples, or new sections if applicable.
+      placeholder: |
+        Change the config reference to state: "Default model: `claude-haiku-4-5-20251001` (can be overridden via `ai.model` config or `KORINFRA_AI__MODEL` env var)"
+
+        Or: Add a new section under "Getting Started" titled "Troubleshooting: Missing AWS Credentials" with these steps...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Impact
+      description: How much does this affect new or existing users?
+      options:
+        - Critical (blocks users from getting started)
+        - High (causes wrong setup or configuration)
+        - Medium (causes confusion but workaround exists)
+        - Low (minor clarity improvement)
+      required: false
