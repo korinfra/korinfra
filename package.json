@@ -1,7 +1,7 @@
 {
   "name": "korinfra",
   "version": "0.1.0",
-  "description": "AI-powered AWS FinOps CLI \u00e2\u20ac\u201d cost optimization, drift detection, security scanning",
+  "description": "AI-powered AWS FinOps CLI â€” cost optimization, drift detection, security scanning",
   "type": "module",
   "sideEffects": false,
   "bin": {
@@ -127,6 +127,7 @@
     "tsx": "4.21.0",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.59.1",
+    "unrun": "^0.3.0",
     "vitest": "^4.1.5"
   },
   "overrides": {
