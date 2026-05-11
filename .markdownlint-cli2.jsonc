@@ -1,0 +1,17 @@
+{
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD033": false,
+    "MD041": false,
+    "MD024": { "siblings_only": true },
+    "MD036": false,
+    "MD046": false,
+    "MD060": false,
+    "MD034": false,
+    "MD001": false,
+    "MD040": false,
+    "MD051": false
+  },
+  "ignores": ["node_modules/**", "dist/**", ".git/**", "graphify-out/**", "bin/**", "README.old.md"]
+}
