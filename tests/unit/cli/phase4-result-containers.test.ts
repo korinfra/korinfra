@@ -169,7 +169,7 @@ describe('Unknown command screen (Finding 101)', () => {
   it('levenshtein distance finds scan from scna', async () => {
     // The suggestion logic in app.tsx — we test it indirectly via the known command list
     // by verifying the pattern exists in the module
-    const src = await import('../../../src/cli/app.js');
+    const src = await import('../../../src/cli/App.js');
     expect(typeof src.App).toBe('function');
   });
 });

@@ -9,7 +9,7 @@ import type { Resource } from '../aws/types.js';
 import type { ThresholdsOverride } from '../rules/index.js';
 import { evaluateRules } from '../rules/index.js';
 import { redactObject } from '../redaction/redactor.js';
-import { loadConfig } from '../config/index.js';
+import { loadConfig, defaults } from '../config/index.js';
 import { CostEngine } from '../pricing/engine.js';
 import { getMonthlyCost } from '../rules/cost/helpers.js';
 
@@ -56,7 +56,12 @@ export const evaluateRulesTool: ToolDefinition = {
       let thresholds = args['thresholds'] as ThresholdsOverride | undefined;
 
       // Load config and map savings_multipliers to thresholds
-      const config = await loadConfig();
+      let config: Awaited<ReturnType<typeof loadConfig>>;
+      try {
+        config = await loadConfig();
+      } catch (err) {
+        config = defaults() as Awaited<ReturnType<typeof loadConfig>>;
+      }
       if (config.scan.savings_multipliers) {
         const multipliers = config.scan.savings_multipliers;
         thresholds = {

@@ -276,38 +276,25 @@ export async function loadConfig(configPath?: string): Promise<Config> {
   });
 
   const searchResult = await searchConfigFile(explorer, configPath);
-  if (!searchResult) {
-    // No config file found anywhere — signal to the caller (useConfig) that
-    // setup is required. This makes isConfigured=false in the TUI menu.
-    const err = new Error('No config file found. Run `korinfra init` to create one.') as NodeJS.ErrnoException;
-    err.code = 'ENOENT';
-    throw err;
-  }
-  const fileData = searchResult.config;
 
-  // Validate raw user input with a partial schema BEFORE merging with defaults.
-  // This catches type errors (e.g. ai.max_tokens: "bad") in the user-supplied data
-  // before it can corrupt the merged result. .partial() makes all top-level fields
-  // optional so missing sections are allowed; nested object shapes are still validated
-  // when present. Errors are reported as ConfigValidationError to the caller.
-  const partialResult = ConfigSchema.partial().safeParse(fileData);
-  if (!partialResult.success) {
-    const issues = partialResult.error.issues.map(
-      (i) => `${i.path.join('.')}: ${i.message}`,
-    );
-    throw new ConfigValidationError(issues);
-  }
+  if (searchResult) {
+    const fileData = searchResult.config;
 
-  // Merge file data over defaults
-  deepMerge(base, fileData);
+    // Validate raw user input with a partial schema BEFORE merging with defaults.
+    const partialResult = ConfigSchema.partial().safeParse(fileData);
+    if (!partialResult.success) {
+      const issues = partialResult.error.issues.map(
+        (i) => `${i.path.join('.')}: ${i.message}`,
+      );
+      throw new ConfigValidationError(issues);
+    }
 
-  // Load thresholds.yaml from the same directory and merge scan + anomaly keys
-  const configDir = searchResult
-    ? path.dirname(searchResult.filepath)
-    : (configPath ? path.dirname(expandPath(configPath)) : defaultConfigDir());
-  const thresholdsData = await loadThresholds(configDir);
-  if (thresholdsData) {
-    deepMerge(base, thresholdsData);
+    deepMerge(base, fileData);
+
+    const thresholdsData = await loadThresholds(path.dirname(searchResult.filepath));
+    if (thresholdsData) {
+      deepMerge(base, thresholdsData);
+    }
   }
 
   const KNOWN_CONFIG_ROOTS = new Set(['version', 'aws', 'ai', 'terraform', 'github', 'output', 'storage', 'scan', 'anomaly', 'mcp']);
@@ -346,13 +333,12 @@ export async function loadConfig(configPath?: string): Promise<Config> {
     tfNode['state_file'] = expandPath(tfNode['state_file']);
   }
 
-  // Normalize provider aliases before Zod validation.
-  // Only genuine renames belong here — deprecated/unimplemented values get a
-  // clear error so misconfiguration is visible rather than silently downgraded.
+  // Normalize provider aliases and reject unsupported providers.
+  // Runs before the ENOENT check so bad env-var providers are caught even without a config file.
   const aiNode = base['ai'] as Record<string, unknown> | undefined;
   if (aiNode && typeof aiNode['provider'] === 'string') {
     const PROVIDER_ALIASES: Record<string, string> = {
-      anthropic: 'claude', // genuine rename — both names refer to the same provider
+      anthropic: 'claude',
     };
     const NOT_IMPLEMENTED: Record<string, string> = {
       openai: "ai.provider 'openai' is not yet implemented; use 'claude' or 'none'",
@@ -366,6 +352,13 @@ export async function loadConfig(configPath?: string): Promise<Config> {
     } else if (p in NOT_IMPLEMENTED) {
       throw new ConfigValidationError([NOT_IMPLEMENTED[p] ?? `ai.provider '${p}' is not supported`]);
     }
+  }
+
+  if (!searchResult) {
+    // No config file found — signal to the TUI that setup is required.
+    const err = new Error('No config file found. Run `korinfra init` to create one.') as NodeJS.ErrnoException;
+    err.code = 'ENOENT';
+    throw err;
   }
 
   // Parse through Zod for coercion and strict validation of enum/range fields

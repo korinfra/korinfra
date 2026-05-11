@@ -21,7 +21,7 @@ vi.mock('../../../src/cli/hooks/useTerminalSize.js', () => ({
   useTerminalSize: () => ({ cols: 120, rows: 40 }),
 }));
 
-import { App } from '../../../src/cli/app.js';
+import { App } from '../../../src/cli/App.js';
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
