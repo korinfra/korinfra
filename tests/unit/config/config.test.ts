@@ -1,4 +1,7 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
 import { defaults, validate, normalizeStringSlice, loadConfig } from '../../../src/config/index.js';
 import { ConfigValidationError } from '../../../src/config/index.js';
 
@@ -133,6 +136,25 @@ describe('normalizeStringSlice()', () => {
 
 describe('loadConfig() — env var overrides and provider normalization', () => {
   const originalEnv = { ...process.env };
+  let tmpDir: string;
+  let originalCwd: string;
+
+  beforeAll(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'korinfra-test-'));
+    fs.mkdirSync(path.join(tmpDir, '.korinfra'));
+    fs.writeFileSync(
+      path.join(tmpDir, '.korinfra', 'config.yaml'),
+      'ai:\n  provider: none\n',
+      'utf8',
+    );
+    originalCwd = process.cwd();
+    process.chdir(tmpDir);
+  });
+
+  afterAll(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 
   afterEach(() => {
     for (const key of Object.keys(process.env)) {
