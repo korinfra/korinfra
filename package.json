@@ -1,11 +1,11 @@
 {
   "name": "korinfra",
   "version": "0.1.0",
-  "description": "AI-powered AWS FinOps CLI â€” cost optimization, drift detection, security scanning",
+  "description": "AI-powered AWS FinOps CLI - cost optimization, security scanning, Terraform fixes",
   "type": "module",
   "sideEffects": false,
   "bin": {
-    "korinfra": "./dist/index.mjs"
+    "korinfra": "bin/korinfra.js"
   },
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
@@ -17,6 +17,8 @@
   },
   "files": [
     "dist/",
+    "!dist/**/*.map",
+    "bin/korinfra.js",
     "README.md",
     "LICENSE"
   ],
@@ -59,7 +61,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/korinfra/korinfra.git"
+    "url": "git+https://github.com/korinfra/korinfra.git"
   },
   "bugs": {
     "url": "https://github.com/korinfra/korinfra/issues"

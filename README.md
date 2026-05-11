@@ -2,10 +2,10 @@
 
 <img src=".github/logo_korinfra.png" alt="KorInfra" width="460">
 
-### Your AWS bill has waste. KorInfra finds it in minutes
+### Your AWS bill has waste. KorInfra finds it in minutes.
 
 <p>
-  9 AWS services · 66 cost rules + 46 security rules · Terraform-aware auto-fixes · AI explanations · zero telemetry
+  9 AWS services &nbsp;·&nbsp; 66 cost rules + 46 security rules &nbsp;·&nbsp; Terraform-aware auto-fixes &nbsp;·&nbsp; AI explanations &nbsp;·&nbsp; zero telemetry
 </p>
 
 [![CI](https://github.com/korinfra/korinfra/actions/workflows/ci.yml/badge.svg)](https://github.com/korinfra/korinfra/actions/workflows/ci.yml)
@@ -26,6 +26,7 @@ KorInfra scans your live AWS account, runs 112 rules locally in seconds, and tel
 
 ```bash
 npm install -g korinfra
+
 korinfra          # launch interactive TUI (menu-driven, fully keyboard-driven)
 korinfra init     # first-time setup: AWS profile + AI key (60 seconds)
 korinfra scan     # full cost + security scan
@@ -42,15 +43,44 @@ First time? → [Getting started guide](docs/getting-started.md) (5 min walkthro
 
 ## What KorInfra does
 
-**Works without AI.** All 66 cost rules and 46 security rules run locally — no API key, no AI calls, $0 cost. Add an AI provider key to unlock natural language explanations and Terraform patch generation.
+<table>
+<tr>
+<td width="50%">
 
-**Terraform-aware.** 4-pass matcher (ARN → ID → name tag → fuzzy) links every live AWS resource to its `.tf` definition. When a fix is available, KorInfra edits the right file and opens a PR, no manual hunting.
+**No AI key needed**<br>
+All 66 cost rules and 46 security rules run locally — no API key, no AI calls, $0 cost. Add a Claude API key to unlock natural language explanations, `/` chat, and Terraform patch generation.
 
-**CI/CD ready.** `korinfra scan --json --fail-on critical` exits 1 on critical findings. Pipe it into any pipeline. Zero AI cost in CI.
+</td>
+<td width="50%">
 
-**Your data stays local.** Everything in a SQLite database. The only data that ever leaves your machine is redacted findings sent to the AI provider you choose. Credentials, ARNs, IPs, and emails are stripped automatically.
+**Terraform-aware**<br>
+4-pass matcher (ARN → ID → name tag → fuzzy) links every live AWS resource to its `.tf` definition. KorInfra edits the right file and opens a GitHub PR — no manual hunting.
 
-**MCP server included.** `korinfra mcp` registers a server in Claude Code or Cursor. Ask your editor "which EC2 instances are idle?" — KorInfra runs the analysis and returns results inline.
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**CI/CD ready**<br>
+`korinfra scan --json --fail-on critical` exits 1 on critical findings. Pipe into any pipeline. Auto-detected in CI — zero AI cost in headless mode.
+
+</td>
+<td width="50%">
+
+**Data stays local**<br>
+Everything in a local SQLite database. Only redacted findings are ever sent to your AI provider. Credentials, ARNs, IPs, and emails are stripped before anything leaves your machine.
+
+</td>
+</tr>
+<tr>
+<td colspan="2">
+
+**MCP server included**<br>
+`korinfra mcp` registers a server in Claude Code or Cursor. Ask your editor *"which EC2 instances are idle?"* — KorInfra runs the analysis and returns results inline without switching terminals.
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -62,15 +92,15 @@ Run `korinfra` for the interactive TUI, or `korinfra <command>` to run directly:
 |---|---|---|
 | *(no args)* | Launch interactive TUI — menu-driven, fully keyboard-driven | No |
 | `scan` | Full cost + security scan | No |
-| `costs` | Cost Explorer breakdown. `--days N`, `--group-by service\|region\|account\|tag` | No |
+| `costs` | Cost Explorer breakdown — `--days N`, `--group-by service\|region\|account\|tag` | No |
 | `resources` | Browse and filter all scanned resources | No |
-| `changes` | Audit recent AWS API activity (CloudTrail). Filter by user, resource type, time window (24h/48h/7d) | No |
-| `recommend` | Review saved recommendations. `--refresh` re-runs analysis | `--refresh` only |
+| `changes` | Audit recent AWS API activity (CloudTrail) — filter by user, resource type, time window | No |
+| `recommend` | Review saved recommendations — `--refresh` re-runs analysis | `--refresh` only |
 | `fix` | AI reads your Terraform, generates a patch, opens a GitHub PR | **Yes** |
-| `report` | Export to JSON, CSV, or HTML (with inline SVG charts) | No |
+| `report` | Export to JSON, CSV, or HTML with inline SVG charts | No |
 | `history` | Browse past scans, diff between them | No |
-| `security` | 46 Terraform security rules. `--dir <path>` | No |
-| `tags` | Audit required tags. `suggest` mode uses AI. Apply AI-suggested tags directly with confirmation (`a` key) | `suggest/apply` only |
+| `security` | 46 Terraform security rules — `--dir <path>` | No |
+| `tags` | Audit required tags — `suggest` uses AI, apply with confirmation (`a`) | `suggest` only |
 | `pricing` | Inspect or refresh the local AWS pricing cache | No |
 | `init` | Setup wizard — AWS profile, AI provider, API key | No |
 | `doctor` | Verify credentials, config, storage, and AI provider | No |
@@ -78,7 +108,7 @@ Run `korinfra` for the interactive TUI, or `korinfra <command>` to run directly:
 | `mcp` | Install MCP server into Claude Code or Cursor | No |
 | `serve` | Start MCP server — `stdio` (default) or `--http --port N` | No |
 
-Press `/` from the main menu to ask your AI assistant anything about your infrastructure.
+> Press `/` from the main menu to ask your AI assistant anything about your infrastructure.
 
 ---
 
@@ -86,15 +116,15 @@ Press `/` from the main menu to ask your AI assistant anything about your infras
 
 **66 cost rules** across EC2, RDS, EBS, S3, Lambda, ECS, ELB, ElastiCache, DynamoDB, and NAT Gateway — plus **46 security rules** on your Terraform config.
 
-**Idle resource detection** using multi-signal CloudWatch heuristics: CPU + network I/O for EC2, database connections for RDS, attachment status for EBS volumes, and Reserved Instance coverage gaps.
+**Idle resource detection** uses multi-signal CloudWatch heuristics: CPU + network I/O for EC2, database connections for RDS, attachment status for EBS volumes, and Reserved Instance coverage gaps.
 
 | Rule | Finding | Typical saving |
 |---|---|---|
 | EC2-001 | Instance with <5% CPU for 7+ days | $50–400/mo |
 | EC2-003 | m4/c4/r4 family — faster current-gen is cheaper | $20–200/mo |
-| RDS-007 | Multi-AZ on dev/staging (disable and halve the cost) | $100–3000/mo |
+| RDS-007 | Multi-AZ on dev/staging — disable and halve the cost | $100–3000/mo |
 | EBS-001 | Unattached volumes still billing | $5–50/mo each |
-| EBS-003 | gp2 → gp3 migration (20% cheaper, same performance) | $10–100/mo |
+| EBS-003 | gp2 → gp3 migration — 20% cheaper, same performance | $10–100/mo |
 | LAM-001 | Lambda with zero invocations | < $5/mo |
 | S3-004 | Bucket without server-side encryption (SSE-S3 is free) | — |
 | RDS-005 | Publicly accessible RDS instance | — |
@@ -115,22 +145,28 @@ Run `korinfra fix`, select a recommendation, and the AI agent:
 4. Shows exactly what will change before applying
 5. Optionally creates a GitHub PR
 
-You stay in control — every change is shown for review before anything is written. No AWS API calls are made. Rollback is as simple as reverting the file.
+Every change is shown for review before anything is written. No AWS API calls are made. Rollback is as simple as reverting the file.
 
-> **AI required** — `fix` uses the AI provider you configured in `korinfra init`.
+> **AI required** — `fix` uses the AI provider configured in `korinfra init`.
 
 ---
 
 ## Interactive TUI
 
-Run `korinfra` with no arguments to launch the full interactive menu. KorInfra is fully keyboard-driven, built with Ink 6 + React 19 — the same stack as Claude Code and Gemini CLI.
+Run `korinfra` with no arguments to launch the full interactive menu — built with Ink 6 + React 19, the same stack as Claude Code and Gemini CLI.
 
-- **Navigate** with `↑↓`, drill into any recommendation with `Enter`, go back with `Esc`
-- **After a scan** — a follow-up panel stays open so you can ask questions in the same session ("why is this expensive?", "explain the RDS finding")
-- **`/` from the main menu** — free-form AI questions about your infrastructure
-- **`f` on any recommendation** — jump straight to `fix` and generate a Terraform patch
-- **`p`** — export a report without leaving the screen
-- Headless when needed: `--json`, `--no-tui`, or `CI=true` auto-detected
+| Key | Action |
+|---|---|
+| `↑` `↓` | Navigate |
+| `Enter` | Drill into recommendation |
+| `Esc` | Go back |
+| `/` | Ask AI a free-form question |
+| `f` | Jump to fix — generate a Terraform patch |
+| `p` | Export a report without leaving the screen |
+
+After a scan, a follow-up panel stays open so you can ask questions in the same session — *"why is this expensive?"*, *"explain the RDS finding"*.
+
+Headless when needed: `--json`, `--no-tui`, or `CI=true` auto-detected.
 
 ---
 
@@ -145,20 +181,20 @@ korinfra serve     # start manually (stdio transport)
 
 Then ask your editor: *"which EC2 instances have been idle for 2 weeks?"* — KorInfra collects live AWS data and returns structured results without switching to the terminal.
 
-**20 tools · 3 resources · 3 prompts.** [Full MCP docs →](docs/mcp.md)
+**20 tools · 3 resources · 3 prompts** — [Full MCP docs →](docs/mcp.md)
 
 ---
 
 ## CI/CD
 
 ```bash
-# Works without a TTY — auto-detected in CI
+# Auto-detected in CI — no TTY needed
 korinfra scan --json | jq '.summary'
-korinfra security --json --dir ./terraform --fail-on critical  # exits 1 on critical
+korinfra security --json --dir ./terraform --fail-on critical   # exits 1 on critical
 CI=true korinfra scan --json > scan.json
 ```
 
-All commands support `--json` (machine-readable) and `--no-tui` (plain text). AI streaming works without a TTY. Zero AI cost in headless mode.
+All commands support `--json` (machine-readable) and `--no-tui` (plain text). Zero AI cost in headless mode.
 
 [Full reference + GitHub Actions example →](docs/usage.md)
 
@@ -168,12 +204,12 @@ All commands support `--json` (machine-readable) and `--no-tui` (plain text). AI
 
 | | KorInfra | AWS Trusted Advisor | Infracost | Checkov |
 |---|---|---|---|---|
-| AI reasoning (not just rules) | ✓ | — | — | — |
-| Cost optimization (live infra) | 66 rules | Limited (free tier) | Pricing only | — |
+| AI reasoning — not just rules | ✓ | — | — | — |
+| Cost optimization — live infra | 66 rules | Limited (free tier) | Pricing only | — |
 | Security scanning | 46 rules | ✓ | — | 1000+ rules |
 | Cost anomaly detection | ✓ | — | — | — |
 | MCP server for AI editors | ✓ | — | — | — |
-| Ask anything in natural language | ✓ | — | — | — |
+| Natural language questions | ✓ | — | — | — |
 | Data stays local | ✓ | — (AWS console) | Partial | ✓ |
 | Generates Terraform fixes + PRs | ✓ | — | — | — |
 
@@ -234,7 +270,7 @@ Checkov catches misconfigs at build time. Trusted Advisor checks running infra. 
 }
 ```
 
-KorInfra never modifies AWS resources. `fix` edits your local Terraform files only — it does not call AWS APIs to make changes.
+KorInfra never modifies AWS resources. `fix` edits your local Terraform files only.
 
 </details>
 
@@ -295,7 +331,7 @@ Before anything is sent to the AI provider, KorInfra strips sensitive data autom
 Three layers in sequence:
 
 1. **Collect** — AWS SDK v3 pulls live state from 9 services in parallel. CloudWatch adds utilization metrics; Cost Explorer adds spending data. Every API call is rate-limited and logged.
-2. **Analyze** — 66 cost + 46 security rules run locally (no AI, no network). 4-pass Terraform matcher compares live resources against `.tf` files. Z-score anomaly detection flags spending spikes.
+2. **Analyze** — 66 cost + 46 security rules run locally — no AI, no network. 4-pass Terraform matcher compares live resources against `.tf` files. Z-score anomaly detection flags spending spikes.
 3. **Output** — Data is redacted, then the AI agent loop produces natural language summaries and generates fixes. Final output goes to the TUI, file export (JSON/CSV/HTML), or an MCP client.
 
 Built with TypeScript 6 · Ink 6 + React 19 · Claude Agent SDK · AWS SDK v3 · better-sqlite3 · Zod 4
@@ -330,29 +366,61 @@ npm run check            # typecheck + lint + test (no build)
 
 ## FAQ
 
-**Do I need an AI provider key?**  
+<details>
+<summary><strong>Do I need an AI provider key?</strong></summary>
+
 No. All 66 cost rules and 46 security rules run locally — no API key, no AI calls, $0. Add a key to unlock AI-powered analysis, `/` chat, and `fix`.
 
-**Does KorInfra modify my AWS resources?**  
+</details>
+
+<details>
+<summary><strong>Does KorInfra modify my AWS resources?</strong></summary>
+
 Never. KorInfra is strictly read-only against AWS. `fix` edits your local Terraform files only.
 
-**Is my data sent to the AI provider?**  
+</details>
+
+<details>
+<summary><strong>Is my data sent to the AI provider?</strong></summary>
+
 Only redacted findings. Account IDs, ARNs, IPs, and emails are stripped before anything leaves your machine. See [Privacy & redaction](#reference).
 
-**Do I need Terraform?**  
+</details>
+
+<details>
+<summary><strong>Do I need Terraform?</strong></summary>
+
 No. Terraform features activate automatically when KorInfra finds `.tf` files. Cost rules and security scanning work without Terraform.
 
-**Does it work with multiple AWS accounts?**  
-Not yet — v0.1.0 scans one account at a time. Multi-account aggregation is planned; [follow progress on GitHub](https://github.com/korinfra/korinfra/issues).
+</details>
 
-**What does it cost to run?**  
-~$0.02/scan (AWS Cost Explorer) + ~$0.01–0.02 AI with the default Haiku model. Rules-only: $0.00. [Full breakdown →](docs/running-costs.md)
+<details>
+<summary><strong>Does it work with multiple AWS accounts?</strong></summary>
 
-**Does it work on Windows?**  
+Not yet — v0.1.0 scans one account at a time. Multi-account aggregation is planned — [follow progress on GitHub](https://github.com/korinfra/korinfra/issues).
+
+</details>
+
+<details>
+<summary><strong>What does it cost to run?</strong></summary>
+
+~$0.02/scan (AWS Cost Explorer) + ~$0.01–0.02 AI with the default Haiku model. Rules-only mode: $0.00. [Full breakdown →](docs/running-costs.md)
+
+</details>
+
+<details>
+<summary><strong>Does it work on Windows?</strong></summary>
+
 Yes. Node.js ≥ 22 on Windows, macOS, or Linux.
 
-**Which AI providers are supported?**  
-Claude (Anthropic API) in v0.1.0. OpenAI and Amazon Bedrock support is planned; [follow progress on GitHub](https://github.com/korinfra/korinfra/issues).
+</details>
+
+<details>
+<summary><strong>Which AI providers are supported?</strong></summary>
+
+Claude (Anthropic API) in v0.1.0. OpenAI and Amazon Bedrock support is planned — [follow progress on GitHub](https://github.com/korinfra/korinfra/issues).
+
+</details>
 
 ---
 

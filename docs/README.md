@@ -6,7 +6,7 @@
 | **[Usage Reference](usage.md)** | All 15 commands with examples, flags, and complete keyboard shortcut reference |
 | **[Configuration](configuration.md)** | Complete YAML config schema, environment variables, thresholds, AI provider setup |
 | **[Architecture](architecture.md)** | How korinfra works — data flow, rules engine, Terraform resource matching, redaction, AI agent loop, module map |
-| **[Scenarios](scenarios.md)** | Scenario A/B/C classification, 4-pass Terraform↔AWS matcher, drift detection, confidence levels |
+| **[Scenarios](scenarios.md)** | Scenario A/B/C classification, 4-pass Terraform↔AWS matcher, resource matching, confidence levels |
 | **[Workflow & Modes](workflow.md)** | Three execution modes, AI mode vs rules-only mode, step-by-step scan process, tool inventory |
 | **[Rules Reference](rules.md)** | All 66 cost optimization rules + 46 security rules (descriptions, severity, savings estimates) |
 | **[Running Costs](running-costs.md)** | AWS API costs, AI provider pricing, cost control strategies, rules-only mode cost breakdown |
