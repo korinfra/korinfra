@@ -104,13 +104,18 @@ export async function writekorinfraConfig(
   cfg.storage.path = path.join(projectDir, 'data.db');
   await saveConfig(cfg, outPath);
 
-  if (!fs.existsSync(thresholdsOutPath)) {
+  // Use exclusive-create flag ('wx') for atomic check-and-create — avoids TOCTOU
+  // race between existsSync and writeFileSync.
+  try {
     const thresholdsDefaults = { scan: cfg.scan, anomaly: cfg.anomaly };
     fs.writeFileSync(
       thresholdsOutPath,
       yaml.dump(thresholdsDefaults, { indent: 2, lineWidth: 120, noRefs: true, sortKeys: false }),
-      'utf8',
+      { flag: 'wx', encoding: 'utf8' },
     );
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    // File already exists — another process created it concurrently; skip.
   }
 
   let envSaved = false;
@@ -151,7 +156,11 @@ export async function writekorinfraConfig(
     const safeToken = githubToken.replace(/[^\x21-\x7E]/g, '');
     if (safeToken.length >= 10) {
       const envFilePath = path.join(projectDir, '.env');
-      const existing = fs.existsSync(envFilePath) ? fs.readFileSync(envFilePath, 'utf8') : '';
+      // Read without existsSync to avoid TOCTOU race between check and read.
+      let existing = '';
+      try { existing = fs.readFileSync(envFilePath, 'utf8'); } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      }
       if (!existing.includes('GITHUB_TOKEN=')) {
         fs.writeFileSync(envFilePath, existing + `GITHUB_TOKEN=${safeToken}\n`, 'utf8');
         try { fs.chmodSync(envFilePath, 0o600); } catch { /* windows */ }

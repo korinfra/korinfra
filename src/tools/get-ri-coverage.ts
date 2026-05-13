@@ -1,7 +1,6 @@
 import { CostExplorerClient, GetReservationCoverageCommand } from '@aws-sdk/client-cost-explorer';
 import { getCredentials } from '../aws/credentials.js';
 import { redactObject } from '../redaction/index.js';
-import { loadConfig } from '../config/index.js';
 import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition } from './types.js';
 
@@ -12,7 +11,6 @@ export const getRiCoverageTool: ToolDefinition = {
     type: 'object',
     properties: {
       profile: { type: 'string', description: 'AWS CLI profile.' },
-      region: { type: 'string', description: 'AWS region for Cost Explorer API (always us-east-1 internally). Used for credentials only.' },
       days: { type: 'number', description: 'Look-back window in days. Default 30, max 365.' },
     },
     additionalProperties: false,
@@ -22,16 +20,6 @@ export const getRiCoverageTool: ToolDefinition = {
     try {
       const profile = typeof args['profile'] === 'string' ? args['profile'] : undefined;
       const days = typeof args['days'] === 'number' ? Math.min(args['days'], 365) : 30;
-
-      let region = typeof args['region'] === 'string' ? args['region'] : '';
-      if (!region) {
-        try {
-          const config = await loadConfig();
-          region = config.aws?.default_region ?? 'us-east-1';
-        } catch {
-          region = 'us-east-1';
-        }
-      }
 
       const config = profile ? { profile, regions: ['us-east-1'] } : { regions: ['us-east-1'] };
       const creds = getCredentials(config);

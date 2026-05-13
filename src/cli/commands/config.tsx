@@ -50,6 +50,7 @@ import type { TuiAction } from '../actions.js';
 /** Nested-set via dotted path. Coerces booleans / numbers from raw string input. */
 function setNestedValue(obj: Record<string, unknown>, dotPath: string, raw: string): void {
   const parts = dotPath.split('.');
+  if (parts.some(p => p === '__proto__' || p === 'constructor' || p === 'prototype')) return;
   let cursor: Record<string, unknown> = obj;
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i] ?? '';

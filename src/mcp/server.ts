@@ -51,11 +51,12 @@ function isValidToken(token: string): boolean {
 function readPersistedToken(): string | null {
   try {
     const filePath = getTokenFilePath();
-    if (!fs.existsSync(filePath)) return null;
     const content = fs.readFileSync(filePath, 'utf8').trim();
     if (isValidToken(content)) return content;
     // Corrupt file — delete and regenerate
-    fs.unlinkSync(filePath);
+    try { fs.unlinkSync(filePath); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
     return null;
   } catch {
     return null;
@@ -66,9 +67,7 @@ function persistToken(token: string): void {
   try {
     const filePath = getTokenFilePath();
     const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    }
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(filePath, token, { mode: 0o600, encoding: 'utf8' });
     // On POSIX, explicitly chmod after write for extra safety
     if (process.platform !== 'win32') {
@@ -84,8 +83,8 @@ function persistToken(token: string): void {
 function deletePersistedToken(): void {
   try {
     const filePath = getTokenFilePath();
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
+    try { fs.unlinkSync(filePath); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -495,7 +494,7 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
       }
 
       // Update activity timestamp for existing sessions
-      if (session && existingSessionId) {
+      if (existingSessionId) {
         session.lastActivityAt = Date.now();
       }
 

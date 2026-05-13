@@ -62,13 +62,11 @@ describe('Command palette predicate (G-3)', () => {
   });
 
   it('palette eligibility: eligible when predicate is false and overlays closed', () => {
-    const showPalette = false;
-    const showHelp = false;
     const viewKind: ViewKind = 'scan';
     const menuMode: MenuMode = 'select';
     const inputMode: InputMode = 'none';
 
-    const eligible = !showPalette && !showHelp && !isTextInputActive(viewKind, menuMode, inputMode);
+    const eligible = !isTextInputActive(viewKind, menuMode, inputMode);
     expect(eligible).toBe(true);
   });
 
@@ -83,13 +81,11 @@ describe('Command palette predicate (G-3)', () => {
   });
 
   it('palette eligibility: not eligible when command screen reports field inputMode', () => {
-    const showPalette = false;
-    const showHelp = false;
     const viewKind: ViewKind = 'config';
     const menuMode: MenuMode = 'select';
     const inputMode: InputMode = 'field';
 
-    const eligible = !showPalette && !showHelp && !isTextInputActive(viewKind, menuMode, inputMode);
+    const eligible = !isTextInputActive(viewKind, menuMode, inputMode);
     expect(eligible).toBe(false);
   });
 });

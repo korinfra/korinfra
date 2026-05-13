@@ -640,7 +640,7 @@ export function HistoryCommand({ args, provider, onRunAgain, onBack, onAction, a
     );
   }
 
-  if (subcommand === null || subcommand === 'list') {
+  if (subcommand === 'list') {
     if (scanCount === null) {
       return (
         <CommandStateShell
@@ -674,7 +674,7 @@ export function HistoryCommand({ args, provider, onRunAgain, onBack, onAction, a
         </ScreenShell>
       );
     }
-    if (scanCount !== null && scanCount > 0) {
+    if (scanCount > 0) {
       return <HistoryListScreen onBack={onBack} onAction={onAction} onSetTrend={setLastDiffTrend} lastDiffTrend={lastDiffTrend} />;
     }
   }

@@ -56,7 +56,6 @@ function resolveConfiguredStoragePath(): string {
   for (const dir of searchDirs) {
     for (const name of CONFIG_FILENAMES) {
       const candidate = path.join(dir, name);
-      if (!fs.existsSync(candidate)) continue;
       const configured = readStoragePathFromConfigFile(candidate);
       if (configured) return configured;
     }

@@ -141,13 +141,11 @@ async function checkTerraform(signal?: AbortSignal): Promise<CheckResult> {
 async function checkSqlite(storagePath: string, _signal?: AbortSignal): Promise<CheckResult> {
   try {
     const dir = storagePath.replace(/[/\\][^/\\]+$/, '');
-    if (!fs.existsSync(dir)) {
-      return { ok: false, detail: `Storage directory does not exist: ${dir}` };
-    }
     fs.accessSync(dir, fs.constants.W_OK);
     return { ok: true, detail: storagePath };
   } catch (err) {
-    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, detail: msg };
   }
 }
 
@@ -192,7 +190,6 @@ async function checkAiProvider(_signal?: AbortSignal): Promise<CheckResult> {
 
   function isKeyInDotEnv(keyName: string): boolean {
     try {
-      if (!fs.existsSync(dotEnvPath)) return false;
       const contents = fs.readFileSync(dotEnvPath, 'utf8');
       return contents.split('\n').some((line) => line.startsWith(`${keyName}=`));
     } catch {

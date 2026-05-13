@@ -6,6 +6,7 @@
 
 import { readFile, stat } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
+import type { Dirent } from 'node:fs';
 import { resolve, join, sep } from 'node:path';
 
 import type { StateResource } from './types.js';
@@ -198,17 +199,18 @@ export async function parseStateFile(path: string): Promise<StateResource[]> {
       `parseStateFile: expected a .tfstate or .tfstate.backup file, got: ${absPath}`,
     );
   }
-  const fileStat = await stat(absPath);
-  if (fileStat.size > MAX_STATE_FILE_BYTES) {
-    throw new Error(`State file too large: ${fileStat.size} bytes (max ${MAX_STATE_FILE_BYTES})`);
-  }
-  let content: string;
+  // Read as Buffer first (single atomic operation) then check size — avoids TOCTOU
+  // race between a separate stat() call and the subsequent readFile() call.
+  let buffer: Buffer;
   try {
-    content = await readFile(absPath, 'utf8');
+    buffer = await readFile(absPath);
   } catch (err) {
     throw new Error(`reading state file ${absPath}: ${String(err)}`, { cause: err });
   }
-  return parseStateFromString(content);
+  if (buffer.length > MAX_STATE_FILE_BYTES) {
+    throw new Error(`State file too large: ${buffer.length} bytes (max ${MAX_STATE_FILE_BYTES})`);
+  }
+  return parseStateFromString(buffer.toString('utf8'));
 }
 
 /**
@@ -231,7 +233,15 @@ export async function findStateFile(dir: string, workspace?: string): Promise<st
 
   // Check workspace state files under terraform.tfstate.d/
   const workspaceDir = resolve(absDir, 'terraform.tfstate.d');
-  if (existsSync(workspaceDir)) {
+  let workspaceEntries: Dirent[] | undefined;
+  try {
+    workspaceEntries = readdirSync(workspaceDir, { withFileTypes: true });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    // ENOENT — workspace directory does not exist, no workspace state
+  }
+
+  if (workspaceEntries !== undefined) {
     if (workspace !== undefined && workspace !== '') {
       // Specific workspace requested
       const wsState = resolve(workspaceDir, workspace, 'terraform.tfstate');
@@ -242,8 +252,7 @@ export async function findStateFile(dir: string, workspace?: string): Promise<st
     } else {
       // Scan all workspace subdirectories; return the first valid state found
       const resolvedWorkspaceDir = resolve(workspaceDir);
-      const entries = readdirSync(workspaceDir, { withFileTypes: true });
-      for (const entry of entries) {
+      for (const entry of workspaceEntries) {
         if (entry.isDirectory()) {
           const resolvedEntry = resolve(workspaceDir, entry.name);
           if (!isInsideDir(resolvedEntry, resolvedWorkspaceDir)) {
