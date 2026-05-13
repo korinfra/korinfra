@@ -458,6 +458,7 @@ function downloadResourcesCSV() {
       tags
     ].map(function(f) {
       var s = String(f || '');
+      if (/^[=+\\-@\\t\\r]/.test(s)) s = "'" + s;
       if (s.includes('"') || s.includes(',') || s.includes('\\n')) {
         return '"' + s.replace(/"/g, '""') + '"';
       }
@@ -488,6 +489,7 @@ function downloadRecsCSV() {
       r.status
     ].map(function(f) {
       var s = String(f || '');
+      if (/^[=+\\-@\\t\\r]/.test(s)) s = "'" + s;
       if (s.includes('"') || s.includes(',') || s.includes('\\n')) {
         return '"' + s.replace(/"/g, '""') + '"';
       }

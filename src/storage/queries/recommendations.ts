@@ -230,7 +230,7 @@ export function listRecommendations(
       dismiss_reason, created_at
     FROM recommendations WHERE scan_id = ?
   `;
-  const params: unknown[] = [scanId];
+  const params: Array<string | number> = [scanId];
 
   if (filters?.type) {
     sql += ' AND type = ?';
@@ -250,7 +250,7 @@ export function listRecommendations(
     CASE risk WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
     id DESC`;
 
-  const rows = db.prepare(sql).all(params) as Array<Record<string, unknown>>;
+  const rows = db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
   return rows.map(rowToRec);
 }
 

@@ -13,6 +13,7 @@ vi.mock('node:fs', () => ({
 
 vi.mock('node:fs/promises', () => ({
   readdir: vi.fn(() => Promise.resolve(['main.tf'])),
+  realpath: vi.fn((p: string) => Promise.resolve(p)),
 }));
 
 vi.mock('node:path', async () => {

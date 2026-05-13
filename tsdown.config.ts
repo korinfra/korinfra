@@ -9,7 +9,7 @@ export default defineConfig({
   dts: true,
   sourcemap: 'hidden',
   treeshake: true,
-  minify: true,
+  minify: false,
   platform: 'node',
   banner: {
     js: '#!/usr/bin/env node',
@@ -20,7 +20,6 @@ export default defineConfig({
   deps: {
     onlyBundle: false,
     neverBundle: [
-      'better-sqlite3',
       'bun:sqlite',
     ],
   },

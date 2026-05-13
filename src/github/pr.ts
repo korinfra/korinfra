@@ -214,7 +214,7 @@ export async function createPR(
   };
 
   const pr = await client.post<PR>(
-    `/repos/${owner}/${repo}/pulls`,
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
     payload,
   );
 
@@ -266,14 +266,14 @@ export async function addLabels(
   // Ensure labels exist — ignore errors (422 = already exists)
   await Promise.allSettled(
     labels.map((label) =>
-      client.post(`/repos/${owner}/${repo}/labels`, {
+      client.post(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/labels`, {
         name: label,
         color: labelColor(label),
       }),
     ),
   );
 
-  await client.post(`/repos/${owner}/${repo}/issues/${prNumber}/labels`, {
+  await client.post(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${prNumber}/labels`, {
     labels,
   });
 }
@@ -289,7 +289,7 @@ export async function requestReviewers(
   reviewers: string[],
 ): Promise<void> {
   await client.post(
-    `/repos/${owner}/${repo}/pulls/${prNumber}/requested_reviewers`,
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}/requested_reviewers`,
     { reviewers },
   );
 }

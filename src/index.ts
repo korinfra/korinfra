@@ -306,7 +306,7 @@ async function main(): Promise<void> {
   process.stdout.write('\x1b[?1049h\x1b[H');
   const restoreScreen = (): void => { process.stdout.write('\x1b[?1049l'); };
   // Clear sensitive env vars on exit to reduce memory exposure to child processes
-  const SENSITIVE_ENV_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GITHUB_TOKEN', 'MCP_AUTH_TOKEN'];
+  const SENSITIVE_ENV_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GITHUB_TOKEN', 'MCP_AUTH_TOKEN', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN'];
   process.on('exit', () => {
     restoreScreen();
     for (const key of SENSITIVE_ENV_KEYS) delete process.env[key];

@@ -57,7 +57,7 @@ export function listApiCalls(
       estimated_cost, duration_ms, status, error_message, created_at
     FROM api_call_log WHERE 1=1
   `;
-  const params: unknown[] = [];
+  const params: Array<string | number> = [];
 
   if (since) {
     sql += ' AND created_at >= ?';
@@ -71,7 +71,7 @@ export function listApiCalls(
   sql += ' ORDER BY created_at DESC LIMIT ?';
   params.push(limit);
 
-  const rows = db.prepare(sql).all(params) as Array<Record<string, unknown>>;
+  const rows = db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
   return rows.map((row) => {
     const id = row['id'] as number | undefined;
     const created_at = row['created_at'] as string | undefined;
