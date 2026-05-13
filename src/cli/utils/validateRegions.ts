@@ -3,7 +3,7 @@
  * Used by scan, pricing, and resources commands.
  */
 
-const AWS_REGION_RE = /^[a-z]{2}-[a-z]+-\d+$/;
+export const AWS_REGION_RE = /^[a-z]{2}-[a-z]+-\d+$/;
 
 type ValidateRegionsResult =
   | { valid: true }
