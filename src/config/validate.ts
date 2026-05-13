@@ -10,8 +10,10 @@ export class ConfigValidationError extends Error {
 /**
  * Validates the loaded Config for invalid or inconsistent values.
  * ai.provider is already enforced by z.enum() in the Zod schema — no runtime
- * allowlist check needed here. Only storage.path requires a post-parse check
- * because its default is '' and the path is auto-filled after Zod parsing.
+ * allowlist check needed here. storage.path is set to defaultStoragePath() by
+ * defaults(), but loadConfig() auto-fills it only when the parsed value is
+ * falsy (e.g. the config file explicitly sets an empty path or no file exists),
+ * so a post-parse emptiness check is still required here.
  * Cross-field validation for thresholds happens here.
  *
  * @returns Non-fatal warning strings (threshold combinations that are valid but

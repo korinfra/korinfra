@@ -180,8 +180,9 @@ export function DoctorCommand({ onBack, onAction }: DoctorCommandProps): React.J
 
     // Dependency map: checks that depend on other checks
     const dependencies: Record<string, string[]> = {
-      'aws-sdk': ['aws-creds'],   // connectivity depends on credentials
-      'network': ['aws-creds'],    // network check depends on credentials
+      'aws-sdk': ['aws-creds'],      // connectivity depends on credentials
+      'network': ['aws-creds'],      // network check depends on credentials
+      'config-valid': ['config'],    // only validate when config file exists
     };
     const failedIds = new Set<string>();
 
