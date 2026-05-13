@@ -89,7 +89,7 @@ function extractFromBlock(
       // resource.<type>.<name> = [attrs]
       const byType = section as Record<string, Record<string, unknown[]>>;
       for (const [resType, byName] of Object.entries(byType)) {
-        if (typeof byName !== 'object' || byName === null || byName === undefined) continue;
+        if (typeof byName !== 'object' || byName === null) continue;
         for (const [resName, instances] of Object.entries(byName)) {
           const config =
             Array.isArray(instances) && instances.length > 0
@@ -115,7 +115,7 @@ function extractFromBlock(
       // data.<type>.<name> = [attrs]
       const byType = section as Record<string, Record<string, unknown[]>>;
       for (const [resType, byName] of Object.entries(byType)) {
-        if (typeof byName !== 'object' || byName === null || byName === undefined) continue;
+        if (typeof byName !== 'object' || byName === null) continue;
         for (const [resName, instances] of Object.entries(byName)) {
           const config =
             Array.isArray(instances) && instances.length > 0
@@ -188,7 +188,7 @@ function extractFromBlock(
       const instances = section as unknown[];
       if (!Array.isArray(instances)) break;
       for (const block of instances) {
-        if (typeof block !== 'object' || block === null || block === undefined) continue;
+        if (typeof block !== 'object' || block === null) continue;
         for (const [key, value] of Object.entries(block as Record<string, unknown>)) {
           results.push({
             address: `local.${key}`,
@@ -220,23 +220,20 @@ const MAX_TF_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 export async function parseTerraformFile(filePath: string): Promise<TerraformResource[]> {
   const absPath = resolve(filePath);
   if (extname(absPath) !== '.tf') return [];
+  // Read as Buffer first (single atomic operation) then check size — avoids TOCTOU
+  // race between a separate stat() call and the subsequent readFile() call.
+  let buffer: Buffer;
   try {
-    const fileStat = await stat(absPath);
-    if (fileStat.size > MAX_TF_FILE_BYTES) {
-      logger.warn({ file: absPath, size: fileStat.size }, 'Terraform file too large, skipping');
-      return [];
-    }
-  } catch (err) {
-    logger.debug({ file: absPath, err: err instanceof Error ? err.message : String(err) }, 'Failed to stat Terraform file');
-    return [];
-  }
-  let contents: string;
-  try {
-    contents = await readFile(absPath, 'utf8');
+    buffer = await readFile(absPath) as Buffer;
   } catch (err) {
     logger.debug({ file: absPath, err: err instanceof Error ? err.message : String(err) }, 'Failed to read Terraform file');
     return [];
   }
+  if (buffer.length > MAX_TF_FILE_BYTES) {
+    logger.warn({ file: absPath, size: buffer.length }, 'Terraform file too large, skipping');
+    return [];
+  }
+  const contents = buffer.toString('utf8');
 
   let hcl: HclJson;
   try {

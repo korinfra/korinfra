@@ -28,13 +28,16 @@ function ensureGitignore(cwd: string): void {
   }
   const gitignorePath = path.join(repoRoot, '.gitignore');
   const entry = '.korinfra/';
-  if (existsSync(gitignorePath)) {
-    const content = readFileSync(gitignorePath, 'utf8');
-    if (!content.includes(entry)) {
-      appendFileSync(gitignorePath, `\n# korinfra internal files\n${entry}\n`);
-    }
-  } else {
-    appendFileSync(gitignorePath, `# korinfra internal files\n${entry}\n`);
+  // Read without a prior existsSync check to avoid TOCTOU race condition.
+  let existing = '';
+  try {
+    existing = readFileSync(gitignorePath, 'utf8');
+  } catch { /* ENOENT — appendFileSync below will create the file */ }
+  if (!existing.includes(entry)) {
+    appendFileSync(gitignorePath,
+      existing.length === 0
+        ? `# korinfra internal files\n${entry}\n`
+        : `\n# korinfra internal files\n${entry}\n`);
   }
 }
 
