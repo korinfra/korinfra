@@ -103,6 +103,208 @@ describe('validate()', () => {
     };
     expect(() => validate(cfg)).not.toThrow();
   });
+
+  // ── EC2 CPU thresholds ──────────────────────────────────────────────────────
+
+  it('throws when rightsize_cpu_threshold < idle_cpu_threshold with both values in message', () => {
+    const cfg = {
+      ...defaults(),
+      scan: { ...defaults().scan, idle_cpu_threshold: 20.0, rightsize_cpu_threshold: 10.0 },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues[0]).toContain('scan.rightsize_cpu_threshold (10)');
+    expect(caught!.issues[0]).toContain('scan.idle_cpu_threshold (20)');
+  });
+
+  it('throws when rightsize_cpu_threshold equals idle_cpu_threshold', () => {
+    const cfg = {
+      ...defaults(),
+      scan: { ...defaults().scan, idle_cpu_threshold: 10.0, rightsize_cpu_threshold: 10.0 },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues[0]).toContain('scan.rightsize_cpu_threshold');
+  });
+
+  it('accepts when rightsize_cpu_threshold > idle_cpu_threshold', () => {
+    const cfg = {
+      ...defaults(),
+      scan: { ...defaults().scan, idle_cpu_threshold: 5.0, rightsize_cpu_threshold: 30.0 },
+    };
+    expect(() => validate(cfg)).not.toThrow();
+  });
+
+  // ── RDS CPU thresholds ──────────────────────────────────────────────────────
+
+  it('throws when rds_rightsize_cpu_threshold <= rds_idle_cpu_threshold', () => {
+    const cfg = {
+      ...defaults(),
+      scan: { ...defaults().scan, rds_idle_cpu_threshold: 5.0, rds_rightsize_cpu_threshold: 5.0 },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues[0]).toContain('scan.rds_rightsize_cpu_threshold');
+  });
+
+  it('accepts when rds_rightsize_cpu_threshold > rds_idle_cpu_threshold', () => {
+    const cfg = {
+      ...defaults(),
+      scan: { ...defaults().scan, rds_idle_cpu_threshold: 1.0, rds_rightsize_cpu_threshold: 15.0 },
+    };
+    expect(() => validate(cfg)).not.toThrow();
+  });
+
+  // ── Scenario confidence bounds ──────────────────────────────────────────────
+
+  it('throws when scenario_confidence_base > scenario_confidence_max', () => {
+    const cfg = {
+      ...defaults(),
+      scan: { ...defaults().scan, scenario_confidence_base: 0.96, scenario_confidence_max: 0.95 },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues[0]).toContain('scan.scenario_confidence_base');
+  });
+
+  it('throws when scenario_confidence_state_base > scenario_confidence_max', () => {
+    const cfg = {
+      ...defaults(),
+      scan: { ...defaults().scan, scenario_confidence_state_base: 0.99, scenario_confidence_max: 0.95 },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues[0]).toContain('scan.scenario_confidence_state_base');
+  });
+
+  // ── ai.api_key_env ──────────────────────────────────────────────────────────
+
+  it('throws when ai.api_key_env is an empty string', () => {
+    const cfg = { ...defaults(), ai: { ...defaults().ai, api_key_env: '' } };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues).toContain('ai.api_key_env must not be empty');
+  });
+
+  // ── Quality score label thresholds ─────────────────────────────────────────
+
+  it('throws when quality.excellent_threshold <= good_threshold', () => {
+    const cfg = {
+      ...defaults(),
+      quality: { ...defaults().quality, excellent_threshold: 70, good_threshold: 70, fair_threshold: 50 },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues[0]).toContain('quality score thresholds');
+  });
+
+  it('throws when quality.good_threshold <= fair_threshold', () => {
+    const cfg = {
+      ...defaults(),
+      quality: { ...defaults().quality, excellent_threshold: 85, good_threshold: 50, fair_threshold: 50 },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues[0]).toContain('quality score thresholds');
+  });
+
+  // ── Quality savings tier cutoffs ────────────────────────────────────────────
+
+  it('throws when quality.savings_tier_high <= savings_tier_medium', () => {
+    const cfg = {
+      ...defaults(),
+      quality: { ...defaults().quality, savings_tier_high: 100, savings_tier_medium: 100, savings_tier_low: 20 },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues[0]).toContain('quality.savings_tier cutoffs');
+  });
+
+  // ── Quality savings percentage tiers ───────────────────────────────────────
+
+  it('throws when quality.savings_pct_high <= savings_pct_medium', () => {
+    const cfg = {
+      ...defaults(),
+      quality: { ...defaults().quality, savings_pct_high: 0.05, savings_pct_medium: 0.05 },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues[0]).toContain('quality.savings_pct_high');
+  });
+
+  // ── Quality length windows ──────────────────────────────────────────────────
+
+  it('throws when quality.title_min_length >= title_max_length', () => {
+    const cfg = {
+      ...defaults(),
+      quality: { ...defaults().quality, title_min_length: 80, title_max_length: 80 },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues[0]).toContain('quality.title_min_length');
+  });
+
+  it('throws when quality.description_partial_length >= description_full_length', () => {
+    const cfg = {
+      ...defaults(),
+      quality: { ...defaults().quality, description_partial_length: 80, description_full_length: 80 },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues[0]).toContain('quality.description_partial_length');
+  });
+
+  // ── include_idle warning ────────────────────────────────────────────────────
+
+  it('returns warning when include_idle is false', () => {
+    const cfg = { ...defaults(), scan: { ...defaults().scan, include_idle: false } };
+    const warnings = validate(cfg);
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings[0]).toContain('scan.include_idle is false');
+  });
+
+  it('returns empty warnings array when include_idle is true', () => {
+    const cfg = { ...defaults(), scan: { ...defaults().scan, include_idle: true } };
+    const warnings = validate(cfg);
+    expect(warnings).toEqual([]);
+  });
+
+  // ── Multiple errors collected before throw ─────────────────────────────────
+
+  it('collects multiple errors before throwing — does not short-circuit', () => {
+    const cfg = {
+      ...defaults(),
+      scan: {
+        ...defaults().scan,
+        // EC2 thresholds inverted
+        idle_cpu_threshold: 30.0,
+        rightsize_cpu_threshold: 5.0,
+      },
+      quality: {
+        ...defaults().quality,
+        // Quality score thresholds inverted
+        excellent_threshold: 50,
+        good_threshold: 70,
+        fair_threshold: 85,
+      },
+    };
+    let caught: ConfigValidationError | undefined;
+    try { validate(cfg); } catch (e) { caught = e as ConfigValidationError; }
+    expect(caught).toBeInstanceOf(ConfigValidationError);
+    expect(caught!.issues.length).toBeGreaterThanOrEqual(2);
+  });
 });
 
 // ── normalizeStringSlice() ────────────────────────────────────────────────────

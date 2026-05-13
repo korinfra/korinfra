@@ -139,6 +139,8 @@ export function DoctorCommand({ onBack, onAction }: DoctorCommandProps): React.J
       if (check?.status === 'fail') {
         if (check.id === 'config' || check.id === 'ai-key') {
           onAction?.({ type: 'navigate' as const, command: 'init' });
+        } else if (check.id === 'config-valid') {
+          onAction?.({ type: 'navigate' as const, command: 'config', args: ['show'] });
         } else if (check.id === 'aws-creds' || check.id === 'aws-sdk' || check.id === 'network') {
           onAction?.({ type: 'navigate' as const, command: 'config', args: ['show'] });
         } else if (check.id === 'sqlite') {
@@ -178,8 +180,9 @@ export function DoctorCommand({ onBack, onAction }: DoctorCommandProps): React.J
 
     // Dependency map: checks that depend on other checks
     const dependencies: Record<string, string[]> = {
-      'aws-sdk': ['aws-creds'],   // connectivity depends on credentials
-      'network': ['aws-creds'],    // network check depends on credentials
+      'aws-sdk': ['aws-creds'],      // connectivity depends on credentials
+      'network': ['aws-creds'],      // network check depends on credentials
+      'config-valid': ['config'],    // only validate when config file exists
     };
     const failedIds = new Set<string>();
 
@@ -252,6 +255,7 @@ export function DoctorCommand({ onBack, onAction }: DoctorCommandProps): React.J
 
   const failed = checks.filter((c) => c.status === 'fail').length;
   const failedConfig = checks.some((c) => c.id === 'config' && c.status === 'fail');
+  const failedConfigValid = checks.some((c) => c.id === 'config-valid' && c.status === 'fail');
   const failedAi = checks.some((c) => c.id === 'ai-key' && c.status === 'fail');
   const failedAws = checks.some((c) => c.group === 'aws-auth' && c.status === 'fail');
   // All-pass → `s scan now` only. Failures → `i run init again` only.
@@ -272,6 +276,7 @@ export function DoctorCommand({ onBack, onAction }: DoctorCommandProps): React.J
   let summaryFixHint: string;
   if (failedAws) summaryFixHint = 'fix credentials to use scan and costs';
   else if (failedConfig) summaryFixHint = 'create a config file';
+  else if (failedConfigValid) summaryFixHint = 'fix config.yaml validation errors';
   else if (failedAi) summaryFixHint = 'configure AI key';
   else summaryFixHint = 'see next steps';
   const summaryLine = failed === 0

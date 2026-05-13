@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { testConnection } from '../../aws/credentials.js';
-import { loadConfig } from '../../config/index.js';
+import { loadConfig, ConfigValidationError } from '../../config/index.js';
 import { EC2Client, DescribeRegionsCommand } from '@aws-sdk/client-ec2';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { defaultConfigDir } from '../../config/paths.js';
@@ -167,6 +167,23 @@ async function checkConfigFile(_signal?: AbortSignal): Promise<CheckResult> {
   return { ok: false, detail: 'Use init to create one' };
 }
 
+async function checkConfigValidation(_signal?: AbortSignal): Promise<CheckResult> {
+  try {
+    await loadConfig();
+    return { ok: true, detail: 'No issues found' };
+  } catch (err) {
+    if (err instanceof ConfigValidationError) {
+      return { ok: false, detail: err.issues.join('; ') };
+    }
+    // ENOENT = config file absent; handled by the 'config' check (dependency below)
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { ok: true, detail: 'No config file to validate' };
+    }
+    // ZodError, parse failure, or any other error counts as a failure
+    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 async function checkAiProvider(_signal?: AbortSignal): Promise<CheckResult> {
   // Distinguish keys loaded from .korinfra/.env vs shell env.
   // loadProjectEnv has already run by this point (index.ts line ~46), so
@@ -257,6 +274,7 @@ export function buildChecks(storagePath: string): CheckDef[] {
     { id: 'network', label: 'Network', group: 'aws-auth', fixHint: 'Check VPN or firewall settings', run: checkNetwork },
     // Required: Config + DB
     { id: 'config', label: 'Config file', group: 'config', fixHint: 'korinfra init', run: checkConfigFile },
+    { id: 'config-valid', label: 'Config validation', group: 'config', fixHint: 'Edit .korinfra/config.yaml', run: checkConfigValidation },
     { id: 'sqlite', label: 'Database', group: 'config', fixHint: 'Check storage directory permissions', run: (signal) => checkSqlite(storagePath, signal) },
     // Optional: AI
     { id: 'ai-key', label: 'AI provider key', group: 'ai', optional: true, fixHint: 'Add ANTHROPIC_API_KEY to .korinfra/.env  or  export ANTHROPIC_API_KEY=sk-ant-...', run: checkAiProvider },
@@ -269,8 +287,9 @@ export function buildChecks(storagePath: string): CheckDef[] {
 
 /** Checks that depend on other checks passing first. */
 const CHECK_DEPENDENCIES: Record<string, string[]> = {
-  'aws-sdk': ['aws-creds'],  // connectivity depends on credentials
-  'network': ['aws-creds'],  // network check depends on credentials
+  'aws-sdk': ['aws-creds'],    // connectivity depends on credentials
+  'network': ['aws-creds'],    // network check depends on credentials
+  'config-valid': ['config'],  // only validate when config file exists
 };
 
 // ─── runAllChecks ───────────────────────────────────────────────────────────────
