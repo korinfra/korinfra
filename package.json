@@ -23,10 +23,10 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.10.0"
   },
   "scripts": {
-    "postinstall": "node scripts/patch-ink-types.mjs",
+    "prepare": "node scripts/patch-ink-types.mjs",
     "build": "tsdown",
     "postbuild": "node --input-type=module -e \"import{cpSync,existsSync}from 'node:fs';if(existsSync('src/storage/migrations'))cpSync('src/storage/migrations','dist/storage/migrations',{recursive:true})\"",
     "dev": "tsx --disable-warning=ExperimentalWarning src/index.ts",
@@ -89,7 +89,6 @@
     "@inkjs/ui": "2.0.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@smithy/node-http-handler": "^4.6.1",
-    "better-sqlite3": "^12.9.0",
     "cosmiconfig": "9.0.1",
     "gradient-string": "^3.0.0",
     "ink": "7.0.2",
@@ -111,7 +110,6 @@
     "@secretlint/secretlint-rule-no-dotenv": "^13.0.0",
     "@secretlint/secretlint-rule-npm": "^13.0.0",
     "@secretlint/secretlint-rule-privatekey": "^13.0.0",
-    "@types/better-sqlite3": "7.6.13",
     "@types/gradient-string": "^1.1.6",
     "@types/js-yaml": "4.0.9",
     "@types/node": "^25.6.2",
@@ -137,8 +135,5 @@
     "@anthropic-ai/claude-agent-sdk": {
       "@anthropic-ai/sdk": "^0.95.2"
     }
-  },
-  "optionalDependencies": {
-    "react-devtools-core": "^7.0.1"
   }
 }
