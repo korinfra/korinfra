@@ -224,7 +224,7 @@ export async function parseTerraformFile(filePath: string): Promise<TerraformRes
   // race between a separate stat() call and the subsequent readFile() call.
   let buffer: Buffer;
   try {
-    buffer = await readFile(absPath) as Buffer;
+    buffer = await readFile(absPath);
   } catch (err) {
     logger.debug({ file: absPath, err: err instanceof Error ? err.message : String(err) }, 'Failed to read Terraform file');
     return [];

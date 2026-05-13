@@ -6,6 +6,7 @@
 
 import { readFile, stat } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
+import type { Dirent } from 'node:fs';
 import { resolve, join, sep } from 'node:path';
 
 import type { StateResource } from './types.js';
@@ -202,7 +203,7 @@ export async function parseStateFile(path: string): Promise<StateResource[]> {
   // race between a separate stat() call and the subsequent readFile() call.
   let buffer: Buffer;
   try {
-    buffer = await readFile(absPath) as Buffer;
+    buffer = await readFile(absPath);
   } catch (err) {
     throw new Error(`reading state file ${absPath}: ${String(err)}`, { cause: err });
   }
@@ -232,7 +233,7 @@ export async function findStateFile(dir: string, workspace?: string): Promise<st
 
   // Check workspace state files under terraform.tfstate.d/
   const workspaceDir = resolve(absDir, 'terraform.tfstate.d');
-  let workspaceEntries: ReturnType<typeof readdirSync> | undefined;
+  let workspaceEntries: Dirent[] | undefined;
   try {
     workspaceEntries = readdirSync(workspaceDir, { withFileTypes: true });
   } catch { /* directory does not exist — no workspace state */ }
