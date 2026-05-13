@@ -97,5 +97,5 @@ export function aggregateCostsByService(db: Driver, scanId: string): CostByServi
     FROM costs WHERE scan_id = ?
     GROUP BY service_name
     ORDER BY total_monthly_cost DESC
-  `).all(scanId) as CostByService[];
+  `).all(scanId) as unknown as CostByService[];
 }

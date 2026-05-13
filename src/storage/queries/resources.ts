@@ -133,7 +133,7 @@ export function listResources(
       scenario, terraform_address, collected_at, created_at
     FROM resources WHERE scan_id = ?
   `;
-  const params: unknown[] = [scanId];
+  const params: Array<string | number> = [scanId];
 
   if (filters?.type) {
     sql += ' AND type = ?';
@@ -146,7 +146,7 @@ export function listResources(
 
   sql += ' ORDER BY monthly_cost DESC, resource_id ASC';
 
-  const rows = db.prepare(sql).all(params) as Array<Record<string, unknown>>;
+  const rows = db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
   return rows.map(rowToResource);
 }
 /* eslint-enable @typescript-eslint/no-base-to-string, eqeqeq */

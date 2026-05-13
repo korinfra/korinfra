@@ -8,7 +8,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, appendFileSync } from 'node:fs';
+import { existsSync, readFileSync, appendFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition } from './types.js';
@@ -70,7 +70,17 @@ export const gitCommitPushTool: ToolDefinition = {
     try {
       const branch = typeof args['branch'] === 'string' ? args['branch'].trim() : '';
       const message = typeof args['message'] === 'string' ? args['message'].trim() : '';
-      const cwd = typeof args['cwd'] === 'string' ? args['cwd'] : process.cwd();
+      let cwd: string;
+      if (typeof args['cwd'] === 'string' && args['cwd'].trim() !== '') {
+        const raw = args['cwd'];
+        if (!existsSync(raw)) return errorResult(`cwd does not exist: ${raw}`);
+        try { cwd = realpathSync(raw); } catch { return errorResult(`cwd could not be resolved: ${raw}`); }
+        if (cwd === '/' || /^[A-Z]:\\?$/i.test(cwd) || /^\\\\./.test(cwd)) {
+          return errorResult('cwd must not be a filesystem root');
+        }
+      } else {
+        cwd = process.cwd();
+      }
 
       if (!branch) return errorResult('branch must be a non-empty string');
       if (!message) return errorResult('message must be a non-empty string');

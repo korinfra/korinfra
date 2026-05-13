@@ -63,12 +63,12 @@ export function listTags(db: Driver, resourceId?: string): VirtualTag[] {
     rows = db.prepare(`
       SELECT id, resource_id, resource_type, dimension, value, allocation_pct, source, confidence, created_at
       FROM virtual_tags WHERE resource_id = ? ORDER BY dimension
-    `).all(resourceId) as Array<Record<string, unknown>>;
+    `).all(resourceId);
   } else {
     rows = db.prepare(`
       SELECT id, resource_id, resource_type, dimension, value, allocation_pct, source, confidence, created_at
       FROM virtual_tags ORDER BY resource_id, dimension
-    `).all() as Array<Record<string, unknown>>;
+    `).all();
   }
   return rows.map(rowToTag);
 }

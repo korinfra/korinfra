@@ -5,7 +5,7 @@
 
 import { resolve, basename } from 'node:path';
 import { existsSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { readdir, realpath } from 'node:fs/promises';
 
 import { parseTerraformDir } from '../terraform/parser.js';
 import { parseStateFile, findStateFile, RemoteBackendError } from '../terraform/state.js';
@@ -49,13 +49,18 @@ export const scanTerraformTool: ToolDefinition = {
       if (!existsSync(resolvedDir)) {
         return errorResult(`dir does not exist: ${resolvedDir}`);
       }
-      const dirEntries = await readdir(resolvedDir);
+      let canonicalDir: string;
+      try { canonicalDir = await realpath(resolvedDir); } catch { return errorResult(`dir could not be resolved: ${resolvedDir}`); }
+      if (canonicalDir === '/' || /^[A-Z]:\\?$/i.test(canonicalDir) || /^\\\\./.test(canonicalDir)) {
+        return errorResult(`dir resolves to filesystem root: ${canonicalDir}`);
+      }
+      const dirEntries = await readdir(canonicalDir);
       if (!dirEntries.some((e) => e.endsWith('.tf') || e.endsWith('.tf.json'))) {
         return errorResult(`dir contains no .tf files: ${resolvedDir}`);
       }
 
       const resources = redactObject(
-        (await parseTerraformDir(resolvedDir)).map((resource) =>
+        (await parseTerraformDir(canonicalDir)).map((resource) =>
           normalizeTerraformResource(resource),
         ),
         'moderate',
@@ -66,6 +71,9 @@ export const scanTerraformTool: ToolDefinition = {
         if (!resolvedState.endsWith('.tfstate') && !resolvedState.endsWith('.tfstate.backup')) {
           return errorResult(`State file must have a .tfstate extension: ${stateFile}`);
         }
+        if (existsSync(resolvedState)) {
+          try { await realpath(resolvedState); } catch { return errorResult(`stateFile could not be resolved: ${stateFile}`); }
+        }
       }
 
       // Resolve state file: explicit path > auto-discover in dir
@@ -73,7 +81,7 @@ export const scanTerraformTool: ToolDefinition = {
       let stateWarning: string | undefined;
       let stateFilePath: string | null;
       try {
-        stateFilePath = stateFile ?? (await findStateFile(resolvedDir));
+        stateFilePath = stateFile ?? (await findStateFile(canonicalDir));
       } catch (e) {
         if (e instanceof RemoteBackendError) {
           stateWarning = e.message;

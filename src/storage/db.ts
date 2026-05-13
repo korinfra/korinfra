@@ -24,7 +24,7 @@ function readStoragePathFromConfigFile(filePath: string): string | null {
     const content = fs.readFileSync(filePath, 'utf8');
     const parsed = filePath.endsWith('.json')
       ? (JSON.parse(content) as Record<string, unknown>)
-      : (yaml.load(content) as Record<string, unknown> | null);
+      : (yaml.load(content, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown> | null);
     const storage = parsed?.['storage'];
     if (typeof storage === 'object' && storage !== null) {
       const storagePath = (storage as Record<string, unknown>)['path'];

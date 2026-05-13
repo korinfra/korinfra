@@ -109,7 +109,7 @@ export async function loadThresholds(configDir?: string): Promise<Record<string,
   const thresholdsPath = path.join(dir, 'thresholds.yaml');
   try {
     const content = fs.readFileSync(thresholdsPath, 'utf8');
-    const parsed = yaml.load(content);
+    const parsed = yaml.load(content, { schema: yaml.JSON_SCHEMA });
     if (typeof parsed !== 'object' || parsed === null) return null;
     const obj = parsed as Record<string, unknown>;
     const result: Record<string, unknown> = {};
