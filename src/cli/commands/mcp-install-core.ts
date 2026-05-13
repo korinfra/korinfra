@@ -312,7 +312,6 @@ export function resolveIdeTargets(filter?: string[], scope: InstallScope = 'user
 
     try {
       // Single atomic read — avoids TOCTOU between existsSync and readJsonFile.
-      // readJsonFile returns {} on ENOENT; any other error is rethrown.
       const raw = fs.readFileSync(t.configPath, 'utf8');
       exists = true;
       const data = JSON.parse(raw) as Record<string, unknown>;

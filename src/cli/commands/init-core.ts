@@ -158,7 +158,9 @@ export async function writekorinfraConfig(
       const envFilePath = path.join(projectDir, '.env');
       // Read without existsSync to avoid TOCTOU race between check and read.
       let existing = '';
-      try { existing = fs.readFileSync(envFilePath, 'utf8'); } catch { /* ENOENT */ }
+      try { existing = fs.readFileSync(envFilePath, 'utf8'); } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      }
       if (!existing.includes('GITHUB_TOKEN=')) {
         fs.writeFileSync(envFilePath, existing + `GITHUB_TOKEN=${safeToken}\n`, 'utf8');
         try { fs.chmodSync(envFilePath, 0o600); } catch { /* windows */ }

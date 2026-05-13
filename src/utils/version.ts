@@ -27,7 +27,10 @@ function readPackageJson(): PackageJson {
       try {
         cached = JSON.parse(fs.readFileSync(candidate, 'utf8')) as PackageJson;
         return cached;
-      } catch { /* ENOENT — try parent */ }
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        // ENOENT — try parent directory
+      }
       dir = path.dirname(dir);
     }
 
@@ -35,7 +38,9 @@ function readPackageJson(): PackageJson {
     try {
       cached = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')) as PackageJson;
       return cached;
-    } catch { /* not found */ }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
   } catch (err: unknown) {
     // logger may not be initialized yet, use console.warn (allowed by lint rule)
     if (process.env['KORINFRA_DEBUG']) {

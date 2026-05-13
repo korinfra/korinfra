@@ -32,7 +32,10 @@ function ensureGitignore(cwd: string): void {
   let existing = '';
   try {
     existing = readFileSync(gitignorePath, 'utf8');
-  } catch { /* ENOENT — appendFileSync below will create the file */ }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    // ENOENT — appendFileSync below will create the file
+  }
   if (!existing.includes(entry)) {
     appendFileSync(gitignorePath,
       existing.length === 0

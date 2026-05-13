@@ -11,7 +11,6 @@ export const getRiCoverageTool: ToolDefinition = {
     type: 'object',
     properties: {
       profile: { type: 'string', description: 'AWS CLI profile.' },
-      region: { type: 'string', description: 'AWS region for Cost Explorer API (always us-east-1 internally). Used for credentials only.' },
       days: { type: 'number', description: 'Look-back window in days. Default 30, max 365.' },
     },
     additionalProperties: false,

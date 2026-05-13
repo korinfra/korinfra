@@ -54,7 +54,9 @@ function readPersistedToken(): string | null {
     const content = fs.readFileSync(filePath, 'utf8').trim();
     if (isValidToken(content)) return content;
     // Corrupt file — delete and regenerate
-    try { fs.unlinkSync(filePath); } catch { /* already gone */ }
+    try { fs.unlinkSync(filePath); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
     return null;
   } catch {
     return null;
@@ -81,7 +83,9 @@ function persistToken(token: string): void {
 function deletePersistedToken(): void {
   try {
     const filePath = getTokenFilePath();
-    try { fs.unlinkSync(filePath); } catch { /* ENOENT — already gone */ }
+    try { fs.unlinkSync(filePath); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`[korinfra] Warning: Failed to delete persisted token: ${msg}\n`);

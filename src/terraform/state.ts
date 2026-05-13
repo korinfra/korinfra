@@ -236,7 +236,10 @@ export async function findStateFile(dir: string, workspace?: string): Promise<st
   let workspaceEntries: Dirent[] | undefined;
   try {
     workspaceEntries = readdirSync(workspaceDir, { withFileTypes: true });
-  } catch { /* directory does not exist — no workspace state */ }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    // ENOENT — workspace directory does not exist, no workspace state
+  }
 
   if (workspaceEntries !== undefined) {
     if (workspace !== undefined && workspace !== '') {
