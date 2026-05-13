@@ -24,19 +24,18 @@ function readPackageJson(): PackageJson {
     let dir = path.dirname(fileURLToPath(import.meta.url));
     for (let i = 0; i < 5; i++) {
       const candidate = path.join(dir, 'package.json');
-      if (fs.existsSync(candidate)) {
+      try {
         cached = JSON.parse(fs.readFileSync(candidate, 'utf8')) as PackageJson;
         return cached;
-      }
+      } catch { /* ENOENT — try parent */ }
       dir = path.dirname(dir);
     }
 
     // Fallback: try cwd
-    const cwdPkg = path.join(process.cwd(), 'package.json');
-    if (fs.existsSync(cwdPkg)) {
-      cached = JSON.parse(fs.readFileSync(cwdPkg, 'utf8')) as PackageJson;
+    try {
+      cached = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')) as PackageJson;
       return cached;
-    }
+    } catch { /* not found */ }
   } catch (err: unknown) {
     // logger may not be initialized yet, use console.warn (allowed by lint rule)
     if (process.env['KORINFRA_DEBUG']) {

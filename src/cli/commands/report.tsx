@@ -722,10 +722,7 @@ function ReportGeneratingStep({
 
         // Format and write
         const formatted = formatter.format(reportData);
-        const dir = path.dirname(outputPath);
-        if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true });
-        }
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
         fs.writeFileSync(outputPath, formatted, 'utf8');
         onDone(true, outputPath, 'Report generated successfully');
       } catch (err) {

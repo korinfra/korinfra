@@ -19,7 +19,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import path from 'node:path';
-import { existsSync, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { Box, Text, useApp, useInput } from 'ink';
 import { TextInput } from '@inkjs/ui';
 
@@ -342,7 +342,7 @@ export function SecurityCommand({ args, provider, onRunAgain, onBack, onAction, 
   useEffect(() => {
     const dir = pathArg !== null ? path.resolve(pathArg) : process.cwd();
     try {
-      const hasTf = existsSync(dir) && readdirSync(dir).some(f => f.endsWith('.tf'));
+      const hasTf = readdirSync(dir).some(f => f.endsWith('.tf'));
       setHasTerraform(hasTf);
     } catch (e) {
       logger.debug({ err: e }, '[security] Failed to read directory for .tf files');

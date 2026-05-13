@@ -153,13 +153,11 @@ function writeJsonFileAtomic(
   fs.mkdirSync(dir, { recursive: true });
 
   let backupPath: string | undefined;
-  if (fs.existsSync(filePath)) {
+  try {
     backupPath = `${filePath}.bak`;
-    try {
-      fs.copyFileSync(filePath, backupPath);
-    } catch {
-      backupPath = undefined;
-    }
+    fs.copyFileSync(filePath, backupPath);
+  } catch {
+    backupPath = undefined;
   }
 
   const tempPath = path.join(
@@ -308,29 +306,34 @@ export function resolveIdeTargets(filter?: string[], scope: InstallScope = 'user
   const filtered = filter !== undefined ? candidates.filter((c) => filter.includes(c.id)) : candidates;
 
   return filtered.map((t) => {
-    const exists = fs.existsSync(t.configPath);
+    let exists = false;
     let installState: IdeInstallState = 'not-installed';
     let existingEntry: McpServerEntry | undefined;
 
-    if (exists) {
-      try {
-        const data = readJsonFile(t.configPath);
-        const servers = readServersForShape(t.shape, t.configPath, data);
-        const entry = servers['korinfra'];
-        if (entry !== undefined) {
-          existingEntry = entry;
-          const expected = korinfraMcpEntry();
-          if (
-            entry.command === expected.command &&
-            JSON.stringify(entry.args) === JSON.stringify(expected.args)
-          ) {
-            installState = 'installed';
-          } else {
-            installState = 'differs';
-          }
+    try {
+      // Single atomic read — avoids TOCTOU between existsSync and readJsonFile.
+      // readJsonFile returns {} on ENOENT; any other error is rethrown.
+      const raw = fs.readFileSync(t.configPath, 'utf8');
+      exists = true;
+      const data = JSON.parse(raw) as Record<string, unknown>;
+      const servers = readServersForShape(t.shape, t.configPath, data);
+      const entry = servers['korinfra'];
+      if (entry !== undefined) {
+        existingEntry = entry;
+        const expected = korinfraMcpEntry();
+        if (
+          entry.command === expected.command &&
+          JSON.stringify(entry.args) === JSON.stringify(expected.args)
+        ) {
+          installState = 'installed';
+        } else {
+          installState = 'differs';
         }
-      } catch {
-        // can't read/parse — treat as not-installed for display purposes
+      }
+    } catch (err) {
+      // ENOENT → exists stays false; parse/other errors → exists=true, not-installed
+      if (err instanceof Error && (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        exists = true;
       }
     }
 
