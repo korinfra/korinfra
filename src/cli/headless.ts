@@ -116,6 +116,7 @@ function setNestedConfigValue(obj: Record<string, unknown>, dotPath: string, raw
     cursor = cursor[part] as Record<string, unknown>;
   }
   const last = parts[parts.length - 1] ?? '';
+  if (last === '__proto__' || last === 'constructor' || last === 'prototype') return;
   const lower = raw.toLowerCase();
   if (lower === 'true') cursor[last] = true;
   else if (lower === 'false') cursor[last] = false;
