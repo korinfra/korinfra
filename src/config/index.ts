@@ -161,6 +161,7 @@ function setByPath(obj: Record<string, unknown>, dotPath: string, value: string)
     cursor = cursor[part] as Record<string, unknown>;
   }
   const last = parts[parts.length - 1] ?? '';
+  if (last === '__proto__' || last === 'constructor' || last === 'prototype') return;
   // Attempt numeric / boolean coercion so string env vars become proper types
   const lower = value.toLowerCase();
   if (lower === 'true') cursor[last] = true;
