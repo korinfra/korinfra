@@ -373,7 +373,10 @@ export async function loadConfig(configPath?: string): Promise<Config> {
   }
 
   // Business-logic validation (mirrors Go's Validate)
-  validate(parsed);
+  const configWarnings = validate(parsed);
+  for (const warning of configWarnings) {
+    logger.warn(warning);
+  }
 
   return parsed;
 }

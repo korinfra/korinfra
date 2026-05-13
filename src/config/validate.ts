@@ -13,8 +13,11 @@ export class ConfigValidationError extends Error {
  * allowlist check needed here. Only storage.path requires a post-parse check
  * because its default is '' and the path is auto-filled after Zod parsing.
  * Cross-field validation for thresholds happens here.
+ *
+ * @returns Non-fatal warning strings (threshold combinations that are valid but
+ *          potentially confusing). Callers should log these; they are not thrown.
  */
-export function validate(cfg: Config): void {
+export function validate(cfg: Config): string[] {
   const errs: string[] = [];
 
   if (!cfg.storage.path || cfg.storage.path.trim() === '') {
@@ -37,7 +40,85 @@ export function validate(cfg: Config): void {
     );
   }
 
+  // ── Scan: CPU threshold ordering ───────────────────────────────────────────
+  if (cfg.scan.rightsize_cpu_threshold <= cfg.scan.idle_cpu_threshold) {
+    errs.push(
+      `scan.rightsize_cpu_threshold (${cfg.scan.rightsize_cpu_threshold}) must be greater than` +
+      ` scan.idle_cpu_threshold (${cfg.scan.idle_cpu_threshold})`
+    );
+  }
+  if (cfg.scan.rds_rightsize_cpu_threshold <= cfg.scan.rds_idle_cpu_threshold) {
+    errs.push(
+      `scan.rds_rightsize_cpu_threshold (${cfg.scan.rds_rightsize_cpu_threshold}) must be greater than` +
+      ` scan.rds_idle_cpu_threshold (${cfg.scan.rds_idle_cpu_threshold})`
+    );
+  }
+
+  // ── Scan: scenario confidence bounds ───────────────────────────────────────
+  if (cfg.scan.scenario_confidence_base > cfg.scan.scenario_confidence_max) {
+    errs.push(
+      `scan.scenario_confidence_base (${cfg.scan.scenario_confidence_base}) must not exceed` +
+      ` scan.scenario_confidence_max (${cfg.scan.scenario_confidence_max})`
+    );
+  }
+  if (cfg.scan.scenario_confidence_state_base > cfg.scan.scenario_confidence_max) {
+    errs.push(
+      `scan.scenario_confidence_state_base (${cfg.scan.scenario_confidence_state_base}) must not exceed` +
+      ` scan.scenario_confidence_max (${cfg.scan.scenario_confidence_max})`
+    );
+  }
+
+  // ── AI: api_key_env must not be empty ──────────────────────────────────────
+  if (!cfg.ai.api_key_env || cfg.ai.api_key_env.trim() === '') {
+    errs.push('ai.api_key_env must not be empty');
+  }
+
+  // ── Quality: score label thresholds must descend ───────────────────────────
+  if (
+    cfg.quality.excellent_threshold <= cfg.quality.good_threshold ||
+    cfg.quality.good_threshold <= cfg.quality.fair_threshold
+  ) {
+    errs.push(
+      'quality score thresholds must be in descending order: excellent_threshold > good_threshold > fair_threshold'
+    );
+  }
+
+  // ── Quality: savings tier cutoffs must descend ─────────────────────────────
+  if (
+    cfg.quality.savings_tier_high <= cfg.quality.savings_tier_medium ||
+    cfg.quality.savings_tier_medium <= cfg.quality.savings_tier_low
+  ) {
+    errs.push(
+      'quality.savings_tier cutoffs must be in descending order: savings_tier_high > savings_tier_medium > savings_tier_low'
+    );
+  }
+
+  // ── Quality: savings percentage tiers must be ordered ─────────────────────
+  if (cfg.quality.savings_pct_high <= cfg.quality.savings_pct_medium) {
+    errs.push(
+      `quality.savings_pct_high (${cfg.quality.savings_pct_high}) must be greater than` +
+      ` quality.savings_pct_medium (${cfg.quality.savings_pct_medium})`
+    );
+  }
+
+  // ── Quality: description and title length windows ──────────────────────────
+  if (cfg.quality.title_min_length >= cfg.quality.title_max_length) {
+    errs.push('quality.title_min_length must be less than quality.title_max_length');
+  }
+  if (cfg.quality.description_partial_length >= cfg.quality.description_full_length) {
+    errs.push('quality.description_partial_length must be less than quality.description_full_length');
+  }
+
+  // ── Warnings (non-fatal) ───────────────────────────────────────────────────
+  const warnings: string[] = [];
+  if (!cfg.scan.include_idle) {
+    warnings.push(
+      'scan.idle_cpu_threshold is configured but may have no effect because scan.include_idle is false'
+    );
+  }
+
   if (errs.length > 0) {
     throw new ConfigValidationError(errs);
   }
+  return warnings;
 }
