@@ -83,10 +83,12 @@ export interface CollectorConfig {
   onServiceComplete?: (svc: string, region: string, ms: number, count: number) => void;
 }
 
+export type CollectError = { collector: string; region?: string; message: string; code?: string };
+
 export interface CollectorResult {
   resources: Resource[];
   costs: CostEntry[];
-  errors: Array<{ collector: string; region?: string; message: string; code?: string }>;
+  errors: CollectError[];
   durationMs: number;
 }
 

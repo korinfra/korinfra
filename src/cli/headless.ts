@@ -16,6 +16,7 @@ import type { InstallResult } from './commands/mcp-install-core.js';
 import { runAllChecks } from './commands/doctor-checks.js';
 import { defaultStoragePath } from '../config/paths.js';
 import { buildScanPipelineSteps, extractRecommendations, extractScanSummary } from './pipelines/scan.js';
+import type { CollectError } from '../aws/types.js';
 import { buildCostsPipelineSteps, extractAnomalies, extractCostChartData, extractTotalCost } from './pipelines/costs.js';
 import { buildResourcesPipelineSteps, extractResourceRows } from './pipelines/resources.js';
 import { buildReportPipelineSteps, extractReportResult, type ReportFormat } from './pipelines/report.js';
@@ -172,12 +173,21 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     }));
     const summary = extractScanSummary(context);
     const recs = extractRecommendations(context);
-    const scanId = String(context.results.get('save_scan') !== undefined
-      ? ((context.results.get('save_scan') as Record<string, unknown>)['scanId'] as string | number | null | undefined) ?? ''
-      : '');
+    const collectResult = context.results.get('collect') as {
+      errors?: CollectError[];
+    } | undefined;
+    const collectErrors = collectResult?.errors ?? [];
+    const scanId = summary.scanId ?? '';
+    const warningLines: string[] = collectErrors.length > 0
+      ? [
+        `Warnings: ${collectErrors.length} collection error${collectErrors.length !== 1 ? 's' : ''} — partial results`,
+        ...collectErrors.map((e) => `  - [${e.code ?? 'ERROR'}] ${e.collector}${e.region ? `@${e.region}` : ''}: ${e.message}`),
+      ]
+      : [];
     writeLines([
       'korinfra scan',
       'Status: completed',
+      ...warningLines,
       `Resources: ${summary.resourceCount}`,
       `Cost: ${formatMoney(summary.totalMonthlyCostUsd)}/mo`,
       `Recommendations: ${summary.recommendationCount}`,
@@ -1012,15 +1022,22 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
     }));
     const summary = extractScanSummary(context);
     const recs = extractRecommendations(context);
-    const scanId = String(context.results.get('save_scan') !== undefined
-      ? ((context.results.get('save_scan') as Record<string, unknown>)['scanId'] as string | number | null | undefined) ?? ''
-      : '');
+    const collectResult = context.results.get('collect') as {
+      errors?: CollectError[];
+    } | undefined;
+    const collectErrors = collectResult?.errors ?? [];
+    const scanId = summary.scanId ?? '';
     const criticalCount = recs.filter(r => r.impact === 'critical').length;
     const failOn = parseArg(commandArgs, '--fail-on');
     const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
+    const shouldFailOnPartial = failOn === 'partial' && collectErrors.length > 0;
     const out = {
       command: 'scan',
       status: 'completed',
+      ...(collectErrors.length > 0 ? {
+        partial: true,
+        errors: collectErrors,
+      } : {}),
       summary: {
         resources: summary.resourceCount,
         monthlyCostUsd: summary.totalMonthlyCostUsd,
@@ -1045,7 +1062,7 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
       ],
     };
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
-    return shouldFailOnCritical ? 1 : 0;
+    return (shouldFailOnCritical || shouldFailOnPartial) ? 1 : 0;
   }
 
   if (command === 'costs') {

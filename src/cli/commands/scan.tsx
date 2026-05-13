@@ -336,6 +336,32 @@ function makeRenderScanResult(
       );
     }
 
+    // Partial results banner — shown when one or more regions returned IAM/permission errors
+    if (summary.partial) {
+      const isNarrow = (process.stdout.columns ?? 80) <= TERMINAL_WIDTHS.narrow;
+      const regionLabel = summary.failedRegions.length > 0 ? summary.failedRegions.join(', ') : null;
+      const shortMsg = summary.failedRegions.length > 0
+        ? `Partial results — ${summary.failedRegions.length} region${summary.failedRegions.length !== 1 ? 's' : ''} skipped`
+        : `Partial results — ${summary.errorCount} collection error${summary.errorCount !== 1 ? 's' : ''}`;
+      items.push(
+        <Box key="partial-banner" flexDirection="column" marginBottom={GAP_BETWEEN_SECTIONS}>
+          {isNarrow ? (
+            <>
+              <Text color={colors.warning}>{icons.warning} {shortMsg}</Text>
+              {regionLabel !== null && <Text color={colors.warning}>Skipped: {regionLabel}</Text>}
+            </>
+          ) : (
+            <Text color={colors.warning}>
+              {icons.warning}{'  '}
+              {regionLabel !== null
+                ? `${shortMsg}: ${regionLabel}`
+                : `${shortMsg} — run with --debug for details`}
+            </Text>
+          )}
+        </Box>,
+      );
+    }
+
     const criticalCount = recs.filter((r) => r.impact === 'critical').length;
     const totalSavings = recs.reduce((s, r) => s + (r.estimatedSavingsUsd ?? 0), 0);
     items.push(

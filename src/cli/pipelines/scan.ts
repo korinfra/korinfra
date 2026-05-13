@@ -7,6 +7,7 @@
 
 import type { PipelineStep, PipelineContext } from '../components/DirectPipeline.js';
 import type { ToolResult } from '../../tools/types.js';
+import type { CollectError } from '../../aws/types.js';
 import { collectAwsTool } from '../../tools/collect-aws.js';
 import { DOT_SEP } from '../ui/text.js';
 import { asStr } from '../../utils/coerce.js';
@@ -16,6 +17,7 @@ import { detectAnomalesTool } from '../../tools/detect-anomalies.js';
 import { saveScanTool } from '../../tools/save-scan.js';
 import { scanTerraformTool } from '../../tools/scan-terraform.js';
 import { classifyResourcesTool } from '../../tools/classify-resources.js';
+import { AWS_REGION_RE } from '../utils/validateRegions.js';
 
 /** Parse a ToolResult's JSON text content. Throws on error results. */
 export function parseToolResult(result: ToolResult): unknown {
@@ -174,7 +176,10 @@ export function buildScanPipelineSteps(opts: ScanPipelineOptions = {}): Pipeline
       completedName: 'Saved scan results',
       key: 'save',
       run: async (ctx: PipelineContext) => {
-        const collectResult = ctx.results.get('collect') as { resources?: unknown[] } | undefined;
+        const collectResult = ctx.results.get('collect') as {
+          resources?: unknown[];
+          errors?: CollectError[];
+        } | undefined;
         const costsResult = ctx.results.get('costs') as { costs?: unknown[] } | undefined;
         const rulesResult = ctx.results.get('rules') as { recommendations?: unknown[] } | undefined;
 
@@ -265,7 +270,27 @@ export function buildScanPipelineSteps(opts: ScanPipelineOptions = {}): Pipeline
           : rulesRecs;
         const recommendations = [...filteredRulesRecs, ...scenarioRecs];
 
-        const result = await saveScanTool.handler({ resources, costs, recommendations, started_at: pipelineStartedAt });
+        const collectErrors = collectResult?.errors ?? [];
+        const isPartial = collectErrors.length > 0;
+        const failedRegions = [...new Set(
+          collectErrors
+            .filter((e) => e.region !== undefined && AWS_REGION_RE.test(e.region))
+            .map((e) => e.region as string),
+        )];
+
+        const result = await saveScanTool.handler({
+          resources,
+          costs,
+          recommendations,
+          started_at: pipelineStartedAt,
+          ...(isPartial ? {
+            metadata: {
+              partial: true,
+              error_count: collectErrors.length,
+              failed_regions: failedRegions,
+            },
+          } : {}),
+        });
         return parseToolResult(result);
       },
     },
@@ -282,8 +307,14 @@ export function extractScanSummary(ctx: PipelineContext): {
   scanId: string | undefined;
   tfManaged?: number;
   tfUndeployed?: number;
+  partial: boolean;
+  errorCount: number;
+  failedRegions: string[];
 } {
-  const collectResult = ctx.results.get('collect') as { resourceCount?: number } | undefined;
+  const collectResult = ctx.results.get('collect') as {
+    resourceCount?: number;
+    errors?: CollectError[];
+  } | undefined;
   const rulesResult = ctx.results.get('rules') as {
     summary?: { estimatedSavings?: number; recommendationsFound?: number };
     recommendations?: unknown[];
@@ -304,6 +335,13 @@ export function extractScanSummary(ctx: PipelineContext): {
   const tfManaged = classifyResult?.classification?.matched?.length;
   const tfUndeployed = classifyResult?.classification?.terraformOnly?.length;
 
+  const collectErrors = collectResult?.errors ?? [];
+  const failedRegions = [...new Set(
+    collectErrors
+      .filter((e) => e.region !== undefined && AWS_REGION_RE.test(e.region))
+      .map((e) => e.region as string),
+  )];
+
   return {
     resourceCount: collectResult?.resourceCount ?? 0,
     totalMonthlyCostUsd: saveResult?.total_cost ?? 0,
@@ -313,6 +351,9 @@ export function extractScanSummary(ctx: PipelineContext): {
     scanId: saveResult?.scan_id,
     ...(tfManaged !== undefined ? { tfManaged } : {}),
     ...(tfUndeployed !== undefined ? { tfUndeployed } : {}),
+    partial: collectErrors.length > 0,
+    errorCount: collectErrors.length,
+    failedRegions,
   };
 }
 
