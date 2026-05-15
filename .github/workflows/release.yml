@@ -3,17 +3,32 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 # Required secrets:
-#   NPM_TOKEN — npm automation token with publish access.
+#   NPM_TOKEN — npm granular access token with Read and Write access on the package.
 #               Add at: Settings → Secrets and variables → Actions → New repository secret
 
 permissions: read-all
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
       id-token: write
@@ -25,6 +40,7 @@ jobs:
           egress-policy: audit
 
       - name: Validate tag format
+        if: github.event_name == 'push'
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -63,12 +79,43 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
+      - name: Configure git identity
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version
+        if: github.event_name == 'workflow_dispatch'
+        id: bump
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          npm version "$BUMP" --message "chore: release v%s"
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          echo "tag=v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "name=${{ steps.bump.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install dependencies
         if: steps.node-cache.outputs.cache-hit != 'true'
         run: npm ci
 
       - name: Build distribution
         run: npm run build
+
+      - name: Push version bump commit and tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin "${{ steps.bump.outputs.tag }}"
 
       - name: Publish to npm
         run: npm publish --access public --provenance
@@ -91,5 +138,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v2
         with:
+          tag_name: ${{ steps.tag.outputs.name }}
           generate_release_notes: true
+          make_latest: true
           files: dist/*
