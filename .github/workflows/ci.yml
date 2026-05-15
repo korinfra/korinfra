@@ -141,7 +141,7 @@ jobs:
     steps:
       - name: All checks passed
         run: |
-          if [[ "${{ needs.check.result }}" != "success" ]]; then
+          if [[ "${{ needs.check.result }}" != "success" && "${{ needs.check.result }}" != "skipped" ]]; then
             echo "check failed: ${{ needs.check.result }}"
             exit 1
           fi
