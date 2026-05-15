@@ -170,18 +170,21 @@ New contributor? Check GitHub issues tagged [`good first issue`](https://github.
 
 > Maintainer only.
 
-**Automated (recommended):**
+### Automated flow (recommended)
 
 1. Ensure `main` is green (CI passes)
-2. Go to **Actions → Release → Run workflow**
+2. Go to **Actions → Prepare Release → Run workflow**
 3. Select the bump type: `patch` (bug fixes), `minor` (new features), or `major` (breaking changes)
-4. The workflow bumps `package.json` + `package-lock.json`, commits as `chore: release vX.Y.Z`, builds, publishes to npm and GitHub Packages, creates a GitHub Release, pushes the bump commit to the selected branch, and pushes the new tag to the repository
+4. The workflow:
+   - Bumps `package.json` + `package-lock.json`
+   - Prepends a placeholder entry to `CHANGELOG.md`
+   - Opens a PR titled `chore: release vX.Y.Z`
+5. Edit `CHANGELOG.md` on the release branch to replace the placeholder with the actual release notes (write directly or ask Claude Code to do it)
+6. Merge the PR — this triggers the publish workflow
+7. The publish workflow automatically: creates the git tag, builds, publishes to npm and GitHub Packages, and creates a GitHub Release with the same text as the CHANGELOG entry
 
-**Manual (alternative):**
+### Required secrets
 
-1. Ensure `npm run check` passes and `npm run build` succeeds
-2. Bump version: `npm version patch|minor|major`
-3. Push: `git push && git push --tags`
-4. GitHub Actions `release.yml` picks up the new tag and publishes automatically
-
-**Required repo secret:** `NPM_TOKEN` — generate at npmjs.com → Access Tokens → New granular access token (select the package, permission: Read and Write).
+| Secret | Description |
+|---|---|
+| `NPM_TOKEN` | npm granular access token — generate at npmjs.com → Access Tokens → New granular access token (select the package, permission: Read and Write) |

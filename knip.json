@@ -18,6 +18,8 @@
     "src/anomaly/index.ts",
     "scripts/compile.ts",
     "scripts/patch-ink-types.mjs",
+    "scripts/update-changelog.mjs",
+    "scripts/extract-changelog-entry.mjs",
     "tsdown.config.ts",
     "vitest.config.ts",
     "eslint.config.js"
