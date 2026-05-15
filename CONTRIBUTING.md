@@ -170,9 +170,18 @@ New contributor? Check GitHub issues tagged [`good first issue`](https://github.
 
 > Maintainer only.
 
-1. Ensure `npm run check` passes and `npm run build` succeeds
-2. Bump version: `npm version patch|minor|major` (updates `package.json` and creates a git tag)
-3. Push: `git push && git push --tags`
-4. GitHub Actions `release.yml` picks up the new tag, publishes to npm, and creates a GitHub Release automatically
+**Automated (recommended):**
 
-**Required repo secret:** `NPM_TOKEN` — generate at npmjs.com → Access Tokens → Automation token.
+1. Ensure `main` is green (CI passes)
+2. Go to **Actions → Release → Run workflow**
+3. Select the bump type: `patch` (bug fixes), `minor` (new features), or `major` (breaking changes)
+4. The workflow bumps `package.json` + `package-lock.json`, commits as `chore: release vX.Y.Z`, builds, publishes to npm and GitHub Packages, creates a GitHub Release, pushes the bump commit to the selected branch, and pushes the new tag to the repository
+
+**Manual (alternative):**
+
+1. Ensure `npm run check` passes and `npm run build` succeeds
+2. Bump version: `npm version patch|minor|major`
+3. Push: `git push && git push --tags`
+4. GitHub Actions `release.yml` picks up the new tag and publishes automatically
+
+**Required repo secret:** `NPM_TOKEN` — generate at npmjs.com → Access Tokens → New granular access token (select the package, permission: Read and Write).
