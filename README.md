@@ -223,7 +223,7 @@ scan:
 | **`moderate`** (default) | + ARN account IDs, public IPs, email addresses |
 | `strict` | + private IPs, external domain names |
 
-No telemetry. Local SQLite only. MCP HTTP server binds to localhost.
+No telemetry. Local SQLite only. MCP HTTP server binds to localhost (plain HTTP — see [SECURITY.md](SECURITY.md) for remote-access guidance).
 
 </details>
 

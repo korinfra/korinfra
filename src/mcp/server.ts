@@ -288,8 +288,6 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
     process.stderr.write('[korinfra] MCP auth token from MCP_AUTH_TOKEN env\n');
   }
 
-  process.stderr.write(`[korinfra] MCP HTTP transport active on port ${port}\n`);
-
   const httpServer = http.createServer((req, res) => {
     void (async () => {
       // Check remoteAddress is defined
@@ -534,7 +532,13 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
   await new Promise<void>((resolve, reject) => {
     // Bind to localhost only — prevent network exposure
     httpServer.listen(port, '127.0.0.1', () => {
-      process.stderr.write(`korinfra MCP server listening on http://localhost:${port}\n`);
+      process.stderr.write(
+        `[korinfra] WARNING: MCP HTTP transport is unencrypted (plain HTTP).\n` +
+          `[korinfra]          Auth token and resource data travel in plaintext between client and server.\n` +
+          `[korinfra]          Do not expose port ${port} over the network without a TLS-terminating proxy.\n` +
+          `[korinfra]          For remote access use an SSH tunnel: ssh -L ${port}:localhost:${port} user@host\n`,
+      );
+      process.stderr.write(`[korinfra] MCP server listening on http://localhost:${port}\n`);
       resolve();
     });
     httpServer.once('error', reject);

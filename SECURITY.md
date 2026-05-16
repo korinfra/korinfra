@@ -84,6 +84,7 @@ korinfra supports two MCP server transports for IDE integration and API access:
 - **Token storage** — Set `MCP_AUTH_TOKEN` environment variable in production to a fixed value (min 32 characters) to avoid regeneration on restart.
 - **Token validation** — Uses constant-time comparison (`timingSafeEqual`) to prevent timing side-channel attacks.
 - **Use case** — Remote tool access from external processes, CI/CD pipelines, or programmatic clients.
+- **Encryption** — None. Plain HTTP. Bearer tokens and response payloads (resource IDs, cost figures, configuration details) travel unencrypted over the underlying connection. The `127.0.0.1` bind prevents direct LAN / internet access by default; for encrypted remote access add an SSH tunnel (`ssh -L 3000:localhost:3000 user@host` — SSH wraps the wire) or a TLS-terminating reverse proxy in front (nginx / Caddy on the same host — both must be configured to strip `X-Forwarded-For` before forwarding; the server rejects requests carrying it). Do **not** bind to `0.0.0.0` or `docker run -p 0.0.0.0:3000:3000` without a TLS proxy. See `docs/mcp.md` for setup.
 
 **Important:** The HTTP server binds to `127.0.0.1` only. It does not listen on `0.0.0.0` and cannot be accessed from other machines without explicit port forwarding or proxy configuration.
 
@@ -125,7 +126,7 @@ korinfra logs a warning if it detects proxy environment variables set at the OS 
 - **Arbitrary code execution via config files** — JavaScript/TypeScript config loaders are disabled. Only `.yaml`, `.yml`, and `.json` formats are accepted. YAML is parsed with the restrictive `JSON_SCHEMA` preset (no custom tags, no `!!python/object`-style execution).
 - **Path traversal via config discovery** — korinfra uses cosmiconfig with upward traversal disabled. Config search is limited to the current working directory only — it cannot read config files in `~/` or parent directories.
 - **Sensitive data in debug logs** — debug output (when `KORINFRA_DEBUG=1`) records only service names, regions, durations, and resource counts. No ARNs, no credentials, no IPs are logged.
-- **MCP server abuse** — the HTTP server binds to `localhost` only, uses a bearer token for authentication, and enforces rate limiting per IP.
+- **MCP server abuse** — the HTTP server binds to `localhost` only, uses a bearer token for authentication, and enforces rate limiting per IP. **Note:** the HTTP transport itself is unencrypted; protection against on-the-wire eavesdropping is the deployer's responsibility (SSH tunnel or TLS-terminating proxy).
 
 ### What korinfra does NOT protect against
 
@@ -174,6 +175,7 @@ The redaction level defaults to `moderate` and is configurable via `ai.redaction
 ### Network & MCP Server
 
 - **MCP HTTP server binds to `localhost` only** — the HTTP transport (`korinfra serve --http`) is never exposed on external network interfaces.
+- **HTTP transport is unencrypted** — plain HTTP, no TLS. Auth tokens and resource payloads travel in plaintext over the underlying connection. The `localhost` bind prevents direct LAN access; for encrypted remote access, terminate TLS in a reverse proxy (nginx, Caddy) or wrap the wire in an SSH tunnel. See `docs/mcp.md` Security model for details.
 - **Bearer token authentication** — a random auth token is auto-generated at startup. Set `MCP_AUTH_TOKEN` env var to a fixed value (min 32 chars) to reuse it across restarts. Rotate by clearing the env var and restarting.
 - **Per-session state** — each MCP session is isolated. Session state is not shared between clients or persisted after disconnect.
 - **Rate limiting** — 300 requests/minute per IP on the HTTP transport (configurable in `config.mcp.http_rate_limit`). Additional rate limiting by weighted tool cost prevents expensive operations from exhausting session budgets.
