@@ -89,7 +89,7 @@ export const getCostsTool: ToolDefinition = {
         ...(granularity !== undefined ? { granularity } : {}),
         ...(groupBy !== undefined ? { groupBy } : {}),
       };
-      const { costs: allEntries } = await getCostsCached(profileConfig, costOptions);
+      const { costs: allEntries, partial: costExplorerPartial } = await getCostsCached(profileConfig, costOptions);
 
       const truncated = allEntries.length > 50;
       const entries = allEntries.slice(0, 50);
@@ -97,7 +97,11 @@ export const getCostsTool: ToolDefinition = {
         costs: entries,
         count: allEntries.length,
         truncated,
+        // Distinct from `truncated`: that flags the 50-entry tool-output slice;
+        // costExplorerPartial flags the underlying CE pagination cap (data missing from the upstream API).
+        costExplorerPartial,
         ...(truncated ? { warning: `Results truncated to 50 of ${allEntries.length} entries.` } : {}),
+        ...(costExplorerPartial ? { ceWarning: 'Cost Explorer pagination capped — returned data is partial. Narrow the date range or groupBy to retry.' } : {}),
       }, 'moderate'));
     } catch (err) {
       return errorResult(err);

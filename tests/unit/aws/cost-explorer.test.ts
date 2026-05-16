@@ -26,13 +26,18 @@ vi.mock('../../../src/aws/credentials.js', async () => ({
   getCredentials: vi.fn().mockReturnValue(async () => ({ accessKeyId: 'x', secretAccessKey: 'y' })),
 }));
 
-// Stub fs so the file-backed CE cache at ~/.korinfra/ce_cache.json is never read or written.
+// readFileSync/writeFileSync are reassignable so individual tests can drive cache file behavior.
+let readFileSyncMock: (() => string) | (() => never) = () => { throw new Error('test: no cache'); };
+const writeFileSyncCalls: Array<{ path: string; data: string }> = [];
+
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof FsModule>('node:fs');
   return {
     ...actual,
-    readFileSync: vi.fn().mockImplementation(() => { throw new Error('test: no cache'); }),
-    writeFileSync: vi.fn(),
+    readFileSync: vi.fn().mockImplementation(() => readFileSyncMock()),
+    writeFileSync: vi.fn().mockImplementation((path: string, data: string) => {
+      writeFileSyncCalls.push({ path, data });
+    }),
     mkdirSync: vi.fn(),
   };
 });
@@ -159,5 +164,203 @@ describe('getCostsCached — empty-string Amount handling (issue #20)', () => {
 
     expect(costs).toHaveLength(1);
     expect(costs[0]).not.toHaveProperty('usageQuantity');
+  });
+});
+
+describe('getCostsCached — pagination cap surfaces partial flag (issue #38)', () => {
+  beforeEach(() => {
+    sendMockImpl = () => Promise.resolve({ ResultsByTime: [] });
+  });
+
+  it('returns partial=false when the CE response has no NextPageToken', async () => {
+    sendMockImpl = () => Promise.resolve({
+      ResultsByTime: [{
+        TimePeriod: { Start: '2020-01-01', End: '2020-01-31' },
+        Groups: [{ Keys: ['AmazonEC2'], Metrics: { UnblendedCost: { Amount: '1.00', Unit: 'USD' } } }],
+      }],
+    });
+
+    const result = await getCostsCached({}, dates(2020));
+
+    expect(result.partial).toBe(false);
+    expect(result.costs).toHaveLength(1);
+  });
+
+  it('returns partial=true when CE keeps returning NextPageToken past the page cap', async () => {
+    // The CE_MAX_PAGES cap is 100. Hand back a token every call so the loop exits
+    // because the cap was hit, not because data ran out.
+    let calls = 0;
+    sendMockImpl = () => {
+      calls += 1;
+      return Promise.resolve({
+        ResultsByTime: [{
+          TimePeriod: { Start: '2021-01-01', End: '2021-01-31' },
+          Groups: [{ Keys: [`Service${calls}`], Metrics: { UnblendedCost: { Amount: '1.00', Unit: 'USD' } } }],
+        }],
+        NextPageToken: `tok-${calls}`,
+      });
+    };
+
+    const result = await getCostsCached({}, dates(2021));
+
+    expect(result.partial).toBe(true);
+    expect(calls).toBe(100); // CE_MAX_PAGES
+    expect(result.costs.length).toBe(100); // one entry per page
+  });
+
+  it('returns partial=false when CE drains all pages within the cap', async () => {
+    // Hand back a NextPageToken for 3 pages, then nothing.
+    let calls = 0;
+    sendMockImpl = () => {
+      calls += 1;
+      const body: { ResultsByTime: unknown[]; NextPageToken?: string } = {
+        ResultsByTime: [{
+          TimePeriod: { Start: '2022-01-01', End: '2022-01-31' },
+          Groups: [{ Keys: [`Svc${calls}`], Metrics: { UnblendedCost: { Amount: '2.50', Unit: 'USD' } } }],
+        }],
+      };
+      if (calls < 3) body.NextPageToken = `t-${calls}`;
+      return Promise.resolve(body);
+    };
+
+    const result = await getCostsCached({}, dates(2022));
+
+    expect(result.partial).toBe(false);
+    expect(calls).toBe(3);
+    expect(result.costs).toHaveLength(3);
+  });
+});
+
+describe('getCostsCached — cache file persistence (issue #38)', () => {
+  beforeEach(() => {
+    sendMockImpl = () => Promise.resolve({ ResultsByTime: [] });
+    readFileSyncMock = () => { throw new Error('test: no cache'); };
+    writeFileSyncCalls.length = 0;
+  });
+
+  it('writes partial=true to the cache file when CE pagination is capped', async () => {
+    let calls = 0;
+    sendMockImpl = () => {
+      calls += 1;
+      return Promise.resolve({
+        ResultsByTime: [{
+          TimePeriod: { Start: '2023-01-01', End: '2023-01-31' },
+          Groups: [{ Keys: [`S${calls}`], Metrics: { UnblendedCost: { Amount: '1.00', Unit: 'USD' } } }],
+        }],
+        NextPageToken: `t-${calls}`,
+      });
+    };
+
+    await getCostsCached({}, dates(2023));
+
+    // The last writeFileSync call holds the latest cache snapshot.
+    const lastWrite = writeFileSyncCalls.at(-1);
+    expect(lastWrite).toBeDefined();
+    const parsed = JSON.parse(lastWrite!.data) as Record<string, { partial?: boolean }>;
+    const entry = Object.values(parsed).at(-1);
+    expect(entry?.partial).toBe(true);
+  });
+
+  it('omits the partial field from the cache file when results are complete (small-JSON optimization)', async () => {
+    sendMockImpl = () => Promise.resolve({
+      ResultsByTime: [{
+        TimePeriod: { Start: '2024-01-01', End: '2024-01-31' },
+        Groups: [{ Keys: ['EC2'], Metrics: { UnblendedCost: { Amount: '1.00', Unit: 'USD' } } }],
+      }],
+    });
+
+    await getCostsCached({}, dates(2024));
+
+    const lastWrite = writeFileSyncCalls.at(-1);
+    expect(lastWrite).toBeDefined();
+    const parsed = JSON.parse(lastWrite!.data) as Record<string, { partial?: boolean }>;
+    const entry = Object.values(parsed).at(-1);
+    // exactOptionalPropertyTypes: not present at all when false (avoid noise in the cache file).
+    expect(entry).not.toHaveProperty('partial');
+  });
+
+  it('preserves partial=true across an in-process cache hit', async () => {
+    // First call: 100 pages, each with NextPageToken → cap is hit, partial=true.
+    let calls = 0;
+    sendMockImpl = () => {
+      calls += 1;
+      return Promise.resolve({
+        ResultsByTime: [{
+          TimePeriod: { Start: '2025-01-01', End: '2025-01-31' },
+          Groups: [{ Keys: [`S${calls}`], Metrics: { UnblendedCost: { Amount: '1.00', Unit: 'USD' } } }],
+        }],
+        NextPageToken: `t-${calls}`,
+      });
+    };
+
+    const first = await getCostsCached({}, dates(2025));
+    expect(first.partial).toBe(true);
+    expect(calls).toBe(100);
+
+    // Second call same key: must hit the in-process cache, not the API, and still report partial.
+    const callsBefore = calls;
+    const second = await getCostsCached({}, dates(2025));
+    expect(calls).toBe(callsBefore); // no new API calls
+    expect(second.partial).toBe(true);
+    expect(second.costs).toHaveLength(100);
+  });
+
+  it('superset cache hit (includeResourceCosts=false reusing =true entry) preserves partial flag', async () => {
+    // Seed the cache with a partial=true entry under the includeResourceCosts=true key.
+    let calls = 0;
+    sendMockImpl = () => {
+      calls += 1;
+      return Promise.resolve({
+        ResultsByTime: [{
+          TimePeriod: { Start: '2026-01-01', End: '2026-01-31' },
+          Groups: [{ Keys: [`S${calls}`], Metrics: { UnblendedCost: { Amount: '1.00', Unit: 'USD' } } }],
+        }],
+        NextPageToken: `t-${calls}`,
+      });
+    };
+
+    // First call: with includeResourceCosts=true → fills both keys' parallel calls; cap is hit on getCosts.
+    const seed = await getCostsCached({}, { ...dates(2026), includeResourceCosts: true });
+    expect(seed.partial).toBe(true);
+
+    // Second call: same date/range/granularity/groupBy but includeResourceCosts=false (default) → must hit
+    // the superset entry instead of issuing a fresh API call, and must still surface partial=true.
+    const callsBefore = calls;
+    const result = await getCostsCached({}, dates(2026));
+    expect(calls).toBe(callsBefore); // no new API calls
+    expect(result.partial).toBe(true);
+  });
+});
+
+describe('getCostsCached — concurrent callers share the same partial flag via in-flight dedup (issue #38)', () => {
+  beforeEach(() => {
+    sendMockImpl = () => Promise.resolve({ ResultsByTime: [] });
+    readFileSyncMock = () => { throw new Error('test: no cache'); };
+    writeFileSyncCalls.length = 0;
+  });
+
+  it('two concurrent callers with the same cache key share one fetch and both see partial=true', async () => {
+    let calls = 0;
+    sendMockImpl = () => {
+      calls += 1;
+      return Promise.resolve({
+        ResultsByTime: [{
+          TimePeriod: { Start: '2027-01-01', End: '2027-01-31' },
+          Groups: [{ Keys: [`S${calls}`], Metrics: { UnblendedCost: { Amount: '1.00', Unit: 'USD' } } }],
+        }],
+        NextPageToken: `t-${calls}`,
+      });
+    };
+
+    // Fire two callers BEFORE awaiting — the second must land on _ceInFlight before the first resolves.
+    const p1 = getCostsCached({}, dates(2027));
+    const p2 = getCostsCached({}, dates(2027));
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    expect(calls).toBe(100); // only ONE fetch ran (100 pages), not 200.
+    expect(r1.partial).toBe(true);
+    expect(r2.partial).toBe(true);
+    expect(r1.costs).toBe(r2.costs); // same array reference via shared promise
   });
 });
