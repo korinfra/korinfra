@@ -199,14 +199,61 @@ Workflow guidance prompts for AI assistants.
 
 ---
 
-## Security notes
+## Security model
 
-- The HTTP transport binds to `localhost` only — not exposed externally by default
+> See also: [SECURITY.md](../SECURITY.md) for the formal trust model, threat model, and credential handling notes.
+
+### Transport security
+
+- **stdio** has no network exposure — communication happens entirely over the stdin/stdout pipe of the parent process. This is the recommended default for IDE integrations.
+- **HTTP** is plain HTTP, **not HTTPS**. The Bearer auth token and all resource payloads (resource IDs, cost figures, configuration details) travel unencrypted over the underlying connection.
+- The server binds to `127.0.0.1` only, which prevents direct LAN / internet access by default. Remote access must intentionally add an encryption layer:
+  - **SSH tunnel** — recommended for ad-hoc remote access. SSH wraps the entire wire between your client and the remote host in its own encryption, so the plain-HTTP traffic only ever appears on the two `127.0.0.1` segments at each endpoint (no wire involved).
+  - **TLS-terminating reverse proxy** (nginx, Caddy) on the same host as the MCP server, fronting `127.0.0.1:3000` — recommended for production / multi-user deployments. The proxy speaks HTTPS to the world and plain HTTP over loopback to korinfra.
+  - **Avoid** binding the server to `0.0.0.0` or using `docker run -p 0.0.0.0:3000:3000` without a TLS proxy in front — both expose plain HTTP directly to the network with no encryption.
+
+**SSH tunnel (ad-hoc remote access):**
+
+```bash
+# From your laptop, forward local port 3000 to the MCP server on the remote.
+# SSH encrypts the wire; the HTTP traffic only exists in plaintext on each
+# machine's loopback interface, never on the network in between.
+ssh -L 3000:localhost:3000 user@remote-host
+```
+
+**TLS-terminating reverse proxy (production / multi-user):**
+
+```nginx
+# Example: nginx terminates TLS for mcp.example.com and forwards to
+# korinfra on 127.0.0.1:3000. Caddy works equivalently with automatic
+# certificates.
+server {
+    listen 443 ssl;
+    server_name mcp.example.com;
+    ssl_certificate     /etc/letsencrypt/live/mcp.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mcp.example.com/privkey.pem;
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        # Do NOT forward X-Forwarded-For — the MCP server rejects requests
+        # carrying that header (it has no trusted meaning for a localhost bind).
+        proxy_set_header X-Forwarded-For "";
+    }
+}
+```
+
+### Authentication
+
 - Bearer token is auto-generated and persisted to `~/.korinfra/mcp-token` on first start, then reused on restarts
-  - Set `MCP_AUTH_TOKEN` env var to override with a fixed 32+ char value
-  - Use `korinfra serve --http --rotate-token` to delete the persisted token and generate a new one
-  - Token file is created with mode `0o600` (readable/writable by owner only) on POSIX systems
-- All MCP resource data is redacted at `moderate` level before transmission
+- Set `MCP_AUTH_TOKEN` env var to override with a fixed 32+ char value
+- Use `korinfra serve --http --rotate-token` to delete the persisted token and generate a new one
+- Token file is created with mode `0o600` (readable/writable by owner only) on POSIX systems
+
+### Data redaction
+
+- All MCP resource data is redacted at `moderate` level before transmission. Redaction limits what the client sees, not what an on-the-wire eavesdropper sees — it is not a substitute for transport encryption.
+
+### Tool restrictions
+
 - The MCP server never has access to `Bash` or `WebFetch` — these are always denied
 
 ---

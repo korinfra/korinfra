@@ -304,7 +304,9 @@ Start the MCP server for IDE integration (Claude Code, Cursor, etc.).
 # stdio transport (recommended for Claude Code / Cursor)
 korinfra serve
 
-# HTTP transport (for shared/team access across multiple users)
+# HTTP transport — for additional MCP clients on the SAME machine.
+# For remote/team access, place behind a TLS-terminating proxy or an SSH
+# tunnel — the transport is plain HTTP (see SECURITY.md).
 korinfra serve --http --port 3000
 ```
 
