@@ -11,9 +11,6 @@
 
 import http from 'node:http';
 import net from 'node:net';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -29,6 +26,14 @@ import { loadConfig } from '../config/index.js';
 import { registerTools } from './tools.js';
 import { registerResources } from './resources.js';
 import { registerPrompts } from './prompts.js';
+import {
+  getTokenFilePath,
+  getTokenFileMtimeMs,
+  readPersistedTokenData,
+  persistTokenData,
+  revokeToken,
+  checkTokenFilePermissions,
+} from './token.js';
 
 export interface McpServerOptions {
   transport: 'stdio' | 'http';
@@ -36,60 +41,26 @@ export interface McpServerOptions {
   rotateToken?: boolean;
 }
 
-// ── Token persistence ────────────────────────────────────────────────────────
+const DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
 
-function getTokenFilePath(): string {
-  return path.join(os.homedir(), '.korinfra', 'mcp-token');
-}
+export type BodySizeSource = 'env' | 'config' | 'default';
 
-function isValidToken(token: string): boolean {
-  if (token.length < 32) return false;
-  // Hex or base64 chars: [0-9a-fA-F+/=]
-  return /^[0-9a-fA-F+/=]+$/.test(token);
-}
-
-function readPersistedToken(): string | null {
-  try {
-    const filePath = getTokenFilePath();
-    const content = fs.readFileSync(filePath, 'utf8').trim();
-    if (isValidToken(content)) return content;
-    // Corrupt file — delete and regenerate
-    try { fs.unlinkSync(filePath); } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+/** Precedence: KORINFRA_MCP_MAX_BODY_SIZE env > config > default. */
+export function getMaxBodySize(configValue?: number): { value: number; source: BodySizeSource } {
+  const raw = process.env['KORINFRA_MCP_MAX_BODY_SIZE'];
+  if (raw !== undefined && raw !== '') {
+    const trimmed = raw.trim();
+    const parsed = Number(trimmed);
+    if (Number.isInteger(parsed) && parsed > 0 && String(parsed) === trimmed) {
+      return { value: parsed, source: 'env' };
     }
-    return null;
-  } catch {
-    return null;
+    const fallback = configValue ?? DEFAULT_MAX_BODY_SIZE;
+    process.stderr.write(
+      `[korinfra] WARNING: KORINFRA_MCP_MAX_BODY_SIZE invalid (${raw}); using ${fallback} bytes.\n`,
+    );
   }
-}
-
-function persistToken(token: string): void {
-  try {
-    const filePath = getTokenFilePath();
-    const dir = path.dirname(filePath);
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(filePath, token, { mode: 0o600, encoding: 'utf8' });
-    // On POSIX, explicitly chmod after write for extra safety
-    if (process.platform !== 'win32') {
-      fs.chmodSync(filePath, 0o600);
-    }
-  } catch (err) {
-    // Log but don't fail — token auth will still work, just not persisted
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[korinfra] Warning: Failed to persist MCP token: ${msg}\n`);
-  }
-}
-
-function deletePersistedToken(): void {
-  try {
-    const filePath = getTokenFilePath();
-    try { fs.unlinkSync(filePath); } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[korinfra] Warning: Failed to delete persisted token: ${msg}\n`);
-  }
+  if (configValue !== undefined) return { value: configValue, source: 'config' };
+  return { value: DEFAULT_MAX_BODY_SIZE, source: 'default' };
 }
 
 /**
@@ -126,13 +97,13 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   const { transport, port = DEFAULT_MCP_PORT, rotateToken = false } = options;
 
   // Load config to get MCP settings
-  let mcpConfig: { session_cost_limit: number; max_sessions: number; http_rate_limit: number; session_idle_timeout_ms: number };
+  let mcpConfig: { session_cost_limit: number; max_sessions: number; http_rate_limit: number; session_idle_timeout_ms: number; max_body_size: number };
   try {
     const cfg = await loadConfig();
     mcpConfig = cfg.mcp;
   } catch {
     // Use defaults if config load fails
-    mcpConfig = { session_cost_limit: 1000, max_sessions: 100, http_rate_limit: 300, session_idle_timeout_ms: 1_800_000 };
+    mcpConfig = { session_cost_limit: 1000, max_sessions: 100, http_rate_limit: 300, session_idle_timeout_ms: 1_800_000, max_body_size: 10 * 1024 * 1024 };
   }
 
   if (transport === 'stdio') {
@@ -210,7 +181,7 @@ function checkRateLimit(ip: string, rateLimit: number): boolean {
 
 // ── HTTP (Streamable HTTP) ────────────────────────────────────────────────────
 
-async function startHttp(port: number, mcpConfig: { session_cost_limit: number; max_sessions: number; http_rate_limit: number; session_idle_timeout_ms: number }, rotateToken: boolean = false): Promise<void> {
+async function startHttp(port: number, mcpConfig: { session_cost_limit: number; max_sessions: number; http_rate_limit: number; session_idle_timeout_ms: number; max_body_size: number }, rotateToken: boolean = false): Promise<void> {
   schedulePeriodicFlush((records) => {
     logger.debug({ count: records.length }, '[mcp] Flushed API call log');
   });
@@ -260,32 +231,70 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
     authToken = '';
   }
 
+  // Live re-read is gated on this flag — disabled when MCP_AUTH_TOKEN is set.
+  let usingPersistedToken = false;
+  let tokenMtimeMs = 0;
+
   if (!authToken) {
     if (requireToken) {
       process.stderr.write('[korinfra] FATAL: MCP_AUTH_TOKEN must be set when MCP_HTTP_REQUIRE_TOKEN=1. Use a secret manager to inject a secure token (≥32 chars).\n');
       process.exit(1);
     }
 
-    // Check if we need to rotate (delete) the persisted token
+    const tokenPath = getTokenFilePath();
+    usingPersistedToken = true;
+
     if (rotateToken) {
-      deletePersistedToken();
-    }
-
-    // Try to load persisted token
-    authToken = readPersistedToken() ?? '';
-
-    if (authToken) {
-      const tokenPath = getTokenFilePath();
-      process.stderr.write(`[korinfra] MCP auth token loaded from ${tokenPath}\n`);
+      try {
+        const rotated = revokeToken();
+        authToken = rotated.token;
+        process.stderr.write(`[korinfra] MCP auth token rotated (persisted to ${tokenPath}, v${rotated.version})\n`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[korinfra] FATAL: --rotate-token failed: ${msg}\n`);
+        process.exit(1);
+      }
     } else {
-      // Generate new token and persist
-      authToken = randomBytes(32).toString('hex');
-      const tokenPath = getTokenFilePath();
-      persistToken(authToken);
-      process.stderr.write(`[korinfra] MCP auth token generated (persisted to ${tokenPath})\n`);
+      const loaded = readPersistedTokenData();
+      if (loaded) {
+        authToken = loaded.token;
+        process.stderr.write(`[korinfra] MCP auth token loaded from ${tokenPath} (v${loaded.version})\n`);
+      } else {
+        authToken = randomBytes(32).toString('hex');
+        try {
+          persistTokenData(authToken, 1);
+          process.stderr.write(`[korinfra] MCP auth token generated (persisted to ${tokenPath}, v1)\n`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`[korinfra] WARNING: MCP auth token generated but NOT persisted (${msg}). Token will be lost on restart.\n`);
+        }
+      }
     }
+    tokenMtimeMs = getTokenFileMtimeMs();
+    checkTokenFilePermissions();
   } else {
-    process.stderr.write('[korinfra] MCP auth token from MCP_AUTH_TOKEN env\n');
+    process.stderr.write('[korinfra] MCP auth token from MCP_AUTH_TOKEN env (version tracking and live rotation disabled)\n');
+  }
+
+  const { value: maxBodySize, source: maxBodySizeSource } = getMaxBodySize(mcpConfig.max_body_size);
+  if (maxBodySize !== DEFAULT_MAX_BODY_SIZE) {
+    const sourceLabel = maxBodySizeSource === 'env' ? 'KORINFRA_MCP_MAX_BODY_SIZE' : 'mcp.max_body_size config';
+    process.stderr.write(`[korinfra] MCP HTTP max body size: ${maxBodySize} bytes (${sourceLabel})\n`);
+  }
+
+  function maybeReloadTokenFromDisk(): void {
+    if (!usingPersistedToken) return;
+    const statMtime = getTokenFileMtimeMs();
+    // Reload on any mtime change (not just newer) — handles restore-from-backup
+    // where the replacement file may carry an older mtime than the cached one.
+    if (statMtime === 0 || statMtime === tokenMtimeMs) return;
+    const reloaded = readPersistedTokenData();
+    if (reloaded && reloaded.token !== authToken) {
+      authToken = reloaded.token;
+      logger.debug({ version: reloaded.version }, '[mcp] Reloaded rotated auth token');
+    }
+    // Bump even on read failure so we don't retry on every request.
+    tokenMtimeMs = statMtime;
   }
 
   const httpServer = http.createServer((req, res) => {
@@ -327,6 +336,8 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
         res.end(JSON.stringify({ error: 'Cross-origin requests are not allowed' }));
         return;
       }
+
+      maybeReloadTokenFromDisk();
 
       // Bearer token auth — hash both sides before comparing to prevent timing side-channel.
       const authHeader = req.headers['authorization'] ?? '';
@@ -377,7 +388,7 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
       // Collect request body for POST
       let body: string | null;
       try {
-        body = await readBody(req);
+        body = await readBody(req, maxBodySize);
       } catch (err) {
         if (err instanceof Error && err.message === 'Request body too large') {
           res.writeHead(413, { 'Content-Type': 'text/plain' });
@@ -539,6 +550,10 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
           `[korinfra]          For remote access use an SSH tunnel: ssh -L ${port}:localhost:${port} user@host\n`,
       );
       process.stderr.write(`[korinfra] MCP server listening on http://localhost:${port}\n`);
+      process.stderr.write(
+        `[korinfra] NOTE: designed for one trusted client at a time; concurrent clients share state.\n` +
+          `[korinfra]       For isolated sessions, start separate servers on different ports.\n`,
+      );
       resolve();
     });
     httpServer.once('error', reject);
@@ -564,14 +579,12 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const MAX_BODY_SIZE = 1 * 1024 * 1024; // 1 MB
-
-function readBody(req: http.IncomingMessage): Promise<string | null> {
+function readBody(req: http.IncomingMessage, maxSize: number): Promise<string | null> {
   return new Promise((resolve, reject) => {
     const contentType = req.headers['content-type'] ?? '';
     const isJson = contentType.includes('application/json');
     const declaredLen = Number(req.headers['content-length']);
-    if (Number.isFinite(declaredLen) && declaredLen > MAX_BODY_SIZE) {
+    if (Number.isFinite(declaredLen) && declaredLen > maxSize) {
       reject(new Error('Request body too large'));
       return;
     }
@@ -579,7 +592,7 @@ function readBody(req: http.IncomingMessage): Promise<string | null> {
     let totalSize = 0;
     req.on('data', (chunk: Buffer) => {
       totalSize += chunk.length;
-      if (totalSize > MAX_BODY_SIZE) {
+      if (totalSize > maxSize) {
         req.destroy();
         reject(new Error('Request body too large'));
         return;

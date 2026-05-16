@@ -220,6 +220,7 @@ export function defaults(): Config {
       max_sessions: 100,
       http_rate_limit: 300,
       session_idle_timeout_ms: 1_800_000,
+      max_body_size: 10 * 1024 * 1024,
     },
   };
 }

@@ -265,6 +265,7 @@ const MCPConfigSchema = z.object({
   max_sessions: z.number().int().positive().default(100),
   http_rate_limit: z.number().int().positive().default(300),
   session_idle_timeout_ms: z.number().int().min(60_000).default(1_800_000),
+  max_body_size: z.number().int().positive().default(10 * 1024 * 1024),
 });
 
 // ─── Top-level Config ─────────────────────────────────────────────────────────
