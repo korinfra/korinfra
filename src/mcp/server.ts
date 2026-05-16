@@ -534,7 +534,7 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
     httpServer.listen(port, '127.0.0.1', () => {
       process.stderr.write(
         `[korinfra] WARNING: MCP HTTP transport is unencrypted (plain HTTP).\n` +
-          `[korinfra]          Auth token and resource data travel in plaintext to the client.\n` +
+          `[korinfra]          Auth token and resource data travel in plaintext between client and server.\n` +
           `[korinfra]          Do not expose port ${port} over the network without a TLS-terminating proxy.\n` +
           `[korinfra]          For remote access use an SSH tunnel: ssh -L ${port}:localhost:${port} user@host\n`,
       );
