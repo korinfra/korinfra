@@ -240,6 +240,7 @@ describe('getCostsTool — handler', () => {
     mockGetCostsCached.mockResolvedValue({
       costs: [{ service: 'Amazon EC2', amount: 4523.76, unit: 'USD', startDate: '2024-01-01', endDate: '2024-01-31', granularity: 'MONTHLY' }],
       resourceCosts: new Map(),
+      partial: false,
     });
     const r1 = await getCostsTool.handler({ startDate: '2024-01-01', endDate: '2024-01-31' });
     expect(r1.isError).toBeUndefined();
@@ -250,6 +251,7 @@ describe('getCostsTool — handler', () => {
     mockGetCostsCached.mockResolvedValue({
       costs: [],
       resourceCosts: new Map(),
+      partial: false,
     });
     await getCostsTool.handler({ profile: 'staging' });
     expect(mockGetCostsCached).toHaveBeenCalledWith(expect.objectContaining({ profile: 'staging' }), expect.any(Object));

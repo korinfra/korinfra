@@ -15,10 +15,12 @@ import { throttledCall } from '../rate-limiter.js';
 import pLimit from 'p-limit';
 import { tagsToMap } from '../utils.js';
 import { logger } from '../../utils/logger.js';
+import { LruTtl } from '../../utils/lru-ttl.js';
 import { dbg } from '../debug.js';
 
 const S3_REQUEST_HANDLER = new NodeHttpHandler({ connectionTimeout: 3_000, socketTimeout: 15_000 });
-const _bucketRegionCache = new Map<string, string>();
+// Bounded so long-running mcp serve sessions don't accrete one entry per ever-seen bucket name.
+const _bucketRegionCache = new LruTtl<string, string>(1000, 6 * 60 * 60 * 1000);
 
 async function getBucketLocation(
   client: S3Client,

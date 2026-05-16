@@ -10,3 +10,8 @@ export { getVersion, getVersionInfo } from './version.js';
 export type { VersionInfo } from './version.js';
 
 export { asStr } from './coerce.js';
+
+export { LruTtl } from './lru-ttl.js';
+
+export { paginateAll } from './pagination.js';
+export type { PaginateOptions, PaginateResult } from './pagination.js';

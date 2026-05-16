@@ -387,14 +387,25 @@ export async function collectAll(
       }
       const t_ce = Date.now();
       dbg('CE start (cached parallel)');
-      const { costs: costEntries, resourceCosts: resourceCostMap } = await getCostsCached(
+      const { costs: costEntries, resourceCosts: resourceCostMap, partial: cePartial } = await getCostsCached(
         credOptions,
         { ...costOptions, includeResourceCosts: config.includeResourceCosts ?? false, ...(config.costExplorerCacheTtlMs !== undefined ? { cacheTtlMs: config.costExplorerCacheTtlMs } : {}) },
         signal,
       );
       timings.push({ svc: 'cost_explorer', region: 'us-east-1', ms: Date.now() - t_ce, count: costEntries.length });
-      dbg(`CE done — ${Date.now() - t_ce}ms costs:${costEntries.length} resourceCosts:${resourceCostMap.size}`);
+      dbg(`CE done — ${Date.now() - t_ce}ms costs:${costEntries.length} resourceCosts:${resourceCostMap.size} partial:${String(cePartial)}`);
       costs.push(...costEntries);
+
+      // Surface CE pagination truncation through the standard error channel so downstream
+      // dashboards / reporters see it. Code constant: 'CostExplorerTruncated'.
+      if (cePartial) {
+        errors.push({
+          collector: 'cost_explorer',
+          region: 'us-east-1',
+          message: 'Cost Explorer pagination capped — results are partial',
+          code: 'CostExplorerTruncated',
+        });
+      }
 
       // Enrich resources with actual Cost Explorer per-resource spend
       for (const resource of resources) {
