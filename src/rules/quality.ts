@@ -7,6 +7,7 @@
 
 import type { Recommendation } from './types.js';
 import type { QualityConfig } from '../config/types.js';
+import { clampConfidence } from '../utils/numeric-guards.js';
 
 export function qualityLabel(score: number, cfg: QualityConfig): string {
   if (score >= cfg.excellent_threshold) return 'excellent';
@@ -54,8 +55,7 @@ function scoreActionabilityBonus(rec: Recommendation, cfg: QualityConfig): numbe
     bonus += 5;
   }
   // Smooth confidence bonus: linear ramp from 0 → max_bonus over [threshold, 1.0].
-  // Replaces previous binary cliff at confidence > threshold.
-  const conf = rec.confidence ?? 0;
+  const conf = clampConfidence(rec.confidence ?? 0);
   const start = cfg.actionability_confidence_threshold;
   if (conf > start) {
     const span = Math.max(1 - start, 1e-6);
@@ -148,7 +148,7 @@ function scoreRemediation(rec: Recommendation): number {
 }
 
 function scoreConfidence(rec: Recommendation): number {
-  return Math.round((rec.confidence ?? 0) * 10);
+  return Math.round(clampConfidence(rec.confidence ?? 0) * 10);
 }
 
 /**

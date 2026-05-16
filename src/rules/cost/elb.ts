@@ -4,23 +4,28 @@
  */
 
 import type { Resource } from '../../aws/types.js';
-import type { Recommendation } from '../types.js';
+import type { Recommendation, RuleContext } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { strConfig, boolConfig, numConfig, daysSince, sanitizeResourceName, normalizeToMonth, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
+import { strConfig, boolConfig, numConfig, daysSince, sanitizeResourceName, normalizeToMonth, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization } from './helpers.js';
+import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { HOURS_PER_MONTH, ALB_BASE_HOURLY } from '../../pricing/resources.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
 /** ELB-001: Load balancer with 0 healthy targets. */
-export function checkELB001(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkELB001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'load_balancer' && r.type !== 'alb' && r.type !== 'nlb' && r.type !== 'elb') return null;
   if (!('healthy_target_count' in r.configuration)) return null;
   const healthyTargets = numConfig(r, 'healthy_target_count');
   if (healthyTargets > 0) return null;
   const ageDays = daysSince(r.launchTime);
   if (ageDays === null || ageDays < cfg.elbIdleDays) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = getMonthlyCostStrict(r);
+  if (monthlyCost === null) {
+    ctx?.warn('ELB-001', r.id, r.type, 'monthly_cost missing or invalid');
+    return null;
+  }
   const filePath = strConfig(r, 'file_path');
   return {
     ruleId: 'ELB-001',
@@ -31,9 +36,9 @@ export function checkELB001(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `Load balancers charge ~$${ALB_BASE_HOURLY}/hr (~$${(ALB_BASE_HOURLY * HOURS_PER_MONTH).toFixed(0)}/mo) regardless of traffic. A load balancer with no healthy targets serves no purpose and should be deleted.`,
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: monthlyCost,
+    estimatedSavings: guardSavings(monthlyCost),
     suggestedAction: 'delete',
-    confidence: 0.9,
+    confidence: clampConfidence(0.9),
     filePath,
     currentConfig: { healthy_target_count: 0, type: r.type },
     suggestedConfig: { action: 'delete' },
@@ -70,9 +75,9 @@ export function checkLB002(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `A load balancer with zero healthy targets serves no traffic. The ALB fixed charge of $${ALB_BASE_HOURLY}/hr applies regardless of traffic or target health. If this state persists for 7+ days, the load balancer is idle.`,
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'delete',
-    confidence: confidenceFromUtilization(0.9, r.utilization),
+    confidence: clampConfidence(confidenceFromUtilization(0.9, r.utilization)),
     filePath,
     currentConfig: { healthy_target_count: 0, type: r.type },
     suggestedConfig: { action: 'delete' },
@@ -101,9 +106,9 @@ export function checkELB002(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'Classic Load Balancers lack HTTP/2, WebSocket, and path/host-based routing. ALB offers better LCU efficiency for modern workloads. AWS is phasing out CLB for new features.',
     impact: 'medium',
     risk: 'medium',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_to_alb',
-    confidence: 0.85,
+    confidence: clampConfidence(0.85),
     filePath,
     currentConfig: { lb_type: 'classic' },
     suggestedConfig: { lb_type: 'application' },
@@ -138,7 +143,7 @@ export function checkELB003(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'add_https_listener',
-    confidence: 0.9,
+    confidence: clampConfidence(0.9),
     filePath,
     currentConfig: { has_https_listener: false, lb_type: 'application' },
     suggestedConfig: { has_https_listener: true },

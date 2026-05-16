@@ -71,6 +71,32 @@ describe('checkRDS001 — idle RDS instance', () => {
   it('fires for 30d period', () => {
     expect(checkRDS001(makeRDS({ utilization: makeUtil(0.1, 1, '30d') }), cfg)).not.toBeNull();
   });
+
+  // Issue #37 regression — confidence never exceeds 1.0 even when base × 1.05 is hit
+  it('confidence is always clamped to [0,1] regardless of multipliers', () => {
+    // Base 0.99 × 1.05 = 1.0395 would have leaked through before; now clamped
+    const r = makeRDS({ utilization: makeUtil(0.1, 1, '30d') });
+    const rec = checkRDS001(r, cfg);
+    expect(rec).not.toBeNull();
+    expect(rec!.confidence).toBeGreaterThanOrEqual(0);
+    expect(rec!.confidence).toBeLessThanOrEqual(1);
+  });
+
+  // Strict cost gating — RDS-001 returns null when monthly_cost is missing/invalid
+  // instead of silently emitting estimatedSavings: 0. The rule context receives
+  // a warning so JSON consumers can surface the skipped resource.
+  it('skips and emits a warning when monthly_cost is NaN', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeRDS({ utilization: makeUtil(0.1), configuration: { monthlyCost: NaN } });
+    expect(checkRDS001(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'RDS-001', resourceId: r.id });
+  });
 });
 
 // ─── RDS-003: Oversized RDS ───────────────────────────────────────────────────

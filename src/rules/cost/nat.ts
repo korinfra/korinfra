@@ -8,6 +8,7 @@ import type { Recommendation } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
 import { strConfig, normalizeToMonth, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
+import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { NAT_GATEWAY_HOURLY, NAT_GATEWAY_PER_GB, HOURS_PER_MONTH } from '../../pricing/resources.js';
 
 // NAT Gateway consolidation: merging multiple NAT GWs into one reduces per-AZ charges.
@@ -37,9 +38,9 @@ export function checkNET001(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `NAT Gateway fixed cost is ~$${(NAT_GATEWAY_HOURLY * HOURS_PER_MONTH).toFixed(0)}/mo. A t3.nano NAT instance costs ~$3.50/mo for ${throughputGB.toFixed(3)} GB/mo traffic (threshold: ${cfg.natLowTrafficGB} GB/mo).`,
     impact: 'medium',
     risk: 'medium',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'replace_with_nat_instance',
-    confidence: confidenceFromUtilization(0.7, r.utilization),
+    confidence: clampConfidence(confidenceFromUtilization(0.7, r.utilization)),
     filePath,
     currentConfig: { type: 'nat_gateway', throughput_gb_mo: throughputGB },
     suggestedConfig: { type: 'nat_instance_t3_nano' },
@@ -76,9 +77,9 @@ export function checkNAT001(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `S3 and DynamoDB VPC Gateway Endpoints are free. Traffic routed through a NAT Gateway to these services costs $${NAT_GATEWAY_PER_GB}/GB. At low volumes the fixed hourly NAT charge ($${NAT_GATEWAY_HOURLY}/hr = ~$32/mo) dominates.`,
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'add_vpc_endpoints',
-    confidence: confidenceFromUtilization(0.7, r.utilization),
+    confidence: clampConfidence(confidenceFromUtilization(0.7, r.utilization)),
     filePath,
     currentConfig: { type: 'nat_gateway', throughput_gb_mo: throughputGB },
     suggestedConfig: { add_vpc_endpoints: ['s3', 'dynamodb'] },

@@ -490,4 +490,69 @@ describe('collectS3', () => {
     expect(multiResources).toHaveLength(3);
     expect(multiResources.map(r => r.name).sort()).toEqual(['bucket-alpha', 'bucket-beta', 'bucket-gamma']);
   });
+
+  // Issue #37, finding #7 — distinguish "feature absent" semantic errors from
+  // transient failures so downstream rules can suppress false positives.
+  describe('three-state collector results', () => {
+    function makeFailingS3Client(
+      buckets: Array<{ Name: string }>,
+      perCommandError: Record<string, { name: string }>,
+    ) {
+      const sendMock = vi.fn().mockImplementation((command: { constructor: { name: string }; input?: { Bucket?: string } }) => {
+        const name = command.constructor.name;
+        if (name === 'ListBucketsCommand') return Promise.resolve({ Buckets: buckets });
+        if (name === 'GetBucketLocationCommand') return Promise.resolve({ LocationConstraint: 'us-east-1' });
+        if (name === 'GetBucketTaggingCommand') return Promise.resolve({ TagSet: [] });
+        const err = perCommandError[name];
+        if (err) throw Object.assign(new Error(err.name), { name: err.name });
+        // Default OK paths
+        if (name === 'GetBucketVersioningCommand') return Promise.resolve({ Status: 'Enabled' });
+        if (name === 'GetBucketLifecycleConfigurationCommand') return Promise.resolve({ Rules: [{ ID: 'r' }] });
+        if (name === 'GetBucketEncryptionCommand') return Promise.resolve({ ServerSideEncryptionConfiguration: { Rules: [{}] } });
+        if (name === 'ListBucketIntelligentTieringConfigurationsCommand') return Promise.resolve({ IntelligentTieringConfigurationList: [] });
+        return Promise.resolve({});
+      });
+      return { send: sendMock, config: { credentials: undefined } } as never;
+    }
+
+    it('treats NoSuchLifecycleConfiguration as definitive (lifecycle = 0)', async () => {
+      const client = makeFailingS3Client(
+        [{ Name: 'b1' }],
+        { GetBucketLifecycleConfigurationCommand: { name: 'NoSuchLifecycleConfiguration' } },
+      );
+      const resources = await collectS3(client, 'us-east-1', undefined, true);
+      expect(resources[0]!.configuration['lifecycle_rules_count']).toBe(0);
+      expect(resources[0]!.configuration['has_lifecycle']).toBe(false);
+      expect(resources[0]!.configuration['_checkFailed']).toBeUndefined();
+    });
+
+    it('treats ServerSideEncryptionConfigurationNotFoundError as definitive (encryption = false)', async () => {
+      const client = makeFailingS3Client(
+        [{ Name: 'b2' }],
+        { GetBucketEncryptionCommand: { name: 'ServerSideEncryptionConfigurationNotFoundError' } },
+      );
+      const resources = await collectS3(client, 'us-east-1', undefined, true);
+      expect(resources[0]!.configuration['encryption_enabled']).toBe(false);
+      expect(resources[0]!.configuration['_checkFailed']).toBeUndefined();
+    });
+
+    it('treats AccessDenied / 5xx errors as "unknown" with _checkFailed list', async () => {
+      const client = makeFailingS3Client(
+        [{ Name: 'b3' }],
+        {
+          GetBucketEncryptionCommand: { name: 'AccessDenied' },
+          GetBucketLifecycleConfigurationCommand: { name: 'InternalError' },
+          GetBucketVersioningCommand: { name: 'ServiceUnavailable' },
+        },
+      );
+      const resources = await collectS3(client, 'us-east-1', undefined, true);
+      const cfg = resources[0]!.configuration;
+      expect(cfg['encryption_enabled']).toBe('unknown');
+      expect(cfg['lifecycle_rules_count']).toBe('unknown');
+      expect(cfg['has_lifecycle']).toBe('unknown');
+      expect(cfg['versioning_enabled']).toBe('unknown');
+      const failed = cfg['_checkFailed'] as string[];
+      expect(failed).toEqual(expect.arrayContaining(['versioning', 'lifecycle', 'encryption']));
+    });
+  });
 });

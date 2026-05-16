@@ -4,20 +4,25 @@
  */
 
 import type { Resource } from '../../aws/types.js';
-import type { Recommendation } from '../types.js';
+import type { Recommendation, RuleContext } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { suggestRDSRightsize, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
+import { suggestRDSRightsize, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization } from './helpers.js';
+import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { RDS_GP2_STORAGE_PER_GB, RDS_GP3_STORAGE_PER_GB, RDS_IO1_STORAGE_PER_GB, RDS_IO2_STORAGE_PER_GB, estimateRDSCostSync } from '../../pricing/resources.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
 /** RDS-001: Idle RDS instance (CPU avg < threshold). */
-export function checkRDS001(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkRDS001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'rds_instance' || !r.utilization) return null;
   if (r.utilization.cpuAverage >= cfg.rdsIdleCPUThreshold) return null;
   if (r.utilization.dataPoints <= 0) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = getMonthlyCostStrict(r);
+  if (monthlyCost === null) {
+    ctx?.warn('RDS-001', r.id, r.type, 'monthly_cost missing or invalid');
+    return null;
+  }
   const filePath = strConfig(r, 'file_path');
   const confidence = confidenceFromUtilization(0.85, r.utilization);
   return {
@@ -29,9 +34,9 @@ export function checkRDS001(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'Idle RDS instances are typically staging or dev databases forgotten after use. Stopping saves compute costs; snapshot+delete saves storage too.',
     impact: 'high',
     risk: 'medium',
-    estimatedSavings: monthlyCost * cfg.rdsIdleMultiplier,
+    estimatedSavings: guardSavings(monthlyCost * cfg.rdsIdleMultiplier),
     suggestedAction: 'stop_or_delete',
-    confidence,
+    confidence: clampConfidence(confidence),
     filePath,
     currentConfig: { instance_class: r.instanceType, cpu_avg_pct: r.utilization.cpuAverage },
     suggestedConfig: { action: 'stop_or_delete' },
@@ -66,7 +71,7 @@ export function checkRDS002(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enable_multi_az',
-    confidence: 0.9,
+    confidence: clampConfidence(0.9),
     filePath,
     currentConfig: { multi_az: false },
     suggestedConfig: { multi_az: true },
@@ -102,6 +107,7 @@ export function checkRDS003(r: Resource, cfg: Cfg): Recommendation | null {
   } else {
     savings = monthlyCost * cfg.rdsRightsizeMultiplier;
   }
+  savings = guardSavings(savings);
 
   let confidence = confidenceFromUtilization(0.80, r.utilization);
   const descriptionNotes: string[] = [];
@@ -129,9 +135,9 @@ export function checkRDS003(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `CPU avg ${r.utilization.cpuAverage.toFixed(1)}% is well below the ${cfg.rdsRightsizeCPUThreshold}% RDS rightsizing threshold.`,
     impact: 'high',
     risk: 'medium',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: `rightsize_to_${suggestedType}`,
-    confidence,
+    confidence: clampConfidence(confidence),
     filePath,
     currentConfig: { instance_class: r.instanceType, cpu_avg_pct: r.utilization.cpuAverage },
     suggestedConfig: { instance_class: suggestedType },
@@ -162,7 +168,7 @@ export function checkRDS004(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'high',
     estimatedSavings: 0,
     suggestedAction: 'enable_storage_encryption',
-    confidence: 0.99,
+    confidence: clampConfidence(0.99),
     filePath,
     currentConfig: { storage_encrypted: false },
     suggestedConfig: { storage_encrypted: true },
@@ -193,7 +199,7 @@ export function checkRDS005(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'disable_public_access',
-    confidence: 0.99,
+    confidence: clampConfidence(0.99),
     filePath,
     currentConfig: { publicly_accessible: true },
     suggestedConfig: { publicly_accessible: false },
@@ -213,7 +219,7 @@ export function checkRDS006(r: Resource, cfg: Cfg): Recommendation | null {
   if (r.type !== 'rds_instance') return null;
   if (strConfig(r, 'storage_type') !== 'gp2') return null;
   const monthlyCost = getMonthlyCost(r);
-  const savings = monthlyCost * cfg.rdsGP2GP3Multiplier;
+  const savings = guardSavings(monthlyCost * cfg.rdsGP2GP3Multiplier);
   const filePath = strConfig(r, 'file_path');
   return {
     ruleId: 'RDS-006',
@@ -224,9 +230,9 @@ export function checkRDS006(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'RDS gp3 storage costs $0.115/GB/mo vs gp2\'s $0.138/GB/mo. Migration can be done with no downtime via a storage modification.',
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_storage_to_gp3',
-    confidence: 0.95,
+    confidence: clampConfidence(0.95),
     filePath,
     currentConfig: { storage_type: 'gp2' },
     suggestedConfig: { storage_type: 'gp3' },
@@ -248,7 +254,7 @@ export function checkRDS007(r: Resource, cfg: Cfg): Recommendation | null {
   const nonProdEnvs = new Set(['dev', 'development', 'staging', 'test']);
   if (!nonProdEnvs.has(env)) return null;
   const monthlyCost = getMonthlyCost(r);
-  const savings = monthlyCost * cfg.rdsMultiAZMultiplier;
+  const savings = guardSavings(monthlyCost * cfg.rdsMultiAZMultiplier);
   const filePath = strConfig(r, 'file_path');
   return {
     ruleId: 'RDS-007',
@@ -259,9 +265,9 @@ export function checkRDS007(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'Multi-AZ creates a synchronous standby replica in a second AZ, doubling the instance cost. For dev/staging environments this is typically unnecessary.',
     impact: 'high',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'disable_multi_az_non_prod',
-    confidence: 0.85,
+    confidence: clampConfidence(0.85),
     filePath,
     currentConfig: { multi_az: true, environment: env },
     suggestedConfig: { multi_az: false },
@@ -325,6 +331,8 @@ export function checkRDS008(r: Resource, cfg: Cfg): Recommendation | null {
     savings = monthlyCost * cfg.rdsGravitonMultiplier;
     confidence = 0.65;
   }
+  savings = guardSavings(savings);
+  confidence = clampConfidence(confidence);
 
   const filePath = strConfig(r, 'file_path');
   return {
@@ -336,9 +344,9 @@ export function checkRDS008(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `AWS Graviton RDS instances offer better price/performance. ${cls} → ${suggestedClass} saves ~15%/mo.`,
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: `migrate_to_graviton_${suggestedClass}`,
-    confidence,
+    confidence: clampConfidence(confidence),
     filePath,
     currentConfig: { instance_class: cls },
     suggestedConfig: { instance_class: suggestedClass },
@@ -354,17 +362,19 @@ export function checkRDS008(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** RDS-009: Idle RDS by connection count. */
-export function checkRDS009(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkRDS009(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'rds_instance' || !r.utilization) return null;
-  // If CPU is also near-zero, RDS-001 (idle by CPU) handles the recommendation
   if (r.utilization.cpuAverage < cfg.rdsIdleCPUThreshold) return null;
   const connections = r.utilization.connectionCount ?? 0;
   if (connections >= cfg.rdsConnectionIdleThreshold) return null;
   if (r.utilization.dataPoints <= 0) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = getMonthlyCostStrict(r);
+  if (monthlyCost === null) {
+    ctx?.warn('RDS-009', r.id, r.type, 'monthly_cost missing or invalid');
+    return null;
+  }
   const filePath = strConfig(r, 'file_path');
-  // Stopping an idle RDS instance eliminates ~95% of compute cost (storage charges remain)
-  const savings = monthlyCost * cfg.rdsIdleMultiplier;
+  const savings = guardSavings(monthlyCost * cfg.rdsIdleMultiplier);
 
   let confidence = confidenceFromUtilization(0.90, r.utilization);
   let peakNote = '';
@@ -383,9 +393,9 @@ export function checkRDS009(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'Zero database connections over 7+ days strongly indicates an abandoned or forgotten database. Stopping saves compute cost (~95% of compute); deleting with a snapshot saves storage too.',
     impact: 'high',
     risk: 'medium',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'stop_or_delete',
-    confidence,
+    confidence: clampConfidence(confidence),
     filePath,
     currentConfig: { instance_class: r.instanceType, connections_average: connections },
     suggestedConfig: { action: 'stop_or_delete' },
@@ -408,7 +418,7 @@ export function checkRDS010(r: Resource, cfg: Cfg): Recommendation | null {
   if (r.utilization.dataPoints < 100) return null;
   const monthlyCost = getMonthlyCost(r);
   if (monthlyCost < cfg.rdsMinCostForRI) return null;
-  const savings = monthlyCost * cfg.rdsRIDiscountMultiplier;
+  const savings = guardSavings(monthlyCost * cfg.rdsRIDiscountMultiplier);
   return {
     ruleId: 'RDS-010',
     resourceId: r.id,
@@ -418,9 +428,9 @@ export function checkRDS010(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `RDS instance ${r.name} has CPU average of ${r.utilization.cpuAverage.toFixed(1)}% over 30 days — it is actively used and stable (threshold: ${cfg.rdsRICPUThreshold}% CPU, $${cfg.rdsMinCostForRI}/mo min cost). A 1-year No-Upfront Reserved Instance for ${r.instanceType} saves ~33% compared to on-demand pricing.`,
     impact: 'high',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'purchase_rds_reserved_instance',
-    confidence: 0.70,
+    confidence: clampConfidence(0.70),
     currentConfig: { pricing: 'on_demand', instance_class: r.instanceType, cpu_avg_pct: r.utilization.cpuAverage, running_days: 30 },
     suggestedConfig: { pricing: 'reserved_1yr_no_upfront' },
     patchContent: `# Purchase 1-year No-Upfront RDS Reserved Instance for ${sanitizeResourceName(r.instanceType)} ${sanitizeResourceName(r.region)}\n# Check AWS Cost Explorer > RI recommendations first to avoid duplicates`,
@@ -452,7 +462,7 @@ export function checkRDS011(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enable_automated_backups',
-    confidence: 0.95,
+    confidence: clampConfidence(0.95),
     filePath,
     currentConfig: { backup_retention_period: 0 },
     suggestedConfig: { backup_retention_period: 7 },
@@ -552,7 +562,7 @@ export function checkRDS012(r: Resource, cfg: Cfg): Recommendation | null {
   const ratePerVcpuHour = monthsInExt >= 12 ? EXTENDED_SUPPORT_RATE_YR2 : EXTENDED_SUPPORT_RATE_YR1;
 
   const vcpus = rdsVCpuFromInstanceClass(r.instanceType || strConfig(r, 'instance_class'));
-  const savings = vcpus * ratePerVcpuHour * HOURS_PER_MONTH;
+  const savings = guardSavings(vcpus * ratePerVcpuHour * HOURS_PER_MONTH);
 
   // MySQL 8.0 is in Extended Support but upgrade is optional (Extended Support runs until 2032)
   const impact = isMySql8p0 ? 'low' : 'medium';
@@ -567,9 +577,9 @@ export function checkRDS012(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `AWS Extended Support charges apply to MySQL versions before 8.4 and PostgreSQL versions ≤14 (as of April 2026). This ${vcpus}-vCPU ${engine} instance pays $${ratePerVcpuHour}/vCPU/hr = ~$${savings.toFixed(0)}/mo. ${isMySql8p0 ? 'MySQL 8.0 is supported until 2032 with Extended Support, so upgrading is optional.' : 'Upgrading to a newer major version removes this surcharge.'}`,
     impact,
     risk: 'medium',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: `upgrade_engine_to_${suggestedVersion}`,
-    confidence: 0.85,
+    confidence: clampConfidence(0.85),
     filePath,
     currentConfig: { engine, engine_version: engineVersion, vCPU: vcpus },
     suggestedConfig: { engine_version: suggestedVersion },
@@ -621,9 +631,9 @@ export function checkRDS013(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `RDS ${storageType} storage costs $${currentRate}/GB/month. Current: $${currentStorageCost.toFixed(0)}/mo. At ${suggestedGB.toFixed(0)} GB on gp3 ($${RDS_GP3_STORAGE_PER_GB}/GB): $${gp3StorageCost.toFixed(0)}/mo. Savings: ~$${savings.toFixed(0)}/mo.`,
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'reduce_allocated_storage',
-    confidence: 0.8,
+    confidence: clampConfidence(0.8),
     filePath,
     currentConfig: { allocated_storage_gb: allocatedGB, free_storage_gb: freeGB },
     suggestedConfig: { allocated_storage_gb: suggestedGB },
@@ -668,7 +678,7 @@ export function checkRDS014(r: Resource, _cfg: Cfg): Recommendation | null {
   if (daysUntilEol > EXTENDED_SUPPORT_WARN_DAYS || daysUntilEol <= 0) return null;
 
   const vcpus = rdsVCpuFromInstanceClass(r.instanceType || strConfig(r, 'instance_class'));
-  const monthlySurcharge = vcpus * 0.12 * 730; // $0.12/vCPU/hr year 1, 730 hrs/mo
+  const monthlySurcharge = guardSavings(vcpus * 0.12 * 730); // $0.12/vCPU/hr year 1, 730 hrs/mo
   const filePath = strConfig(r, 'file_path');
   const eolDateStr = eolDate.toISOString().slice(0, 10);
 
@@ -681,9 +691,9 @@ export function checkRDS014(r: Resource, _cfg: Cfg): Recommendation | null {
     reasoning: `Extended Support adds $0.12/vCPU/hr (year 1) or $0.24/vCPU/hr (year 2+) on top of your existing instance cost. With ${vcpus} vCPUs and 730 hours/month, that is ~$${monthlySurcharge.toFixed(0)}/mo additional. Upgrading before the EOL date avoids this entirely.`,
     impact: 'medium',
     risk: 'medium',
-    estimatedSavings: monthlySurcharge,
+    estimatedSavings: guardSavings(monthlySurcharge),
     suggestedAction: 'upgrade_before_extended_support',
-    confidence: 0.9,
+    confidence: clampConfidence(0.9),
     filePath,
     currentConfig: { engine, engine_version: engineVersion, days_until_eol: daysUntilEol },
     suggestedConfig: { engine_version: 'latest' },

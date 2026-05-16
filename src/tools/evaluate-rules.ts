@@ -91,7 +91,7 @@ export const evaluateRulesTool: ToolDefinition = {
         }),
       );
 
-      const recommendations = evaluateRules(enrichedResources, thresholds, ruleIds, config.output.currency, config.quality);
+      const { recommendations, warnings } = evaluateRules(enrichedResources, thresholds, ruleIds, config.output.currency, config.quality);
 
       const impactRank = (impact: string | undefined): number =>
         impact === 'high' ? 0 : impact === 'medium' ? 1 : 2;
@@ -146,8 +146,10 @@ export const evaluateRulesTool: ToolDefinition = {
           recommendationsFound: recommendations.length,
           estimatedSavings: Math.round(totalSavings * 100) / 100,
           byImpact: { high: highCount, medium: mediumCount, low: lowCount },
+          ...(warnings.length > 0 ? { warningCount: warnings.length } : {}),
         },
         recommendations: slimRecs,
+        ...(warnings.length > 0 ? { warnings } : {}),
       }, 'moderate'));
     } catch (err) {
       return errorResult(err);

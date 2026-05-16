@@ -8,6 +8,7 @@ import type { Recommendation } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
 import { strConfig, missingRequiredTags } from './helpers.js';
+import { clampConfidence } from '../../utils/numeric-guards.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
@@ -32,7 +33,7 @@ export function checkTAG001(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'add_required_tags',
-    confidence: 0.99,
+    confidence: clampConfidence(0.99),
     filePath,
     currentConfig: { missing_tags: missing },
     suggestedConfig: {
@@ -69,7 +70,7 @@ export function checkTAG002(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'add_tags',
-    confidence: 1.0,
+    confidence: clampConfidence(1.0),
     filePath,
     currentConfig: { tag_count: 0 },
     suggestedConfig: {

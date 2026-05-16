@@ -9,6 +9,7 @@ import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
 import { strConfig } from './helpers.js';
 import { EIP_HOURLY, HOURS_PER_MONTH } from '../../pricing/resources.js';
+import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
@@ -30,9 +31,9 @@ export function checkEIP001(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `AWS charges $${EIP_HOURLY}/hr for all public IPv4 addresses. Releasing this idle EIP saves $${monthlyCostStr}/month.`,
     impact: 'low',
     risk: 'low',
-    estimatedSavings: EIP_MONTHLY_USD,
+    estimatedSavings: guardSavings(EIP_MONTHLY_USD),
     suggestedAction: 'release_eip',
-    confidence: 0.99,
+    confidence: clampConfidence(0.99),
     filePath,
     currentConfig: { state: 'unassociated' },
     suggestedConfig: { action: 'release' },

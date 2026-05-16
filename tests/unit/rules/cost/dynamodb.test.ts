@@ -55,6 +55,35 @@ describe('checkDDB001 — switch DynamoDB provisioned to on-demand', () => {
     expect(checkDDB001(makeTable({ configuration: { billing_mode: 'PAY_PER_REQUEST', monthlyCost: 15 } }), cfg)).toBeNull();
     expect(checkDDB001(makeTable({ type: 'rds_instance' }), cfg)).toBeNull();
   });
+
+  // Issue #37, finding #6 — paused / zero-capacity table must skip cleanly
+  it('skips a paused table (zero provisioned and zero consumed) instead of dividing 0/0', () => {
+    const paused = makeTable({
+      configuration: {
+        billing_mode: 'PROVISIONED',
+        read_capacity: 0,
+        write_capacity: 0,
+        consumed_read_capacity_units: 0,
+        consumed_write_capacity_units: 0,
+        monthlyCost: 0,
+      },
+    });
+    expect(checkDDB001(paused, cfg)).toBeNull();
+  });
+
+  it('skips when consumed capacity is non-finite (broken upstream metric)', () => {
+    const broken = makeTable({
+      configuration: {
+        billing_mode: 'PROVISIONED',
+        read_capacity: 100,
+        write_capacity: 100,
+        consumed_read_capacity_units: NaN,
+        consumed_write_capacity_units: 5,
+        monthlyCost: 50,
+      },
+    });
+    expect(checkDDB001(broken, cfg)).toBeNull();
+  });
 });
 
 // ─── DDB-002: Provisioned without auto-scaling ────────────────────────────────

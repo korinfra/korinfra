@@ -35,7 +35,8 @@ function normalizeResource(r: Record<string, unknown>): Resource {
       const v = typeof r['monthly_cost'] === 'number' ? r['monthly_cost']
         : typeof fromConfig === 'number' ? fromConfig
         : 0;
-      return v;
+      // Reject NaN / Infinity / negative so a single bad pricing lookup
+      return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
     })(),
     monthly_cost_source: (() => {
       const direct = r['monthly_cost_source'];

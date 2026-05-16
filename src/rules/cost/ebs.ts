@@ -4,20 +4,25 @@
  */
 
 import type { Resource } from '../../aws/types.js';
-import type { Recommendation } from '../types.js';
+import type { Recommendation, RuleContext } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { daysSince, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
+import { daysSince, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization } from './helpers.js';
+import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { asStr } from '../../utils/coerce.js';
 import { EBS_GP3_PER_GB, EBS_GP3_IOPS_PRICE, EBS_IO1_PER_GB, EBS_IO1_IOPS_PRICE, EBS_SNAPSHOT_PER_GB } from '../../pricing/resources.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
 /** EBS-001: Unattached volume (state=available). */
-export function checkEBS001(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkEBS001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   void cfg;
   if (r.type !== 'ebs_volume' || r.state !== 'available') return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = getMonthlyCostStrict(r);
+  if (monthlyCost === null) {
+    ctx?.warn('EBS-001', r.id, r.type, 'monthly_cost missing or invalid');
+    return null;
+  }
   const filePath = strConfig(r, 'file_path');
   return {
     ruleId: 'EBS-001',
@@ -28,9 +33,9 @@ export function checkEBS001(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'Unattached EBS volumes cost the same as attached volumes. There is no benefit to keeping them unless they store critical data.',
     impact: 'high',
     risk: 'low',
-    estimatedSavings: monthlyCost,
+    estimatedSavings: guardSavings(monthlyCost),
     suggestedAction: 'delete_volume',
-    confidence: 0.98,
+    confidence: clampConfidence(0.98),
     filePath,
     currentConfig: { state: 'available', volume_type: strConfig(r, 'volume_type') },
     suggestedConfig: { action: 'delete' },
@@ -45,11 +50,15 @@ export function checkEBS001(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EBS-002: Old snapshots > 90 days. */
-export function checkEBS002(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkEBS002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ebs_snapshot') return null;
   const age = daysSince(r.launchTime);
   if (age === null || age <= cfg.snapshotRetentionDays) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = getMonthlyCostStrict(r);
+  if (monthlyCost === null) {
+    ctx?.warn('EBS-002', r.id, r.type, 'monthly_cost missing or invalid');
+    return null;
+  }
   return {
     ruleId: 'EBS-002',
     resourceId: r.id,
@@ -59,9 +68,9 @@ export function checkEBS002(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `EBS snapshots older than ${cfg.snapshotRetentionDays} days are unlikely to be needed for point-in-time recovery. Review and delete if obsolete.`,
     impact: 'low',
     risk: 'low',
-    estimatedSavings: monthlyCost,
+    estimatedSavings: guardSavings(monthlyCost),
     suggestedAction: 'review_and_delete',
-    confidence: 0.6,
+    confidence: clampConfidence(0.6),
     currentConfig: { age_days: age },
     suggestedConfig: { action: 'review_and_delete' },
     patchContent: `# Delete old snapshot ${sanitizeResourceName(r.name)} (>90 days)\n# aws ec2 delete-snapshot --snapshot-id ${sanitizeResourceName(r.id)}`,
@@ -88,9 +97,9 @@ export function checkEBS003(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'gp3 volumes provide 3,000 IOPS and 125 MB/s baseline at $0.08/GB vs gp2\'s $0.10/GB. Migration has zero downtime.',
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_to_gp3',
-    confidence: 0.95,
+    confidence: clampConfidence(0.95),
     filePath,
     currentConfig: { volume_type: 'gp2' },
     suggestedConfig: { volume_type: 'gp3' },
@@ -120,7 +129,7 @@ export function checkEBS004(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: 0,
     suggestedAction: 'enable_encryption',
-    confidence: 0.99,
+    confidence: clampConfidence(0.99),
     filePath,
     currentConfig: { encrypted: false },
     suggestedConfig: { encrypted: true },
@@ -174,9 +183,9 @@ export function checkEBS005(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `io1/io2 charges $${EBS_IO1_IOPS_PRICE}/provisioned IOPS/mo + $${EBS_IO1_PER_GB}/GB/mo. gp3 charges $${EBS_GP3_PER_GB}/GB/mo with 3000 IOPS baseline included. For ${iops} IOPS <= 3000, gp3 saves ~${(savings > 0 ? (savings / currentMonthlyCost * 100).toFixed(0) : '60')}%.`,
     impact: 'high',
     risk: 'medium',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_to_gp3',
-    confidence: 0.85,
+    confidence: clampConfidence(0.85),
     filePath,
     currentConfig: { volume_type: volumeType, iops, size_gb: sizeGb },
     suggestedConfig: { volume_type: 'gp3', iops: cfg.gp3IOPSBaseline },
@@ -243,9 +252,9 @@ function checkEBS006(r: Resource, cfg: Cfg): Recommendation | null {
       reasoning: `io1/io2 charge $${EBS_IO1_IOPS_PRICE}/provisioned IOPS/month. With P95 actual of ${actualIOPS.toFixed(0)} IOPS (${((actualIOPS / provisionedIops) * 100).toFixed(0)}% utilization), the ${iopsToTrim} excess IOPS above the recommended ${recommendedIops} target are wasted. Modify-volume operations on io1/io2 are online and non-disruptive.`,
       impact: 'medium',
       risk: 'low',
-      estimatedSavings: savings,
+      estimatedSavings: guardSavings(savings),
       suggestedAction: 'reduce_provisioned_iops',
-      confidence: 0.8,
+      confidence: clampConfidence(0.8),
       filePath,
       currentConfig: { volume_type: volumeType, iops: provisionedIops, actual_iops_p95: actualIOPS, size_gb: sizeGb },
       suggestedConfig: { iops: recommendedIops },
@@ -271,7 +280,7 @@ function checkEBS006(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'review_provisioned_iops',
-    confidence: 0.6,
+    confidence: clampConfidence(0.6),
     filePath,
     currentConfig: { volume_type: volumeType, iops: provisionedIops, size_gb: sizeGb },
     suggestedConfig: { action: 'review_in_cloudwatch' },
@@ -306,9 +315,9 @@ export function checkEBS007(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `gp3 charges $${EBS_GP3_IOPS_PRICE}/IOPS/month for IOPS above the 3000 baseline. With ${actualIOPS.toFixed(0)} actual IOPS, the ${excessIOPS.toFixed(0)} provisioned IOPS above baseline are wasted.`,
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'reduce_provisioned_iops_to_3000',
-    confidence: confidenceFromUtilization(0.85, r.utilization),
+    confidence: clampConfidence(confidenceFromUtilization(0.85, r.utilization)),
     filePath,
     currentConfig: { volume_type: 'gp3', iops: provisionedIOPS, actual_iops_avg: actualIOPS },
     suggestedConfig: { iops: 3000 },
@@ -343,9 +352,9 @@ export function checkSNAP001(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'Snapshots whose source EBS volume has been deleted are orphans and should be reviewed for deletion. Verify the source volume still exists before removing the snapshot. Cross-resource context is unavailable at this pass — manual verification is required.',
     impact: 'low',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'delete_orphaned_snapshot',
-    confidence: 0.4,
+    confidence: clampConfidence(0.4),
     currentConfig: { volume_id: volumeIDStr, size_gb: sizeGB },
     suggestedConfig: { action: 'delete' },
     patchContent: `# Delete snapshot ${sanitizeResourceName(r.name)} after confirming source volume ${sanitizeResourceName(volumeIDStr)} no longer exists\n# aws ec2 delete-snapshot --snapshot-id ${sanitizeResourceName(r.id)}`,
@@ -376,9 +385,9 @@ export function checkSNAP002(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `Most disaster recovery policies require point-in-time recovery within 30-90 days. A snapshot that is ${age} days old (threshold: ${cfg.snapshotMaxAgeDays} days) is well outside any reasonable recovery window and is unlikely to provide recovery value.`,
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'delete_old_snapshot',
-    confidence: 0.8,
+    confidence: clampConfidence(0.8),
     currentConfig: { age_days: age, size_gb: sizeGB },
     suggestedConfig: { action: 'delete' },
     patchContent: `# Delete snapshot ${sanitizeResourceName(r.name)} (${age} days old)\n# aws ec2 delete-snapshot --snapshot-id ${sanitizeResourceName(r.id)}`,

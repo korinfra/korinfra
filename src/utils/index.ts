@@ -15,3 +15,5 @@ export { LruTtl } from './lru-ttl.js';
 
 export { paginateAll } from './pagination.js';
 export type { PaginateOptions, PaginateResult } from './pagination.js';
+
+export { clampConfidence, guardCost, guardSavings, isValidUtilization } from './numeric-guards.js';

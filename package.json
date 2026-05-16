@@ -117,6 +117,7 @@
     "@vitest/coverage-v8": "^4.1.6",
     "eslint": "10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "fast-check": "^4.8.0",
     "ink-testing-library": "^4.0.0",
     "knip": "^6.12.2",
     "lockfile-lint": "^5.0.0",

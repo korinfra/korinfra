@@ -189,10 +189,20 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
         ...collectErrors.map((e) => `  - [${e.code ?? 'ERROR'}] ${e.collector}${e.region ? `@${e.region}` : ''}: ${e.message}`),
       ]
       : [];
+    // Surface resources whose monthly_cost could not be determined. Cost-saving
+    // rules skip them with a warning; security-only rules still emit (savings 0).
+    const unknownCostLines = summary.unknownCostCount > 0
+      ? [`[korinfra] ${summary.unknownCostCount} resource${summary.unknownCostCount !== 1 ? 's' : ''} had unknown monthly_cost — cost-saving rules skipped them`]
+      : [];
+    const warningLine = summary.warnings.length > 0
+      ? [`[korinfra] ${summary.warnings.length} rule warning${summary.warnings.length !== 1 ? 's' : ''} (resources skipped) — run with --json to inspect`]
+      : [];
     writeLines([
       'korinfra scan',
       'Status: completed',
       ...warningLines,
+      ...unknownCostLines,
+      ...warningLine,
       `Resources: ${summary.resourceCount}`,
       `Cost: ${formatMoney(summary.totalMonthlyCostUsd)}/mo`,
       `Recommendations: ${summary.recommendationCount}`,
@@ -1100,7 +1110,10 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
         monthlyCostUsd: summary.totalMonthlyCostUsd,
         recommendations: summary.recommendationCount,
         anomalies: summary.anomalyCount,
+        ...(summary.unknownCostCount > 0 ? { unknownCostCount: summary.unknownCostCount } : {}),
+        ...(summary.warnings.length > 0 ? { warningCount: summary.warnings.length } : {}),
       },
+      ...(summary.warnings.length > 0 ? { warnings: summary.warnings } : {}),
       recommendations: recs.slice(0, 50).map((r) => ({
         id: r.id ?? '',
         ruleId: r.type ?? '',
@@ -1110,7 +1123,7 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
         impact: r.impact,
         risk: r.risk,
         estimatedSavingsUsd: r.estimatedSavingsUsd ?? 0,
-        confidence: 1,
+        confidence: r.confidence,
       })),
       next: [
         ...(scanId ? [{ label: 'generate report', command: `korinfra report --scan ${scanId} --format html --output reports/scan-${scanId.slice(0, 8)}.html` }] : [{ label: 'generate report', command: 'korinfra report --format html --output reports/latest.html' }]),
