@@ -8,10 +8,16 @@ const ALLOWED_PRAGMAS = new Set([
   'secure_delete', 'locking_mode', 'wal_checkpoint',
 ]);
 
+export type TransactionMode = 'DEFERRED' | 'IMMEDIATE' | 'EXCLUSIVE';
+
+const VALID_TRANSACTION_MODES: ReadonlySet<TransactionMode> = new Set([
+  'DEFERRED', 'IMMEDIATE', 'EXCLUSIVE',
+]);
+
 export interface Driver {
   prepare(sql: string): StatementSync;
   exec(sql: string): void;
-  transaction<T>(fn: () => T): T;
+  transaction<T>(fn: () => T, options?: { mode?: TransactionMode }): T;
   close(): void;
   pragma(pragma: string, options?: { simple?: boolean }): unknown;
 }
@@ -22,8 +28,12 @@ export function openDriver(dbPath: string): Driver {
   return {
     prepare: (sql) => db.prepare(sql),
     exec: (sql) => { db.exec(sql); },
-    transaction: <T>(fn: () => T): T => {
-      db.exec('BEGIN');
+    transaction: <T>(fn: () => T, options?: { mode?: TransactionMode }): T => {
+      const mode = options?.mode ?? 'DEFERRED';
+      if (!VALID_TRANSACTION_MODES.has(mode)) {
+        throw new Error(`Invalid transaction mode: ${String(mode)}`);
+      }
+      db.exec(`BEGIN ${mode}`);
       try {
         const result = fn();
         db.exec('COMMIT');

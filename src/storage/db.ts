@@ -335,46 +335,88 @@ function loadMigrations(): Array<{ version: number; sql: string }> {
   return MIGRATIONS;
 }
 
+// ─── WAL mode setup ───────────────────────────────────────────────────────────
+
+// Pre-allocated wait buffer for sync sleep in setWalMode.
+const SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * Set journal_mode = WAL with retry. Two processes opening the same fresh DB
+ * file simultaneously can race on `PRAGMA journal_mode = WAL` — the operation
+ * needs a brief exclusive lock to checkpoint and rewrite the file header, and
+ * SQLite's busy handler does not always retry it (in contrast to ordinary
+ * SQLITE_BUSY paths covered by busy_timeout). Both the lock-free read
+ * short-circuit and the write retry live inside the same try/catch: the
+ * read itself can transiently raise a busy/locked error mid-checkpoint.
+ * Backoff is exponential (50, 100, 200, 400 ms) capped at 500 ms.
+ */
+function setWalMode(db: Driver): void {
+  const deadline = Date.now() + 30_000;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    try {
+      const current = ((db.pragma('journal_mode', { simple: true }) as string | undefined) ?? '').toLowerCase();
+      if (current === 'wal') return;
+      const result = ((db.pragma('journal_mode = WAL', { simple: true }) as string | undefined) ?? '').toLowerCase();
+      if (result !== 'wal') {
+        logger.warn({ walResult: result }, 'WAL mode not enabled; journal_mode may be restricted');
+      }
+      return;
+    } catch (err) {
+      const msg = ((err as Error).message ?? '').toLowerCase();
+      if (!msg.includes('busy') && !msg.includes('lock')) throw err;
+      const delayMs = Math.min(50 * 2 ** attempt, 500);
+      attempt++;
+      Atomics.wait(SLEEP_BUFFER, 0, 0, delayMs);
+    }
+  }
+  throw new Error('Failed to set journal_mode = WAL within 30s — another process may be holding the database lock');
+}
+
 // ─── Migration runner ─────────────────────────────────────────────────────────
 
 function migrate(db: Driver): void {
   // Sort ascending so gaps can be detected and migrations run in order
   const migrations = loadMigrations().slice().sort((a, b) => a.version - b.version);
 
-  // Bootstrap the migrations table in its own transaction
+  // Wrap the entire migration sequence — bootstrap, read, and every migration step —
+  // in a single BEGIN IMMEDIATE transaction. This serialises concurrent migrators across
+  // processes: the second `migrate()` call blocks at BEGIN IMMEDIATE (within busy_timeout)
+  // until the first commits, then its read snapshot reflects the fully populated
+  // schema_migrations table and it correctly skips already-applied versions.
+  // DEFERRED would be unsafe here on an already-migrated DB: the CREATE TABLE IF NOT EXISTS
+  // and SELECT would run as reads, and a subsequent write attempt could fail with
+  // SQLITE_BUSY_SNAPSHOT (which busy_timeout does not retry).
   db.transaction(() => {
     db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INTEGER PRIMARY KEY,
-    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )`);
-  });
+      version INTEGER PRIMARY KEY,
+      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
 
-  const applied = new Set<number>(
-    (db.prepare('SELECT version FROM schema_migrations').all() as Array<{ version: number }>).map((r) => r.version),
-  );
+    const applied = new Set<number>(
+      (db.prepare('SELECT version FROM schema_migrations').all() as Array<{ version: number }>).map((r) => r.version),
+    );
 
-  let prevVersion = 0;
-  for (const { version, sql } of migrations) {
-    if (applied.has(version)) {
-      prevVersion = version;
-      continue;
-    }
+    let prevVersion = 0;
+    for (const { version, sql } of migrations) {
+      if (applied.has(version)) {
+        prevVersion = version;
+        continue;
+      }
 
-    if (version > prevVersion + 1 && prevVersion > 0) {
-      logger.warn({ expected: prevVersion + 1, got: version }, 'Migration version gap detected');
-    }
+      if (version > prevVersion + 1 && prevVersion > 0) {
+        logger.warn({ expected: prevVersion + 1, got: version }, 'Migration version gap detected');
+      }
 
-    // Each migration runs in its own transaction for atomicity
-    db.transaction(() => {
       db.exec(sql);
-      db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(
+      db.prepare('INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(
         version,
         new Date().toISOString(),
       );
-    });
 
-    prevVersion = version;
-  }
+      prevVersion = version;
+    }
+  }, { mode: 'IMMEDIATE' });
 }
 
 // ─── Retention purge ─────────────────────────────────────────────────────────
@@ -447,17 +489,16 @@ export function getDb(dbPath?: string, retentionDays = 365): Driver {
     }
   }
 
-  // Performance & correctness pragmas
-  const walResult = db.pragma('journal_mode = WAL', { simple: true }) as string;
-  if (walResult !== 'wal') {
-    logger.warn({ walResult }, 'WAL mode not enabled; journal_mode may be restricted');
-  }
+  // Performance & correctness pragmas. busy_timeout is set first so that ordinary
+  // SQLITE_BUSY errors on subsequent statements are retried by SQLite's default
+  // busy handler. WAL setup needs its own application-level retry (see setWalMode).
+  db.pragma('busy_timeout = 30000');
+  setWalMode(db);
   db.pragma('foreign_keys = ON');
   const fkEnabled = db.pragma('foreign_keys', { simple: true }) as number;
   if (fkEnabled !== 1) {
     throw new Error('Failed to enable foreign key enforcement — data integrity cannot be guaranteed');
   }
-  db.pragma('busy_timeout = 30000');
 
   migrate(db);
 
