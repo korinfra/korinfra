@@ -39,13 +39,17 @@ export const getRiCoverageTool: ToolDefinition = {
         Granularity: 'MONTHLY',
       }));
 
+      const num = (s: string | undefined): number => {
+        const n = Number(s);
+        return Number.isFinite(n) ? n : 0;
+      };
       const coverageByService = (result.CoveragesByTime ?? []).flatMap(t =>
         (t.Groups ?? []).map(g => ({
           service: g.Attributes?.['SERVICE'] ?? 'Unknown',
           region: g.Attributes?.['REGION'] ?? 'global',
-          coveragePercent: parseFloat(g.Coverage?.CoverageHours?.CoverageHoursPercentage ?? '0'),
-          onDemandHours: parseFloat(g.Coverage?.CoverageHours?.OnDemandHours ?? '0'),
-          reservedHours: parseFloat(g.Coverage?.CoverageHours?.ReservedHours ?? '0'),
+          coveragePercent: num(g.Coverage?.CoverageHours?.CoverageHoursPercentage),
+          onDemandHours: num(g.Coverage?.CoverageHours?.OnDemandHours),
+          reservedHours: num(g.Coverage?.CoverageHours?.ReservedHours),
         }))
       ).filter(c => c.onDemandHours > 0)
        .sort((a, b) => a.coveragePercent - b.coveragePercent);
