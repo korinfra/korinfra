@@ -118,6 +118,10 @@ async function getCosts(
   let nextPageToken: string | undefined;
   let pageCount = 0;
   const MAX_PAGES = 20;
+  const num = (s: string | undefined): number => {
+    const n = Number(s);
+    return Number.isFinite(n) ? n : 0;
+  };
 
   try {
     do {
@@ -149,11 +153,8 @@ async function getCosts(
         const periodEnd = result.TimePeriod?.End ?? endDate;
 
         if ((result.Groups ?? []).length === 0) {
-          const amount = parseFloat(result.Total?.['UnblendedCost']?.Amount ?? '0');
-          const usageAmountStr = result.Total?.['UsageQuantity']?.Amount;
-          const usageQuantity = (usageAmountStr !== null && usageAmountStr !== undefined && usageAmountStr !== '')
-            ? (Number.isFinite(Number(usageAmountStr)) ? Number(usageAmountStr) : 0)
-            : 0;
+          const amount = num(result.Total?.['UnblendedCost']?.Amount);
+          const usageQuantity = num(result.Total?.['UsageQuantity']?.Amount);
           entries.push({
             service: 'Total',
             amount,
@@ -168,11 +169,8 @@ async function getCosts(
 
         for (const group of result.Groups ?? []) {
           const service = group.Keys?.[0] ?? 'Unknown';
-          const amount = parseFloat(group.Metrics?.['UnblendedCost']?.Amount ?? '0');
-          const groupUsageStr = group.Metrics?.['UsageQuantity']?.Amount;
-          const usageQuantity = (groupUsageStr !== null && groupUsageStr !== undefined && groupUsageStr !== '')
-            ? (Number.isFinite(Number(groupUsageStr)) ? Number(groupUsageStr) : 0)
-            : 0;
+          const amount = num(group.Metrics?.['UnblendedCost']?.Amount);
+          const usageQuantity = num(group.Metrics?.['UsageQuantity']?.Amount);
           entries.push({
             service,
             amount,
