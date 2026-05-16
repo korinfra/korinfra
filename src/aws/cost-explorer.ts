@@ -4,7 +4,6 @@ import {
 } from '@aws-sdk/client-cost-explorer';
 import type { GroupDefinition } from '@aws-sdk/client-cost-explorer';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import os from 'node:os';
 import type { CostEntry } from './types.js';
@@ -13,6 +12,7 @@ import { getCredentials } from './credentials.js';
 import { dbg } from './debug.js';
 import { logger } from '../utils/logger.js';
 import { paginateAll } from '../utils/pagination.js';
+import { safeReadFile, safeWriteFile } from '../utils/safe-fs.js';
 
 /** Page cap for CE pagination. Raised from 20 to 100 to cover MONTHLY/12-mo queries on large accounts. */
 const CE_MAX_PAGES = 100;
@@ -46,7 +46,7 @@ const _ceCache = new Map<string, CeCacheEntry>();
 function loadCeCache(): void {
   if (_ceCache.size > 0) return; // already loaded
   try {
-    const raw = readFileSync(CE_CACHE_FILE, 'utf8');
+    const raw = safeReadFile(CE_CACHE_FILE, { requireMode: 0o600 });
     const parsed = JSON.parse(raw) as Record<string, CeCacheEntry>;
     const now = Date.now();
     for (const [key, entry] of Object.entries(parsed)) {
@@ -54,19 +54,21 @@ function loadCeCache(): void {
       entry.partial = entry.partial ?? false;
       if (entry.expiresAt > now) _ceCache.set(key, entry);
     }
-  } catch {
-    // no cache file yet — ignore
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      logger.warn({ err: String(err) }, 'CE cache load failed — treating as cache miss');
+    }
   }
 }
 
 function saveCeCache(): void {
   try {
-    mkdirSync(CE_CACHE_DIR, { recursive: true });
     const obj: Record<string, CeCacheEntry> = {};
     for (const [k, v] of _ceCache) obj[k] = v;
-    writeFileSync(CE_CACHE_FILE, JSON.stringify(obj), 'utf8');
-  } catch {
-    // non-fatal
+    safeWriteFile(CE_CACHE_FILE, JSON.stringify(obj), { mode: 0o600, dirMode: 0o700 });
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'CE cache save failed');
   }
 }
 

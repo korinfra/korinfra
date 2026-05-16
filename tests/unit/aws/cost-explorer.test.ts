@@ -26,20 +26,22 @@ vi.mock('../../../src/aws/credentials.js', async () => ({
   getCredentials: vi.fn().mockReturnValue(async () => ({ accessKeyId: 'x', secretAccessKey: 'y' })),
 }));
 
-// readFileSync/writeFileSync are reassignable so individual tests can drive cache file behavior.
+// safeReadFile/safeWriteFile are reassignable so individual tests can drive cache file behavior.
 let readFileSyncMock: (() => string) | (() => never) = () => { throw new Error('test: no cache'); };
 const writeFileSyncCalls: Array<{ path: string; data: string }> = [];
 
+vi.mock('../../../src/utils/safe-fs.js', () => ({
+  safeReadFile: vi.fn().mockImplementation(() => readFileSyncMock()),
+  safeWriteFile: vi.fn().mockImplementation((path: string, data: string | Buffer) => {
+    writeFileSyncCalls.push({ path, data: typeof data === 'string' ? data : data.toString('utf8') });
+  }),
+  safeOpenAppend: vi.fn().mockReturnValue(0),
+  checkNoSymlink: vi.fn(),
+}));
+
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof FsModule>('node:fs');
-  return {
-    ...actual,
-    readFileSync: vi.fn().mockImplementation(() => readFileSyncMock()),
-    writeFileSync: vi.fn().mockImplementation((path: string, data: string) => {
-      writeFileSyncCalls.push({ path, data });
-    }),
-    mkdirSync: vi.fn(),
-  };
+  return { ...actual, mkdirSync: vi.fn() };
 });
 
 import { getCostsCached } from '../../../src/aws/cost-explorer.js';

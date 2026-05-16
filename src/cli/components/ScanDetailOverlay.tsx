@@ -16,7 +16,7 @@ import { Box, Text, useInput, useStdout } from 'ink';
 
 import { colors, borders, semanticColors } from '../theme.js';
 import { GAP_BETWEEN_SECTIONS, GAP_BEFORE_ACTIONS, PADDING_X, GAP_ROW } from '../ui/spacing.js';
-import { DOT_SEP, SEVERITY_LABELS } from '../ui/text.js';
+import { DOT_SEP, SEVERITY_LABELS, stripAnsi } from '../ui/text.js';
 import { truncateWidth } from '../ui/width.js';
 import type { TuiAction } from '../actions.js';
 
@@ -178,7 +178,7 @@ export function ScanDetailOverlay({
         {/* Header row: severity badge + title + savings */}
         <Box gap={GAP_ROW} marginBottom={GAP_BETWEEN_SECTIONS} flexWrap="wrap">
           <Text bold color={sevColor}>[{sevLabel}]</Text>
-          <Text bold>{truncateWidth(rec.title, overlayWidth - sevLabel.length - 6)}</Text>
+          <Text bold>{truncateWidth(stripAnsi(rec.title), overlayWidth - sevLabel.length - 6)}</Text>
           {savings !== undefined && (
             <Text color={colors.saving}>{savings}</Text>
           )}

@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 
 import { colors, borders } from '../theme.js';
 import { GAP_BETWEEN_SECTIONS, PADDING_X, GAP_ROW } from '../ui/spacing.js';
+import { stripAnsi } from '../ui/text.js';
 import { TUI } from '../ui/tokens.js';
 
 interface ConfirmApplyTagsProps {
@@ -35,7 +36,7 @@ export function ConfirmApplyTags({ resourceCount, tags, onConfirm, onCancel }: C
           <Text>Write <Text bold>{tagEntries.length}</Text> tag{tagEntries.length !== 1 ? 's' : ''} to <Text bold>{resourceCount}</Text> resource{resourceCount !== 1 ? 's' : ''}?</Text>
           <Box flexDirection="column" marginTop={GAP_BETWEEN_SECTIONS}>
             {displayEntries.map(([k, v]) => (
-              <Text key={k} dimColor>  <Text color={colors.info}>{k}</Text>: {v}</Text>
+              <Text key={k} dimColor>  <Text color={colors.info}>{stripAnsi(k)}</Text>: {stripAnsi(v)}</Text>
             ))}
             {overflow > 0 && <Text dimColor>  + {overflow} more</Text>}
           </Box>

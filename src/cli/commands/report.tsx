@@ -43,6 +43,7 @@ import { colors, icons } from '../theme.js';
 import { GAP_BETWEEN_SECTIONS, GAP_AFTER_HEADER, GAP_ICON_TEXT, GAP_ROW, MARGIN_LEFT_RESULT } from '../ui/spacing.js';
 import { DOT_SEP } from '../ui/text.js';
 import { truncateWidth } from '../ui/width.js';
+import { safeWriteFile } from '../../utils/safe-fs.js';
 import type { TuiAction } from '../actions.js';
 import { getDb } from '../../storage/db.js';
 import { getScan, listScans } from '../../storage/queries/scans.js';
@@ -722,8 +723,7 @@ function ReportGeneratingStep({
 
         // Format and write
         const formatted = formatter.format(reportData);
-        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-        fs.writeFileSync(outputPath, formatted, 'utf8');
+        safeWriteFile(outputPath, formatted, { mode: 0o600, dirMode: 0o700 });
         onDone(true, outputPath, 'Report generated successfully');
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error';

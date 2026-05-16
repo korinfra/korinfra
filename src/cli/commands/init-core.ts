@@ -13,6 +13,7 @@ import { saveConfig } from '../../config/index.js';
 import { defaults } from '../../config/defaults.js';
 import { getDb } from '../../storage/db.js';
 import { logger } from '../../utils/logger.js';
+import { safeReadFile, safeWriteFile } from '../../utils/safe-fs.js';
 
 // ─── Profile detection ────────────────────────────────────────────────────────
 
@@ -95,7 +96,13 @@ export async function writekorinfraConfig(
   }
 
   const projectDir = path.join(cwd, '.korinfra');
-  fs.mkdirSync(projectDir, { recursive: true });
+  fs.mkdirSync(projectDir, { recursive: true, mode: 0o700 });
+  // mkdir mode only applies on creation; tighten an existing .korinfra/ that
+  // a previous version may have left at 0o755, and refuse if it is a symlink.
+  if (fs.lstatSync(projectDir).isSymbolicLink()) {
+    throw new Error(`Refusing to use symlinked .korinfra directory: ${projectDir}`);
+  }
+  try { fs.chmodSync(projectDir, 0o700); } catch { /* windows */ }
 
   const outPath = path.join(projectDir, 'config.yaml');
   const thresholdsOutPath = path.join(projectDir, 'thresholds.yaml');
@@ -104,14 +111,13 @@ export async function writekorinfraConfig(
   cfg.storage.path = path.join(projectDir, 'data.db');
   await saveConfig(cfg, outPath);
 
-  // Use exclusive-create flag ('wx') for atomic check-and-create — avoids TOCTOU
-  // race between existsSync and writeFileSync.
+  // 'wx' (O_CREAT|O_EXCL) refuses to follow a pre-existing symlink.
   try {
     const thresholdsDefaults = { scan: cfg.scan, anomaly: cfg.anomaly };
     fs.writeFileSync(
       thresholdsOutPath,
       yaml.dump(thresholdsDefaults, { indent: 2, lineWidth: 120, noRefs: true, sortKeys: false }),
-      { flag: 'wx', encoding: 'utf8' },
+      { flag: 'wx', encoding: 'utf8', mode: 0o600 },
     );
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
@@ -126,12 +132,7 @@ export async function writekorinfraConfig(
       logger.warn('API key appears invalid (too short after sanitization), skipping .env write');
     } else {
       const envFilePath = path.join(projectDir, '.env');
-      fs.writeFileSync(envFilePath, `ANTHROPIC_API_KEY=${safeKey}\n`, 'utf8');
-      try {
-        fs.chmodSync(envFilePath, 0o600);
-      } catch (e) {
-        logger.debug({ err: e }, '[init] chmod not supported on this platform');
-      }
+      safeWriteFile(envFilePath, `ANTHROPIC_API_KEY=${safeKey}\n`, { mode: 0o600, dirMode: 0o700 });
       envSaved = true;
 
       // Add sensitive files to .gitignore
@@ -156,14 +157,12 @@ export async function writekorinfraConfig(
     const safeToken = githubToken.replace(/[^\x21-\x7E]/g, '');
     if (safeToken.length >= 10) {
       const envFilePath = path.join(projectDir, '.env');
-      // Read without existsSync to avoid TOCTOU race between check and read.
       let existing = '';
-      try { existing = fs.readFileSync(envFilePath, 'utf8'); } catch (e) {
+      try { existing = safeReadFile(envFilePath); } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
       }
       if (!existing.includes('GITHUB_TOKEN=')) {
-        fs.writeFileSync(envFilePath, existing + `GITHUB_TOKEN=${safeToken}\n`, 'utf8');
-        try { fs.chmodSync(envFilePath, 0o600); } catch { /* windows */ }
+        safeWriteFile(envFilePath, existing + `GITHUB_TOKEN=${safeToken}\n`, { mode: 0o600, dirMode: 0o700 });
       }
     }
   }

@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, afterEach, beforeAll, afterAll } from 'vitest';
-import { defaults, validate, normalizeStringSlice, loadConfig } from '../../../src/config/index.js';
+import { describe, it, expect, afterEach, beforeAll, afterAll, beforeEach } from 'vitest';
+import { defaults, validate, normalizeStringSlice, loadConfig, loadThresholds } from '../../../src/config/index.js';
 import { ConfigValidationError } from '../../../src/config/index.js';
 
 // ── validate() ───────────────────────────────────────────────────────────────
@@ -396,5 +396,49 @@ describe('loadConfig() — env var overrides and provider normalization', () => 
   it('ignores unrecognized KORINFRA_ env keys without throwing', async () => {
     process.env['KORINFRA_UNKNOWN__KEY'] = 'value';
     await expect(loadConfig()).resolves.toBeTruthy();
+  });
+});
+
+// ── loadThresholds() — symlink and permission protection ─────────────────────
+
+describe('loadThresholds() — file safety', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'korinfra-thresholds-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns null when thresholds.yaml does not exist', async () => {
+    expect(await loadThresholds(tmpDir)).toBeNull();
+  });
+
+  it('loads thresholds when the file has mode 0o600', async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'thresholds.yaml'),
+      'scan:\n  lookback_days: 7\n',
+      { mode: 0o600 },
+    );
+    const result = await loadThresholds(tmpDir);
+    expect(result).toEqual({ scan: { lookback_days: 7 } });
+  });
+
+  it('refuses to load thresholds when the file is world-readable', async () => {
+    if (process.platform === 'win32') return; // file modes are not enforced on Windows
+    const filePath = path.join(tmpDir, 'thresholds.yaml');
+    fs.writeFileSync(filePath, 'scan:\n  lookback_days: 7\n');
+    fs.chmodSync(filePath, 0o644); // not subject to umask, unlike { mode: 0o644 }
+    await expect(loadThresholds(tmpDir)).rejects.toThrow(/overly-permissive/);
+  });
+
+  it('refuses to follow a symlink at the thresholds.yaml path', async () => {
+    const realFile = path.join(tmpDir, 'attacker.yaml');
+    const linkPath = path.join(tmpDir, 'thresholds.yaml');
+    fs.writeFileSync(realFile, 'scan:\n  lookback_days: 99\n', { mode: 0o600 });
+    fs.symlinkSync(realFile, linkPath);
+    await expect(loadThresholds(tmpDir)).rejects.toThrow(/symlink/i);
   });
 });

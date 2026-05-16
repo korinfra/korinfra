@@ -22,6 +22,7 @@ import { buildResourcesPipelineSteps, extractResourceRows } from './pipelines/re
 import { buildReportPipelineSteps, extractReportResult, type ReportFormat } from './pipelines/report.js';
 import { buildHistoryPipelineSteps, extractScanDetail, extractScanDiff, extractScanList, type HistorySubcommand } from './pipelines/history.js';
 import { asStr } from '../utils/coerce.js';
+import { stripAnsi } from './ui/text.js';
 import { buildSecurityPipelineSteps, extractSecurityFindings } from './pipelines/security.js';
 import { buildTagsPipelineSteps, extractTagCompliance } from './pipelines/tags.js';
 import { buildRecommendAnalysisPrompt, buildSecurityAnalysisPrompt } from './pipelines/analysis.js';
@@ -254,7 +255,7 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     writeLines([
       'korinfra resources',
       `Resources: ${filtered.length}`,
-      ...filtered.slice(0, maxLines).map((row) => `- ${row.name} (${row.type}, ${row.region}) ${row.monthlyCostUsd !== undefined ? formatMoney(row.monthlyCostUsd) : ''}`.trim()),
+      ...filtered.slice(0, maxLines).map((row) => `- ${stripAnsi(row.name)} (${stripAnsi(row.type)}, ${stripAnsi(row.region)}) ${row.monthlyCostUsd !== undefined ? formatMoney(row.monthlyCostUsd) : ''}`.trim()),
       ...(filtered.length > maxLines ? [`... ${filtered.length - maxLines} more`] : []),
       '',
       'Next:',
@@ -424,8 +425,8 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
         if (group.length === 0) continue;
         lines.push(sev.toUpperCase());
         for (const f of group) {
-          lines.push(`  \u2717 ${f.id} \u2014 ${f.resource}`);
-          if (f.remediation) lines.push(`    Fix: ${f.remediation}`);
+          lines.push(`  \u2717 ${stripAnsi(f.id)} \u2014 ${stripAnsi(f.resource)}`);
+          if (f.remediation) lines.push(`    Fix: ${stripAnsi(f.remediation)}`);
         }
         lines.push('');
       }
@@ -575,7 +576,7 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       `Recommendations: ${recs.length}`,
       totalSavings > 0 ? `Estimated savings: ${formatMoney(totalSavings)}/mo` : 'Estimated savings: none',
       '',
-      ...recs.slice(0, 20).map((r) => `- [${r.impact ?? 'medium'}] ${r.title}`),
+      ...recs.slice(0, 20).map((r) => `- [${r.impact ?? 'medium'}] ${stripAnsi(r.title)}`),
       ...(recs.length > 20 ? [`... ${recs.length - 20} more`] : []),
       '',
       'Next:',
@@ -742,7 +743,7 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     } else {
       lines.push('Untagged resources:');
       for (const r of untagged) {
-        lines.push(`  - ${r.name} (${r.type}, ${r.region})`);
+        lines.push(`  - ${stripAnsi(r.name)} (${stripAnsi(r.type)}, ${stripAnsi(r.region)})`);
       }
     }
 

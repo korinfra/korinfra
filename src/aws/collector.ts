@@ -9,9 +9,9 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { CloudWatchClient } from '@aws-sdk/client-cloudwatch';
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
-import { writeFileSync } from 'fs';
 import { dbg, dbgInit, TIMING_FILE } from './debug.js';
 import { logger } from '../utils/logger.js';
+import { safeWriteFile } from '../utils/safe-fs.js';
 import pLimit from 'p-limit';
 import type { CollectorConfig, CollectorResult, Resource, CostEntry } from './types.js';
 import type { Driver } from '../storage/drivers/node.js';
@@ -199,7 +199,7 @@ export async function collectAll(
         dbg(`Credential load error detected — bailing early`);
         errors.push({ collector: 'credentials', message: 'AWS credentials could not be loaded. Re-authenticate: aws sso login (or aws configure / refresh session).', code: 'CredentialLoadError' });
         if (process.env['KORINFRA_DEBUG'] === '1') {
-          try { writeFileSync(TIMING_FILE, JSON.stringify({ total_ms: Date.now() - start, error: 'credential_load_failure', regions: regions.join(','), timings: [] }, null, 2)); } catch { /* non-fatal */ }
+          try { safeWriteFile(TIMING_FILE, JSON.stringify({ total_ms: Date.now() - start, error: 'credential_load_failure', regions: regions.join(','), timings: [] }, null, 2), { mode: 0o600, dirMode: 0o700 }); } catch { /* non-fatal */ }
         }
         return { resources: [], costs: [], errors, durationMs: Date.now() - start };
       }
@@ -493,9 +493,10 @@ export async function collectAll(
   if (process.env['KORINFRA_DEBUG'] === '1') {
     try {
       const sortedTimings = [...timings].sort((a, b) => b.ms - a.ms);
-      writeFileSync(
+      safeWriteFile(
         TIMING_FILE,
         JSON.stringify({ total_ms: Date.now() - start, regions: regions.join(','), timings: sortedTimings }, null, 2),
+        { mode: 0o600, dirMode: 0o700 },
       );
     } catch { /* non-fatal */ }
   }

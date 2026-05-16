@@ -16,7 +16,7 @@ import { useGlobalOverlay } from '../hooks/useGlobalOverlay.js';
 
 import { colors, borders, semanticColors, supportsUnicode } from '../theme.js';
 import { GAP_BETWEEN_SECTIONS, GAP_ROW, PADDING_X } from '../ui/spacing.js';
-import { DOT_SEP } from '../ui/text.js';
+import { DOT_SEP, stripAnsi } from '../ui/text.js';
 import { formatMoneyExact } from '../ui/format.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ export function CostsDetailOverlay({
       >
         {/* Header: service name + rank badge */}
         <Box gap={GAP_ROW} flexWrap="wrap">
-          <Text color={colors.brand} bold>{item.rawLabel}</Text>
+          <Text color={colors.brand} bold>{stripAnsi(item.rawLabel)}</Text>
           <Text dimColor>#{item.rank} of {item.totalRows}</Text>
         </Box>
 
