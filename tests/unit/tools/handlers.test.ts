@@ -7,9 +7,10 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 // ─── Module mocks (hoisted) ───────────────────────────────────────────────────
 
-vi.mock('node:fs', () => ({
-  existsSync: vi.fn(() => true),
-}));
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('node:fs');
+  return { ...actual, existsSync: vi.fn(() => true) };
+});
 
 vi.mock('node:fs/promises', () => ({
   readdir: vi.fn(() => Promise.resolve(['main.tf'])),

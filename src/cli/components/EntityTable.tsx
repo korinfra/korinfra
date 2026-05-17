@@ -13,6 +13,7 @@ import stringWidth from 'string-width';
 import { colors, icons } from '../theme.js';
 import { GAP_ROW, MARGIN_LEFT_CONTENT } from '../ui/spacing.js';
 import { TERMINAL_WIDTHS } from '../ui/breakpoints.js';
+import { stripAnsi } from '../ui/text.js';
 import { TUI } from '../ui/tokens.js';
 import type { ActionHint, TuiAction } from '../actions.js';
 
@@ -114,7 +115,7 @@ export function EntityTable({ headers, rows, actions: actionsFn, onAction }: Ent
                 <Text color={isSelected ? colors.brand : colors.muted}>{isSelected ? icons.pointer : ' '}</Text>
                 <Text> </Text>
                 <Text bold={isSelected} color={isSelected ? colors.brand : undefined}>
-                  {fitCell(row.cells[0] ?? '', Math.max(8, termWidth - TUI.table.selectionCol - 2))}
+                  {fitCell(stripAnsi(row.cells[0] ?? ''), Math.max(8, termWidth - TUI.table.selectionCol - 2))}
                 </Text>
               </Box>
               {headers.slice(1).map((h, i) => {
@@ -122,7 +123,7 @@ export function EntityTable({ headers, rows, actions: actionsFn, onAction }: Ent
                 if (cellVal === undefined) return null;
                 return (
                   <Box key={i} marginLeft={TUI.indent.detail}>
-                    <Text dimColor>{h}: <Text color={isSelected ? colors.brand : undefined}>{cellVal}</Text></Text>
+                    <Text dimColor>{h}: <Text color={isSelected ? colors.brand : undefined}>{stripAnsi(cellVal)}</Text></Text>
                   </Box>
                 );
               })}
@@ -175,7 +176,7 @@ export function EntityTable({ headers, rows, actions: actionsFn, onAction }: Ent
                     color={ci === 0 && isSelected ? colors.brand : undefined}
                     wrap="truncate-end"
                   >
-                    {cell}
+                    {stripAnsi(cell)}
                   </Text>
                 </Box>
               ))}

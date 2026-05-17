@@ -11,6 +11,7 @@ import type { Config } from './types.js';
 import { validate, ConfigValidationError } from './validate.js';
 import { logger } from '../utils/logger.js';
 import { redact } from '../redaction/redactor.js';
+import { safeReadFile } from '../utils/safe-fs.js';
 
 export { ConfigValidationError } from './validate.js';
 export type { Config, AWSConfig, AWSProfile, AIConfig, TerraformConfig, GitHubConfig, OutputConfig, StorageConfig, ScanConfig, AnomalyConfig, MCPConfig } from './types.js';
@@ -108,7 +109,7 @@ export async function loadThresholds(configDir?: string): Promise<Record<string,
   const dir = configDir ?? defaultConfigDir();
   const thresholdsPath = path.join(dir, 'thresholds.yaml');
   try {
-    const content = fs.readFileSync(thresholdsPath, 'utf8');
+    const content = safeReadFile(thresholdsPath, { requireMode: 0o600 });
     const parsed = yaml.load(content, { schema: yaml.JSON_SCHEMA });
     if (typeof parsed !== 'object' || parsed === null) return null;
     const obj = parsed as Record<string, unknown>;

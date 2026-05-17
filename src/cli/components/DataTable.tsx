@@ -21,7 +21,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
 
 import { colors, icons } from '../theme.js';
-import { DOT_SEP, MSG_NO_RESULT } from '../ui/text.js';
+import { DOT_SEP, MSG_NO_RESULT, stripAnsi } from '../ui/text.js';
 import { GAP_BETWEEN_SECTIONS, MARGIN_LEFT_CONTENT } from '../ui/spacing.js';
 import { TUI } from '../ui/tokens.js';
 import { getAvailableSafeWidth, padEndWidth, truncateWidth, middleTruncateWidth } from '../ui/width.js';
@@ -114,15 +114,17 @@ function fitCell(text: string, width: number, truncMode: 'start' | 'middle' | 'e
   return padEndWidth(truncated, width);
 }
 
-/** Resolves a row cell value to a display string. */
+/** Resolves a row cell value to a display string. Strips ANSI escapes from
+ *  user-controlled values (AWS tag names, S3 bucket names, etc.) so they
+ *  cannot rewrite the terminal when rendered. */
 function getCellValue<T>(col: ColumnDef<T>, row: T): string {
   const raw = (row as Record<string, unknown>)[col.key];
   // renderCell returns JSX, but for string calculation use render fallback
   if (col.render !== undefined) {
-    return col.render(raw, row);
+    return stripAnsi(col.render(raw, row));
   }
   if (raw === null || raw === undefined) return '';
-  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'string') return stripAnsi(raw);
   if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw);
   return JSON.stringify(raw);
 }

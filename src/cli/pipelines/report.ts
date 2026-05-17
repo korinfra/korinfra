@@ -4,7 +4,6 @@
  * Steps: read last scan from DB → export to format (JSON/CSV/HTML)
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
 import type { PipelineStep, PipelineContext } from '../components/DirectPipeline.js';
 import type { ScanReport } from '../../output/formatter.js';
@@ -12,6 +11,7 @@ import { createFormatter } from '../../output/formatter.js';
 import { getDb } from '../../storage/db.js';
 import { DOT_SEP } from '../ui/text.js';
 import { asStr } from '../../utils/coerce.js';
+import { safeWriteFile } from '../../utils/safe-fs.js';
 import { getScan, listScans } from '../../storage/queries/scans.js';
 import { listResources } from '../../storage/queries/resources.js';
 import { listCosts } from '../../storage/queries/costs.js';
@@ -154,14 +154,9 @@ export function buildReportPipelineSteps(opts: ReportPipelineOptions = {}): Pipe
         const formatter = createFormatter(format);
         const content = formatter.format(scanReport);
 
-        // Write to file if output path specified
         if (opts.outputPath) {
           const resolved = path.resolve(opts.outputPath);
-          fs.mkdirSync(path.dirname(resolved), { recursive: true });
-          const writeOpts = process.platform !== 'win32'
-            ? { encoding: 'utf-8' as const, mode: 0o600 }
-            : 'utf-8';
-          fs.writeFileSync(resolved, content, writeOpts);
+          safeWriteFile(resolved, content, { mode: 0o600, dirMode: 0o700 });
           return { format, outputPath: resolved, written: true, size: content.length };
         }
 

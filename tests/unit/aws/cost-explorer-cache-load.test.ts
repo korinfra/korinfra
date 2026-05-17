@@ -31,14 +31,16 @@ vi.mock('../../../src/aws/credentials.js', async () => ({
   getCredentials: vi.fn().mockReturnValue(async () => ({ accessKeyId: 'x', secretAccessKey: 'y' })),
 }));
 
+vi.mock('../../../src/utils/safe-fs.js', () => ({
+  safeReadFile: vi.fn().mockImplementation(() => readFileSyncMock()),
+  safeWriteFile: vi.fn(),
+  safeOpenAppend: vi.fn().mockReturnValue(0),
+  checkNoSymlink: vi.fn(),
+}));
+
 vi.mock('node:fs', async () => {
   const actual = await vi.importActual<typeof FsModule>('node:fs');
-  return {
-    ...actual,
-    readFileSync: vi.fn().mockImplementation(() => readFileSyncMock()),
-    writeFileSync: vi.fn(),
-    mkdirSync: vi.fn(),
-  };
+  return { ...actual, mkdirSync: vi.fn() };
 });
 
 import { getCostsCached } from '../../../src/aws/cost-explorer.js';

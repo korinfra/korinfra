@@ -114,3 +114,17 @@ export function joinDot(...parts: string[]): string {
 
 // ─── Common messages ─────────────────────────────────────────────────────────
 export const MSG_NO_RESULT = 'No result was returned.';
+
+// ─── ANSI sanitization ────────────────────────────────────────────────────────
+
+// Pattern adapted from `ansi-regex` (Sindre Sorhus, MIT). Explicit Unicode
+// escapes (\u001B = ESC, \u009B = 8-bit CSI, \u0007 = BEL) keep the source
+// printable.
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\d/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+// eslint-disable-next-line no-control-regex
+const CTRL_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+
+export function stripAnsi(s: string): string {
+  return s.replace(ANSI_RE, '').replace(CTRL_RE, '');
+}

@@ -17,7 +17,7 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 
 import { colors, borders, semanticColors } from '../theme.js';
 import { GAP_BETWEEN_SECTIONS, GAP_BEFORE_ACTIONS, PADDING_X, GAP_ROW } from '../ui/spacing.js';
-import { DOT_SEP, SEVERITY_LABELS } from '../ui/text.js';
+import { DOT_SEP, SEVERITY_LABELS, stripAnsi } from '../ui/text.js';
 import { truncateWidth } from '../ui/width.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -86,10 +86,13 @@ export function SecurityDetailOverlay({
   const colWhat  = Math.floor(available * 0.36);
   const colFix   = available - colWhere - colWhat - 2; // -2 for the 2 inter-column gaps
 
-  // WHERE: resource id + file path (if available)
+  // WHERE: resource id + file path (if available). The resource ID comes from
+  // AWS (ARN / instance ID / bucket name) and may contain ANSI escape codes
+  // that would otherwise rewrite the terminal.
+  const safeResource = stripAnsi(finding.resource);
   const whereText = finding.filePath
-    ? `${finding.resource} in ${finding.filePath}`
-    : finding.resource;
+    ? `${safeResource} in ${finding.filePath}`
+    : safeResource;
   const whereLines = wrapText(whereText, colWhere - 2);
 
   // WHAT: finding description (the rule description)

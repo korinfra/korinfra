@@ -15,7 +15,7 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 
 import { colors, icons, borders, semanticColors } from '../theme.js';
 import { GAP_BETWEEN_SECTIONS, GAP_ROW, GAP_BEFORE_ACTIONS, PADDING_X } from '../ui/spacing.js';
-import { DOT_SEP } from '../ui/text.js';
+import { DOT_SEP, stripAnsi } from '../ui/text.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -111,9 +111,14 @@ export function ResourceDetailOverlay({
 
   const issues = resource.issues ?? [];
   const costLine = formatCostLine(resource.monthlyCostUsd, resource.monthlyCostSource);
-  const displayName = resource.name !== '' && resource.name !== resource.id
-    ? resource.name
-    : resource.id;
+  const safeName = stripAnsi(resource.name);
+  const safeId = stripAnsi(resource.id);
+  const safeType = stripAnsi(resource.type);
+  const safeRegion = stripAnsi(resource.region);
+  const safeState = stripAnsi(resource.state);
+  const safeInstanceType = stripAnsi(resource.instanceType);
+  const safeArn = resource.arn !== undefined ? stripAnsi(resource.arn) : undefined;
+  const displayName = safeName !== '' && safeName !== safeId ? safeName : safeId;
 
   return (
     <Box flexDirection="column" width={overlayWidth}>
@@ -127,32 +132,32 @@ export function ResourceDetailOverlay({
         {/* Header: resource name / ID */}
         <Box gap={GAP_ROW} marginBottom={GAP_BETWEEN_SECTIONS}>
           <Text bold color={colors.highlight}>{displayName}</Text>
-          {resource.name !== '' && resource.name !== resource.id && (
-            <Text dimColor>({resource.id})</Text>
+          {safeName !== '' && safeName !== safeId && (
+            <Text dimColor>({safeId})</Text>
           )}
         </Box>
 
         {/* Metadata section */}
         <Box flexDirection="column" gap={0}>
           {colors.info !== undefined
-            ? <DetailRow label="Type" value={resource.type} valueColor={colors.info} />
-            : <DetailRow label="Type" value={resource.type} />}
+            ? <DetailRow label="Type" value={safeType} valueColor={colors.info} />
+            : <DetailRow label="Type" value={safeType} />}
           {colors.info !== undefined
-            ? <DetailRow label="Region" value={resource.region} valueColor={colors.info} />
-            : <DetailRow label="Region" value={resource.region} />}
+            ? <DetailRow label="Region" value={safeRegion} valueColor={colors.info} />
+            : <DetailRow label="Region" value={safeRegion} />}
           {(() => {
-            const stateCol = stateColor(resource.state);
+            const stateCol = stateColor(safeState);
             return stateCol !== undefined
-              ? <DetailRow label="State" value={resource.state} valueColor={stateCol} />
-              : <DetailRow label="State" value={resource.state} />;
+              ? <DetailRow label="State" value={safeState} valueColor={stateCol} />
+              : <DetailRow label="State" value={safeState} />;
           })()}
-          {resource.instanceType !== '' && (
+          {safeInstanceType !== '' && (
             colors.info !== undefined
-              ? <DetailRow label="Instance type" value={resource.instanceType} valueColor={colors.info} />
-              : <DetailRow label="Instance type" value={resource.instanceType} />
+              ? <DetailRow label="Instance type" value={safeInstanceType} valueColor={colors.info} />
+              : <DetailRow label="Instance type" value={safeInstanceType} />
           )}
-          {resource.arn !== undefined && resource.arn !== '' && (
-            <DetailRow label="ARN" value={resource.arn} />
+          {safeArn !== undefined && safeArn !== '' && (
+            <DetailRow label="ARN" value={safeArn} />
           )}
           <DetailRow label="Last collected" value={formatCollectedAt(resource.collectedAt)} />
         </Box>
@@ -179,7 +184,7 @@ export function ResourceDetailOverlay({
                 return (
                   <Box key={i} gap={GAP_ROW}>
                     <Text color={impactColor}>{icons.bullet}</Text>
-                    <Text dimColor>{issue.title}</Text>
+                    <Text dimColor>{stripAnsi(issue.title)}</Text>
                   </Box>
                 );
               })}
