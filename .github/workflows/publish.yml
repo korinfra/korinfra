@@ -49,9 +49,11 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "New release detected: ${TAG}"
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            {
+              echo "skip=false"
+              echo "version=${VERSION}"
+              echo "tag=${TAG}"
+            } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Verify NPM_TOKEN is set

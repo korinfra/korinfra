@@ -1,0 +1,60 @@
+name: Workflow Lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+
+permissions: read-all
+
+concurrency:
+  group: workflow-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-22.04
+    timeout-minutes: 2
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    steps:
+      - uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download and run actionlint
+        # Install script is pinned to a tagged release so the binary is
+        # deterministic. actionlint validates GitHub Actions workflow YAML
+        # (syntax, action references, shell scripts inside `run:`, expression
+        # syntax, etc.) — a much lighter check than running the full code CI
+        # for PRs that only touch workflow files.
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.10/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+  ci:
+    # Matches the required-check name produced by ci.yml. Either workflow
+    # satisfies branch protection's "ci" requirement, depending on which
+    # paths a PR touches.
+    name: ci
+    runs-on: ubuntu-22.04
+    needs: [actionlint]
+    if: always()
+    steps:
+      - name: All checks passed
+        run: |
+          if [[ "${{ needs.actionlint.result }}" != "success" && "${{ needs.actionlint.result }}" != "skipped" ]]; then
+            echo "actionlint failed: ${{ needs.actionlint.result }}"
+            exit 1
+          fi
