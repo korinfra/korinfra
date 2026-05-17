@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { PipelineContext } from '../../../../src/cli/components/DirectPipeline.js';
-import { extractScanSummary } from '../../../../src/cli/pipelines/scan.js';
+import { extractScanSummary, extractRecommendations } from '../../../../src/cli/pipelines/scan.js';
 
 function makeCtx(results: Record<string, unknown>): PipelineContext {
   return { results: new Map(Object.entries(results)) } as PipelineContext;
@@ -117,5 +117,99 @@ describe('extractScanSummary — partial failures', () => {
     expect(summary.anomalyCount).toBe(3);
     expect(summary.partial).toBe(true);
     expect(summary.failedRegions).toEqual(['ap-southeast-1']);
+  });
+});
+
+// unknownCostCount is derived from the warnings emitted by strict-gated rules
+// (deduped per resource), so the count reflects resources that were actually
+// skipped — not raw collect-payload values that security rules still consume.
+describe('extractScanSummary — unknownCostCount', () => {
+  it('counts unique resources warned about missing monthly_cost', () => {
+    const ctx = makeCtx({
+      collect: { resourceCount: 5 },
+      rules: {
+        warnings: [
+          { ruleId: 'RDS-001', resourceId: 'db-1', resourceType: 'rds_instance', reason: 'monthly_cost missing or invalid' },
+          { ruleId: 'RDS-009', resourceId: 'db-1', resourceType: 'rds_instance', reason: 'monthly_cost missing or invalid' },
+          { ruleId: 'EBS-001', resourceId: 'vol-1', resourceType: 'ebs_volume', reason: 'monthly_cost missing or invalid' },
+        ],
+      },
+    });
+    expect(extractScanSummary(ctx).unknownCostCount).toBe(2);
+  });
+
+  it('ignores warnings with other reasons', () => {
+    const ctx = makeCtx({
+      collect: { resourceCount: 1 },
+      rules: {
+        warnings: [
+          { ruleId: 'X-1', resourceId: 'r-1', resourceType: 't', reason: 'something else' },
+        ],
+      },
+    });
+    expect(extractScanSummary(ctx).unknownCostCount).toBe(0);
+  });
+
+  it('returns 0 when there are no rule warnings', () => {
+    const ctx = makeCtx({
+      collect: { resourceCount: 2 },
+      rules: { warnings: [] },
+    });
+    expect(extractScanSummary(ctx).unknownCostCount).toBe(0);
+  });
+});
+
+// Issue #37 finding #1 — JSON output must reflect the real (clamped)
+// confidence from each rule, not the previously-hardcoded 1.
+describe('extractRecommendations — confidence + savings guards', () => {
+  it('propagates the rule-emitted confidence', () => {
+    const ctx = makeCtx({
+      rules: {
+        recommendations: [
+          { id: 'EC2-001-001', title: 'idle', description: 'd', impact: 'high', risk: 'low', estimated_savings: 50, confidence: 0.85 },
+        ],
+      },
+    });
+    const recs = extractRecommendations(ctx);
+    expect(recs[0]!.confidence).toBe(0.85);
+  });
+
+  it('clamps confidence > 1 down to 1 (defends against stale DB rows)', () => {
+    const ctx = makeCtx({
+      rules: {
+        recommendations: [
+          { id: 'x', title: 't', description: 'd', impact: 'high', risk: 'low', estimated_savings: 10, confidence: 1.05 },
+        ],
+      },
+    });
+    expect(extractRecommendations(ctx)[0]!.confidence).toBe(1);
+  });
+
+  it('collapses NaN / negative confidence to 0', () => {
+    const ctx = makeCtx({
+      rules: {
+        recommendations: [
+          { id: 'a', title: 't', description: 'd', impact: 'high', risk: 'low', confidence: NaN },
+          { id: 'b', title: 't', description: 'd', impact: 'high', risk: 'low', confidence: -0.5 },
+        ],
+      },
+    });
+    const recs = extractRecommendations(ctx);
+    expect(recs[0]!.confidence).toBe(0);
+    expect(recs[1]!.confidence).toBe(0);
+  });
+
+  it('rejects NaN / negative estimated_savings', () => {
+    const ctx = makeCtx({
+      rules: {
+        recommendations: [
+          { id: 'a', title: 't', description: 'd', impact: 'high', risk: 'low', estimated_savings: NaN, confidence: 0.9 },
+          { id: 'b', title: 't', description: 'd', impact: 'high', risk: 'low', estimated_savings: -100, confidence: 0.9 },
+        ],
+      },
+    });
+    const recs = extractRecommendations(ctx);
+    expect(recs[0]!.estimatedSavingsUsd).toBe(0);
+    expect(recs[1]!.estimatedSavingsUsd).toBe(0);
   });
 });

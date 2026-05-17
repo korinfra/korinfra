@@ -133,3 +133,34 @@ describe('checkS3004 — encryption not enabled', () => {
     expect(checkS3004(makeS3Bucket({ type: 'ec2_instance', configuration: { monthlyCost: 100, encryption_enabled: false } }), cfg)).toBeNull();
   });
 });
+
+// ─── Collector three-state ('unknown') handling — issue #37 finding #7 ──────
+
+describe('S3 rules — collector "unknown" state', () => {
+  it('checkS3001 skips when lifecycle state is unknown', () => {
+    expect(
+      checkS3001(makeS3Bucket({ configuration: { monthlyCost: 200, has_lifecycle: 'unknown', lifecycle_rules_count: 'unknown' } }), cfg),
+    ).toBeNull();
+  });
+
+  it('checkS3002 skips when lifecycle or tiering state is unknown', () => {
+    expect(
+      checkS3002(makeS3Bucket({ configuration: { monthlyCost: 200, has_lifecycle: 'unknown', has_intelligent_tiering: false } }), cfg),
+    ).toBeNull();
+    expect(
+      checkS3002(makeS3Bucket({ configuration: { monthlyCost: 200, has_lifecycle: true, lifecycle_rules_count: 2, has_intelligent_tiering: 'unknown' } }), cfg),
+    ).toBeNull();
+  });
+
+  it('checkS3003 skips when versioning state is unknown', () => {
+    expect(
+      checkS3003(makeS3Bucket({ configuration: { monthlyCost: 100, versioning_enabled: 'unknown' } }), cfg),
+    ).toBeNull();
+  });
+
+  it('checkS3004 skips when encryption state is unknown', () => {
+    expect(
+      checkS3004(makeS3Bucket({ configuration: { monthlyCost: 500, encryption_enabled: 'unknown' } }), cfg),
+    ).toBeNull();
+  });
+});

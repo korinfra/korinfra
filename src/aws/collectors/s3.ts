@@ -47,6 +47,36 @@ async function getBucketLocation(
   }
 }
 
+/**
+ * Sentinel returned by S3 sub-collectors when the API call fails transiently
+ * (5xx / throttle / missing IAM). Distinct from definitive "feature absent"
+ * errors (e.g. NoSuchLifecycleConfiguration), which map to `false`/`0`.
+ */
+type Unknown = 'unknown';
+const UNKNOWN: Unknown = 'unknown';
+
+/** AWS S3 error names that mean "feature absent" rather than "API failed". */
+const S3_FEATURE_ABSENT_ERROR_NAMES = new Set<string>([
+  'NoSuchLifecycleConfiguration',
+  'NoSuchBucketPolicy',
+  'NoSuchTagSet',
+  'NoSuchTagSetError',
+  'NoSuchTagConfiguration',
+  'ServerSideEncryptionConfigurationNotFoundError',
+  'NoSuchPublicAccessBlockConfiguration',
+  'NoSuchCORSConfiguration',
+  'NoSuchWebsiteConfiguration',
+  'NoSuchReplicationConfiguration',
+]);
+
+function isFeatureAbsentError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const name = (err as { name?: unknown }).name;
+  const code = (err as { Code?: unknown }).Code;
+  return (typeof name === 'string' && S3_FEATURE_ABSENT_ERROR_NAMES.has(name))
+    || (typeof code === 'string' && S3_FEATURE_ABSENT_ERROR_NAMES.has(code));
+}
+
 async function getBucketTags(
   client: S3Client,
   region: string,
@@ -69,7 +99,7 @@ async function getBucketVersioning(
   region: string,
   bucket: string,
   signal?: AbortSignal,
-): Promise<boolean> {
+): Promise<boolean | Unknown> {
   try {
     const out = await throttledCall('s3', 'GetBucketVersioning', region, () =>
       client.send(new GetBucketVersioningCommand({ Bucket: bucket }), { ...(signal ? { abortSignal: signal } : {}) }),
@@ -77,7 +107,9 @@ async function getBucketVersioning(
     return out.Status === 'Enabled';
   } catch (err) {
     logger.debug({ err, bucket }, 's3 GetBucketVersioning: non-fatal');
-    return false;
+    // GetBucketVersioning has no "feature absent" error — every bucket has a
+    // versioning state. A failure here is genuinely unknown.
+    return UNKNOWN;
   }
 }
 
@@ -86,7 +118,7 @@ async function getLifecycleRulesCount(
   region: string,
   bucket: string,
   signal?: AbortSignal,
-): Promise<number> {
+): Promise<number | Unknown> {
   try {
     const out = await throttledCall('s3', 'GetBucketLifecycleConfiguration', region, () =>
       client.send(
@@ -97,7 +129,8 @@ async function getLifecycleRulesCount(
     return (out.Rules ?? []).length;
   } catch (err) {
     logger.debug({ err, bucket }, 's3 GetBucketLifecycleConfiguration: non-fatal');
-    return 0;
+    if (isFeatureAbsentError(err)) return 0;
+    return UNKNOWN;
   }
 }
 
@@ -106,7 +139,7 @@ async function getBucketEncryption(
   region: string,
   bucket: string,
   signal?: AbortSignal,
-): Promise<boolean> {
+): Promise<boolean | Unknown> {
   try {
     const out = await throttledCall('s3', 'GetBucketEncryption', region, () =>
       client.send(new GetBucketEncryptionCommand({ Bucket: bucket }), { ...(signal ? { abortSignal: signal } : {}) }),
@@ -114,7 +147,8 @@ async function getBucketEncryption(
     return (out.ServerSideEncryptionConfiguration?.Rules ?? []).length > 0;
   } catch (err) {
     logger.debug({ err, bucket }, 's3 GetBucketEncryption: non-fatal');
-    return false;
+    if (isFeatureAbsentError(err)) return false;
+    return UNKNOWN;
   }
 }
 
@@ -123,7 +157,7 @@ async function getBucketIntelligentTiering(
   region: string,
   bucket: string,
   signal?: AbortSignal,
-): Promise<boolean> {
+): Promise<boolean | Unknown> {
   try {
     const result = await throttledCall('s3', 'ListBucketIntelligentTieringConfigurations', region, () =>
       client.send(
@@ -134,7 +168,9 @@ async function getBucketIntelligentTiering(
     return (result?.IntelligentTieringConfigurationList ?? []).length > 0;
   } catch (err) {
     logger.debug({ err, bucket }, 's3 ListBucketIntelligentTieringConfigurations: non-fatal');
-    return false;
+    // ListBucketIntelligentTieringConfigurations returns an empty list when
+    // there are no configurations — it does not throw "feature absent".
+    return UNKNOWN;
   }
 }
 
@@ -253,6 +289,18 @@ export async function collectS3(
           skipMetrics ? Promise.resolve(0) : getBucketSizeBytes(cwClient, name, bucketRegion, signal),
         ]);
 
+        // Track which collector calls failed transiently so downstream rules
+        // can skip them and JSON consumers can surface `_checkFailed`.
+        const checkFailed: string[] = [];
+        if (versioningEnabled === UNKNOWN) checkFailed.push('versioning');
+        if (lifecycleCount === UNKNOWN) checkFailed.push('lifecycle');
+        if (encryptionEnabled === UNKNOWN) checkFailed.push('encryption');
+        if (hasIntelligentTiering === UNKNOWN) checkFailed.push('intelligent_tiering');
+
+        const hasLifecycle: boolean | Unknown = lifecycleCount === UNKNOWN
+          ? UNKNOWN
+          : lifecycleCount > 0;
+
         const resource: Resource = {
           id: name,
           arn: `arn:aws:s3:::${name}`,
@@ -267,11 +315,12 @@ export async function collectS3(
           configuration: {
             versioning_enabled: versioningEnabled,
             lifecycle_rules_count: lifecycleCount,
-            has_lifecycle: lifecycleCount > 0,
+            has_lifecycle: hasLifecycle,
             encryption_enabled: encryptionEnabled,
             has_intelligent_tiering: hasIntelligentTiering,
             size_bytes: sizeBytes,
             size_gb: sizeBytes / (1024 ** 3),
+            ...(checkFailed.length > 0 ? { _checkFailed: checkFailed } : {}),
           },
         };
         return resource;

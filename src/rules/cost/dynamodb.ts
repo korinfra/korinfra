@@ -8,6 +8,8 @@ import type { Recommendation } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
 import { strConfig, boolConfig, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
+import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
+import { logger } from '../../utils/logger.js';
 
 // DynamoDB billing mode switch savings: highly variable.
 // PAY_PER_REQUEST is cheaper for unpredictable/low traffic (<50% of provisioned capacity used).
@@ -32,6 +34,14 @@ export function checkDDB001(r: Resource, cfg: Cfg): Recommendation | null {
 
   const hasUtilizationData = consumedRead !== undefined && consumedWrite !== undefined;
   if (hasUtilizationData) {
+    if (!Number.isFinite(consumedRead) || !Number.isFinite(consumedWrite)) {
+      logger.debug({ resourceId: r.id }, 'DDB-001: non-finite consumed capacity, skipping');
+      return null;
+    }
+    if (provisionedRead === 0 && provisionedWrite === 0 && consumedRead === 0 && consumedWrite === 0) {
+      logger.debug({ resourceId: r.id }, 'DDB-001: zero provisioned and zero consumed capacity (paused or new table), skipping');
+      return null;
+    }
     // Skip if consumed capacity is above the threshold of provisioned — table is well-utilized.
     const readUtilPct = provisionedRead > 0 ? ((consumedRead) / provisionedRead) * 100 : 0;
     const writeUtilPct = provisionedWrite > 0 ? ((consumedWrite) / provisionedWrite) * 100 : 0;
@@ -55,7 +65,7 @@ export function checkDDB001(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'Provisioned capacity charges for reserved RCUs/WCUs regardless of actual usage. On-demand charges only for consumed requests, with no capacity planning required.',
     impact: 'high',
     risk: 'high',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'switch_to_on_demand',
     // When no utilization data: use 0.55 (no CloudWatch data available).
     // When config-level utilization data is present: use 0.85 directly.
@@ -96,9 +106,9 @@ export function checkDDB002(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'DynamoDB provisioned capacity without auto-scaling locks you into peak capacity costs 24/7. Auto-scaling adjusts capacity to match traffic and can save 20-40% on average workloads.',
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'enable_auto_scaling',
-    confidence: confidenceFromUtilization(0.80, r.utilization),
+    confidence: clampConfidence(confidenceFromUtilization(0.80, r.utilization)),
     filePath,
     currentConfig: { billing_mode: 'PROVISIONED', auto_scaling_enabled: false },
     suggestedConfig: { auto_scaling_enabled: true },

@@ -240,23 +240,31 @@ export const collectAwsTool: ToolDefinition = {
       const redactionLevel: RedactionLevel = redactionLevelFromConfig;
 
       const resourcePayload = compact
-        ? resources.map((r) => ({
-            id: sanitizeTagValue(r.id),
-            type: r.type,
-            name: sanitizeTagValue(r.name),
-            region: r.region,
-            state: r.state,
-            instance_type: r.instanceType,
-            monthly_cost: typeof r.configuration?.['monthlyCost'] === 'number'
-              ? (r.configuration['monthlyCost'])
-              : 0,
-            monthly_cost_source: (r.configuration?.['monthlyCostSource'] as 'cost_explorer' | 'pricing_api' | undefined) ?? null,
-            arn: sanitizeTagValue(r.arn),
-            // Per-service display fields for tabbed resource browser (§5.2.2–3)
-            engine: typeof r.configuration?.['engine'] === 'string' ? r.configuration['engine'] : undefined,
-            size_gb: typeof r.configuration?.['size_gb'] === 'number' ? r.configuration['size_gb'] : undefined,
-            collected_at: r.collectedAt,
-          }))
+        ? resources.map((r) => {
+            const rawCost = r.configuration?.['monthlyCost'];
+            const monthlyCost = typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0
+              ? rawCost
+              : 0;
+            const checkFailed = r.configuration?.['_checkFailed'];
+            return {
+              id: sanitizeTagValue(r.id),
+              type: r.type,
+              name: sanitizeTagValue(r.name),
+              region: r.region,
+              state: r.state,
+              instance_type: r.instanceType,
+              monthly_cost: monthlyCost,
+              monthly_cost_source: (r.configuration?.['monthlyCostSource'] as 'cost_explorer' | 'pricing_api' | undefined) ?? null,
+              arn: sanitizeTagValue(r.arn),
+              // Per-service display fields for tabbed resource browser (§5.2.2–3)
+              engine: typeof r.configuration?.['engine'] === 'string' ? r.configuration['engine'] : undefined,
+              size_gb: typeof r.configuration?.['size_gb'] === 'number' ? r.configuration['size_gb'] : undefined,
+              collected_at: r.collectedAt,
+              ...(Array.isArray(checkFailed) && checkFailed.length > 0
+                ? { _checkFailed: checkFailed as string[] }
+                : {}),
+            };
+          })
         : resources.map((r) => sanitizeResourceTags(r));
 
       // Limit cost entries to 60 most recent to reduce payload size

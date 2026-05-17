@@ -4,6 +4,7 @@
  */
 
 import type { Resource } from '../../aws/types.js';
+import { clampConfidence, guardCost } from '../../utils/numeric-guards.js';
 
 /** Parse "7d" → 7, "14d" → 14, "30d" → 30. Returns 30 for unrecognized formats. */
 function parsePeriodDays(period: string): number {
@@ -161,10 +162,38 @@ export function numConfig(r: Resource, key: string): number {
   return 0;
 }
 
-/** Reads monthlyCost from resource.configuration with a safe fallback to 0. */
+/** Reads monthlyCost from resource.configuration; NaN / Infinity / negative collapse to 0. */
 export function getMonthlyCost(r: Resource): number {
   const v = r.configuration?.['monthlyCost'];
-  return typeof v === 'number' ? v : 0;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return 0;
+  return v;
+}
+
+/**
+ * Strict variant — returns null when monthly_cost is missing, non-finite,
+ * non-positive, or a non-coercible type. Numeric strings are accepted via
+ * `guardCost`'s coercion. Rules that compute savings as a fraction of
+ * monthly_cost should use this and skip when null is returned.
+ */
+export function getMonthlyCostStrict(r: Resource): number | null {
+  return guardCost(r.configuration?.['monthlyCost']);
+}
+
+/**
+ * Tri-state config reader: returns `true` / `false` / `'unknown'` / `undefined`.
+ * `'unknown'` is set by collectors when the AWS API call failed transiently
+ * (vs. a definitive "feature absent" response that yields `false`).
+ */
+export function triStateConfig(r: Resource, key: string): boolean | 'unknown' | undefined {
+  const v = r.configuration?.[key];
+  if (typeof v === 'boolean') return v;
+  if (v === 'unknown') return 'unknown';
+  if (typeof v === 'string') {
+    const lower = v.toLowerCase();
+    if (lower === 'true') return true;
+    if (lower === 'false') return false;
+  }
+  return undefined;
 }
 
 /**
@@ -182,31 +211,33 @@ export function sanitizeResourceName(value: string | undefined | null): string {
 }
 
 /**
- * Adjusts base confidence by utilization data quality.
- * Penalizes sparse data, coverage gaps, and stale metrics.
- * Rewards high-coverage 30-day observation windows.
+ * Adjusts base confidence by utilization data quality. Result is always
+ * clamped to [0, 1]; non-finite base or counters fall back to clamped base.
  */
 export function confidenceFromUtilization(
   base: number,
   util: Resource['utilization'],
 ): number {
-  if (!util) return base;
-  if (util.dataPoints === 0) return Math.min(base, 0.45);
+  if (typeof base !== 'number' || !Number.isFinite(base)) return 0;
+  if (!util) return clampConfidence(base);
 
-  const total = util.dataPoints + util.dataGaps;
-  const coverageRatio = total > 0 ? util.dataPoints / total : 1;
-  if (coverageRatio < 0.50) return Math.min(base, 0.55);
-  if (coverageRatio < 0.75) return Math.min(base, 0.70);
+  const dp = util.dataPoints;
+  const dg = util.dataGaps;
+  if (typeof dp !== 'number' || !Number.isFinite(dp)) return clampConfidence(base);
+  if (typeof dg !== 'number' || !Number.isFinite(dg)) return clampConfidence(base);
 
-  if (util.dataPoints < 30) return Math.min(base, 0.60);
+  if (dp === 0) return clampConfidence(Math.min(base, 0.45));
 
-  if (util.freshnessHrs > 48) return Math.min(base, base * 0.80);
+  const total = dp + dg;
+  const coverageRatio = total > 0 ? dp / total : 1;
+  if (coverageRatio < 0.50) return clampConfidence(Math.min(base, 0.55));
+  if (coverageRatio < 0.75) return clampConfidence(Math.min(base, 0.70));
+  if (dp < 30) return clampConfidence(Math.min(base, 0.60));
+  if (util.freshnessHrs > 48) return clampConfidence(Math.min(base, base * 0.80));
+  if (util.period === '30d' && coverageRatio > 0.90) return clampConfidence(Math.min(1.0, base * 1.05));
+  if (util.period === '7d') return clampConfidence(Math.min(base, base * 0.90));
 
-  if (util.period === '30d' && coverageRatio > 0.90) return Math.min(1.0, base * 1.05);
-
-  if (util.period === '7d') return Math.min(base, base * 0.90);
-
-  return base;
+  return clampConfidence(base);
 }
 
 /** Checks if resource has all required tags. */

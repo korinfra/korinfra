@@ -8,6 +8,7 @@ import type { Recommendation } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
 import { strConfig, numConfig, daysSince, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
+import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { FARGATE_LINUX_VCPU_HOURLY, FARGATE_LINUX_MEMORY_HOURLY, HOURS_PER_MONTH } from '../../pricing/resources.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
@@ -31,9 +32,9 @@ export function checkECS001(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'An ECS service with no running tasks still consumes load balancer target group slots and cluster capacity reservation. If unused, set desired_count=0 or delete it.',
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: monthlyCost,
+    estimatedSavings: guardSavings(monthlyCost),
     suggestedAction: 'set_desired_count_zero',
-    confidence: 0.85,
+    confidence: clampConfidence(0.85),
     filePath,
     currentConfig: { desired_count: desiredCount, running_count: 0 },
     suggestedConfig: { desired_count: 0 },
@@ -92,9 +93,9 @@ export function checkECS002(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: 'EC2 launch type requires provisioning and paying for EC2 instances even during low-utilisation periods. Fargate charges only for running task vCPU and memory seconds. Fargate Spot can save up to 70% further.',
     impact: 'medium',
     risk: 'medium',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_to_fargate',
-    confidence: 0.7,
+    confidence: clampConfidence(0.7),
     filePath,
     currentConfig: { launch_type: 'EC2' },
     suggestedConfig: { launch_type: 'FARGATE' },
@@ -131,9 +132,9 @@ export function checkECS003(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `With ${r.utilization.cpuAverage.toFixed(1)}% CPU average across ${desiredCount} tasks, the effective single-task CPU is even lower. Reducing desired_count from ${desiredCount} to ${suggestedCount} (${(reductionRatio * 100).toFixed(0)}% reduction) would right-size the service.`,
     impact: 'medium',
     risk: 'medium',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'reduce_desired_count',
-    confidence: confidenceFromUtilization(0.75, r.utilization),
+    confidence: clampConfidence(confidenceFromUtilization(0.75, r.utilization)),
     filePath,
     currentConfig: { desired_count: desiredCount, cpu_avg_pct: r.utilization.cpuAverage },
     suggestedConfig: { desired_count: suggestedCount },
@@ -188,7 +189,7 @@ export function checkECS004(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0, // operational issue — savings depends on root cause resolution
     suggestedAction: 'investigate_task_failures',
-    confidence: 0.9,
+    confidence: clampConfidence(0.9),
     filePath,
     currentConfig: { desired_count: desiredCount, running_count: runningCount, pending_count: 0 },
     suggestedConfig: { desired_count: desiredCount }, // desired stays same — fix task failures

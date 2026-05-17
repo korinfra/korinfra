@@ -166,7 +166,9 @@ export function extractCostChartData(ctx: PipelineContext): Array<{ label: strin
   return costs
     .map((c) => ({
       label: String(c.service ?? c.region ?? c.account ?? c.tag ?? 'unknown'),
-      value: typeof c.amount === 'number' ? c.amount : 0,
+      // Refunds and EDP credits are valid negative entries but should not
+      // surface in the "top services" chart — `.filter(value > 0)` below drops them.
+      value: typeof c.amount === 'number' && Number.isFinite(c.amount) ? c.amount : 0,
     }))
     .filter((p) => p.value > 0)
     .sort((a, b) => b.value - a.value)
@@ -201,7 +203,11 @@ export function extractTotalCost(ctx: PipelineContext): number {
     costs?: Array<{ amount?: number }>;
   } | undefined;
 
-  if (typeof grouped?.totalCost === 'number') return grouped.totalCost;
+  if (typeof grouped?.totalCost === 'number' && Number.isFinite(grouped.totalCost)) return grouped.totalCost;
   const costs = grouped?.costs ?? [];
-  return costs.reduce((sum, c) => sum + (typeof c.amount === 'number' ? c.amount : 0), 0);
+  const total = costs.reduce(
+    (sum, c) => sum + (typeof c.amount === 'number' && Number.isFinite(c.amount) ? c.amount : 0),
+    0,
+  );
+  return Number.isFinite(total) ? total : 0;
 }

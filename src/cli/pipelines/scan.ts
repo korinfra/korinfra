@@ -18,6 +18,7 @@ import { saveScanTool } from '../../tools/save-scan.js';
 import { scanTerraformTool } from '../../tools/scan-terraform.js';
 import { classifyResourcesTool } from '../../tools/classify-resources.js';
 import { AWS_REGION_RE } from '../utils/validateRegions.js';
+import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
 /** Parse a ToolResult's JSON text content. Throws on error results. */
 export function parseToolResult(result: ToolResult): unknown {
@@ -297,6 +298,14 @@ export function buildScanPipelineSteps(opts: ScanPipelineOptions = {}): Pipeline
   ];
 }
 
+/** A rule-emitted warning for a resource that was skipped during evaluation. */
+export interface ScanWarning {
+  ruleId: string;
+  resourceId: string;
+  resourceType: string;
+  reason: string;
+}
+
 /** Extract ScanSummaryData-compatible shape from pipeline context. */
 export function extractScanSummary(ctx: PipelineContext): {
   resourceCount: number;
@@ -310,6 +319,8 @@ export function extractScanSummary(ctx: PipelineContext): {
   partial: boolean;
   errorCount: number;
   failedRegions: string[];
+  unknownCostCount: number;
+  warnings: ScanWarning[];
 } {
   const collectResult = ctx.results.get('collect') as {
     resourceCount?: number;
@@ -318,6 +329,7 @@ export function extractScanSummary(ctx: PipelineContext): {
   const rulesResult = ctx.results.get('rules') as {
     summary?: { estimatedSavings?: number; recommendationsFound?: number };
     recommendations?: unknown[];
+    warnings?: ScanWarning[];
   } | undefined;
   const anomalyResult = ctx.results.get('anomalies') as { anomalyCount?: number } | undefined;
   const saveResult = ctx.results.get('save') as { total_cost?: number; scan_id?: string } | undefined;
@@ -342,6 +354,18 @@ export function extractScanSummary(ctx: PipelineContext): {
       .map((e) => e.region as string),
   )];
 
+  // Derive unknownCostCount from rule warnings: a resource counts as "unknown"
+  // only when at least one strict-gated rule actually skipped it for that
+  // reason. Counting raw collect-payload values would over-count, because
+  // security-only rules emit recommendations even when monthly_cost is 0.
+  const ruleWarnings: ScanWarning[] = rulesResult?.warnings ?? [];
+  const unknownCostResources = new Set(
+    ruleWarnings
+      .filter((w) => w.reason === 'monthly_cost missing or invalid')
+      .map((w) => w.resourceId),
+  );
+  const unknownCostCount = unknownCostResources.size;
+
   return {
     resourceCount: collectResult?.resourceCount ?? 0,
     totalMonthlyCostUsd: saveResult?.total_cost ?? 0,
@@ -354,6 +378,8 @@ export function extractScanSummary(ctx: PipelineContext): {
     partial: collectErrors.length > 0,
     errorCount: collectErrors.length,
     failedRegions,
+    unknownCostCount,
+    warnings: ruleWarnings,
   };
 }
 
@@ -365,6 +391,7 @@ export function extractRecommendations(ctx: PipelineContext): Array<{
   impact: 'critical' | 'high' | 'medium' | 'low';
   risk: 'critical' | 'high' | 'medium' | 'low';
   estimatedSavingsUsd: number;
+  confidence: number;
   resourceId?: string;
   type?: string;
   scenario?: string;
@@ -403,7 +430,8 @@ export function extractRecommendations(ctx: PipelineContext): Array<{
       description: asStr(rec['description']),
       impact: (['critical', 'high', 'medium', 'low'].includes(impact) ? impact : 'medium') as 'critical' | 'high' | 'medium' | 'low',
       risk: (['critical', 'high', 'medium', 'low'].includes(risk) ? risk : 'low') as 'critical' | 'high' | 'medium' | 'low',
-      estimatedSavingsUsd: savings,
+      estimatedSavingsUsd: guardSavings(savings),
+      confidence: clampConfidence(rec['confidence']),
       ...(resourceId !== undefined ? { resourceId } : {}),
       ...(type !== undefined ? { type } : {}),
       ...(scenario !== undefined ? { scenario } : {}),

@@ -9,6 +9,7 @@ import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
 import { DEFAULT_REGIONAL_PREMIUMS } from '../../config/defaults.js';
 import { getMonthlyCost } from './helpers.js';
+import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
@@ -39,9 +40,9 @@ export function checkGENERAL001(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `AWS prices vary by region. ${r.region} is ${Math.round(premium * 100)}% more expensive than us-east-1 for this resource type. At $${monthlyCost.toFixed(2)}/mo, moving regions could save ~$${savings.toFixed(2)}/mo, but migration requires planning and has hidden costs.`,
     impact: 'medium',
     risk: 'high',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_to_us_east_1',
-    confidence,
+    confidence: clampConfidence(confidence),
     currentConfig: { region: r.region, monthly_cost: monthlyCost },
     suggestedConfig: { region: 'us-east-1' },
     patchContent: `  provider = aws.us_east_1  # was: ${r.region} (~${Math.round(premium * 100)}% premium)`,

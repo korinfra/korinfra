@@ -7,17 +7,24 @@ import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { strConfig, boolConfig, numConfig, getMonthlyCost } from './helpers.js';
+import { strConfig, boolConfig, numConfig, getMonthlyCost, triStateConfig } from './helpers.js';
+import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
 /** S3-001: Bucket without lifecycle policy. */
 export function checkS3001(r: Resource, cfg: Cfg): Recommendation | null {
   if (r.type !== 's3_bucket') return null;
+  // Skip when the collector could not determine lifecycle state (transient
+  // API failure / IAM denied) — emitting a "no lifecycle" recommendation
+  // would be a false positive.
+  const lifecycleState = triStateConfig(r, 'has_lifecycle');
+  const lifecycleCountRaw = r.configuration?.['lifecycle_rules_count'];
+  if (lifecycleState === 'unknown' || lifecycleCountRaw === 'unknown') return null;
   if (numConfig(r, 'lifecycle_rules_count') > 0) return null;
   if (boolConfig(r, 'has_lifecycle')) return null;
   const monthlyCost = getMonthlyCost(r);
-  const savings = monthlyCost * cfg.s3LifecycleSavingsMultiplier;
+  const savings = guardSavings(monthlyCost * cfg.s3LifecycleSavingsMultiplier);
   const filePath = strConfig(r, 'file_path');
   return {
     ruleId: 'S3-001',
@@ -30,7 +37,7 @@ export function checkS3001(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: savings,
     suggestedAction: 'add_lifecycle_policy',
-    confidence: 0.7,
+    confidence: clampConfidence(0.7),
     filePath,
     currentConfig: { lifecycle_rules_count: 0 },
     suggestedConfig: { lifecycle_rule: 'transition_to_ia_30d_glacier_90d' },
@@ -47,6 +54,11 @@ export function checkS3001(r: Resource, cfg: Cfg): Recommendation | null {
 /** S3-002: Bucket with lifecycle rules but without Intelligent-Tiering transition. */
 export function checkS3002(r: Resource, cfg: Cfg): Recommendation | null {
   if (r.type !== 's3_bucket') return null;
+  // Skip when collector failed to determine lifecycle or tiering state.
+  const lifecycleState = triStateConfig(r, 'has_lifecycle');
+  const tieringState = triStateConfig(r, 'has_intelligent_tiering');
+  if (lifecycleState === 'unknown' || tieringState === 'unknown') return null;
+  if (r.configuration?.['lifecycle_rules_count'] === 'unknown') return null;
   // Only fire when the bucket already has lifecycle rules (S3-001 handles the no-lifecycle case)
   // but is not using Intelligent-Tiering for automatic storage class optimisation.
   const lifecycleCount = numConfig(r, 'lifecycle_rules_count');
@@ -60,7 +72,7 @@ export function checkS3002(r: Resource, cfg: Cfg): Recommendation | null {
   const objectCount = (r.configuration['object_count'] as number | undefined) ?? 0;
   const monitoringFeeMonthly = (objectCount / 1000) * 0.0025;
   const grossSavings = monthlyCost * cfg.s3IntelligentTieringSavingsMultiplier;
-  const savings = Math.max(0, grossSavings - monitoringFeeMonthly);
+  const savings = guardSavings(Math.max(0, grossSavings - monitoringFeeMonthly));
   // Only skip when the monitoring fee provably exceeds savings (both must be non-zero).
   // When monthlyCost is unavailable (0), still flag the bucket — we simply can't estimate savings.
   if (monitoringFeeMonthly > 0 && savings <= 0) return null;
@@ -76,7 +88,7 @@ export function checkS3002(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: savings,
     suggestedAction: 'add_intelligent_tiering',
-    confidence: 0.6,
+    confidence: clampConfidence(0.6),
     filePath,
     currentConfig: { lifecycle_rules_count: lifecycleCount, has_intelligent_tiering: false },
     suggestedConfig: { storage_class: 'INTELLIGENT_TIERING' },
@@ -93,6 +105,8 @@ export function checkS3002(r: Resource, cfg: Cfg): Recommendation | null {
 export function checkS3003(r: Resource, cfg: Cfg): Recommendation | null {
   void cfg;
   if (r.type !== 's3_bucket') return null;
+  // Skip when versioning state could not be determined (transient API failure).
+  if (triStateConfig(r, 'versioning_enabled') === 'unknown') return null;
   if (boolConfig(r, 'versioning_enabled')) return null;
   const filePath = strConfig(r, 'file_path');
   return {
@@ -106,7 +120,7 @@ export function checkS3003(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enable_versioning',
-    confidence: 0.8,
+    confidence: clampConfidence(0.8),
     filePath,
     currentConfig: { versioning_enabled: false },
     suggestedConfig: { versioning_enabled: true },
@@ -125,6 +139,9 @@ export function checkS3004(r: Resource, cfg: Cfg): Recommendation | null {
   void cfg;
   if (r.type !== 's3_bucket') return null;
   if (!('encryption_enabled' in r.configuration)) return null;
+  // Skip when encryption state could not be determined (transient API failure)
+  // — emitting a "no encryption" recommendation would be a false positive.
+  if (triStateConfig(r, 'encryption_enabled') === 'unknown') return null;
   if (boolConfig(r, 'encryption_enabled')) return null;
   const filePath = strConfig(r, 'file_path');
   return {
@@ -138,7 +155,7 @@ export function checkS3004(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enable_default_encryption',
-    confidence: 0.95,
+    confidence: clampConfidence(0.95),
     filePath,
     currentConfig: { encryption_enabled: false },
     suggestedConfig: { encryption_enabled: true, encryption_algorithm: 'AES256' },

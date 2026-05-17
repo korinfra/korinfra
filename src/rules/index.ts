@@ -4,7 +4,7 @@
  */
 
 import type { Resource } from '../aws/types.js';
-import type { Recommendation } from './types.js';
+import type { Recommendation, RuleContext, RuleWarning } from './types.js';
 import type { ThresholdsOverride } from './config.js';
 import { THRESHOLDS } from './config.js';
 import { scoreRecommendation } from './quality.js';
@@ -44,7 +44,11 @@ import { ecsRules } from './cost/ecs.js';
 import { tagsRules } from './cost/tags.js';
 import { generalRules } from './cost/general.js';
 
-type RuleFn = (r: Resource, cfg: typeof THRESHOLDS & ThresholdsOverride & { currency: string }) => Recommendation | null;
+type RuleFn = (
+  r: Resource,
+  cfg: typeof THRESHOLDS & ThresholdsOverride & { currency: string },
+  ctx?: RuleContext,
+) => Recommendation | null;
 
 /** Rules that apply to all resources (cross-cutting / global checks). */
 const globalRuleFns: RuleFn[] = [
@@ -71,12 +75,9 @@ const ruleFnsByType: Readonly<Record<string, RuleFn[]>> = {
 /**
  * Evaluates all cost rules against the provided resources.
  *
- * @param resources - Array of AWS resources to evaluate.
- * @param overrides - Optional threshold overrides (merged with defaults).
- * @param ruleIds - Optional array of rule IDs to filter (runs all if omitted).
- * @param currency - ISO-4217 currency code for recommendations (default: 'USD').
- * @param qualityConfig - Optional quality scoring config (uses defaults if omitted).
- * @returns Deduplicated, quality-scored recommendations.
+ * Returns recommendations alongside per-resource warnings emitted by rules
+ * that skipped evaluation (e.g. monthly_cost missing). Warnings let JSON
+ * consumers and the CLI surface which resources were silently dropped.
  */
 export function evaluateRules(
   resources: Resource[],
@@ -84,11 +85,21 @@ export function evaluateRules(
   ruleIds?: string[],
   currency = 'USD',
   qualityConfig: QualityConfig = DEFAULT_QUALITY_CONFIG,
-): Recommendation[] {
+): { recommendations: Recommendation[]; warnings: RuleWarning[] } {
   const cfg = { ...THRESHOLDS, ...(overrides ?? {}), currency } as typeof THRESHOLDS & ThresholdsOverride & { currency: string };
   const allowedRuleIds = ruleIds && ruleIds.length > 0 ? new Set(ruleIds) : null;
 
   const recs: Recommendation[] = [];
+  const warnings: RuleWarning[] = [];
+  // Mirror the recommendations filter at the source: when the caller restricts
+  // execution to a subset of ruleIds, no-op warnings emitted by other rules so
+  // they never enter the output array.
+  const ctx: RuleContext = {
+    warn(ruleId, resourceId, resourceType, reason) {
+      if (allowedRuleIds !== null && !allowedRuleIds.has(ruleId)) return;
+      warnings.push({ ruleId, resourceId, resourceType, reason });
+    },
+  };
   let seq = 1;
 
   for (const resource of resources) {
@@ -96,28 +107,24 @@ export function evaluateRules(
     for (const fn of ruleFns) {
       let rec: Recommendation | null = null;
       try {
-        rec = fn(resource, cfg);
+        rec = fn(resource, cfg, ctx);
       } catch (err: unknown) {
         logger.debug({ ruleName: fn.name, resourceId: resource.id, err }, 'Rule threw, skipping');
       }
       if (!rec) continue;
-      // Filter by ruleId if specified
       if (allowedRuleIds !== null && !allowedRuleIds.has(rec.ruleId ?? '')) continue;
-      // Assign sequential ID suffix and quality score
       const seqStr = String(seq).padStart(3, '0');
       seq++;
       rec.id = (rec.ruleId ?? '') + '-' + seqStr;
       rec.qualityScore = scoreRecommendation(rec, qualityConfig);
-      // Skip low-confidence recommendations — not actionable (configurable floor)
       if ((rec.confidence ?? 1) < qualityConfig.min_confidence_threshold) continue;
       recs.push(rec);
     }
   }
 
-  // Sort by quality score desc before dedup so highest-quality wins when (ruleId, resourceId) collide
   recs.sort((a, b) => (b.qualityScore ?? 0) - (a.qualityScore ?? 0));
 
-  return dedup(recs, cfg.maxRecommendations);
+  return { recommendations: dedup(recs, cfg.maxRecommendations), warnings };
 }
 
 /**
@@ -161,7 +168,7 @@ function dedup(recs: Recommendation[], maxCount: number): Recommendation[] {
   return finalResult;
 }
 
-export type { Recommendation } from './types.js';
+export type { Recommendation, RuleContext, RuleWarning } from './types.js';
 export type { ThresholdsOverride } from './config.js';
 export { THRESHOLDS } from './config.js';
 export { ruleRegistry } from './registry.js';

@@ -4,15 +4,16 @@
  */
 
 import type { Resource } from '../../aws/types.js';
-import type { Recommendation } from '../types.js';
+import type { Recommendation, RuleContext } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { strConfig, suggestCacheRightsize, sanitizeResourceName, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
+import { strConfig, suggestCacheRightsize, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization } from './helpers.js';
+import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
 /** ELC-001: Overprovisioned ElastiCache cluster (<10% memory utilization). */
-export function checkELC001(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkELC001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'elasticache_cluster' || !r.utilization) return null;
 
   const util = r.utilization;
@@ -20,16 +21,16 @@ export function checkELC001(r: Resource, cfg: Cfg): Recommendation | null {
   const lowCPU = (util.cpuAverage ?? 0) < 10;
   const lowConnections = (util.connectionCount ?? Infinity) < 5;
 
-  // Require low memory AND at least one additional signal (low CPU or low connections)
   if (!lowMemory || (!lowCPU && !lowConnections)) return null;
-
-  // If peak memory was significantly higher, the cluster is not truly overprovisioned
   if ((util.memoryP95 ?? 0) > cfg.cacheMemoryThreshold * 2) return null;
 
   const suggested = suggestCacheRightsize(r.instanceType, util.memoryAverage, cfg.cacheMemoryThreshold);
   if (suggested === r.instanceType) return null;
-  const monthlyCost = getMonthlyCost(r);
-  // Rightsize: one step down = ~50% cost reduction. Actual savings depend on instance family and region pricing.
+  const monthlyCost = getMonthlyCostStrict(r);
+  if (monthlyCost === null) {
+    ctx?.warn('ELC-001', r.id, r.type, 'monthly_cost missing or invalid');
+    return null;
+  }
   const CACHE_RIGHTSIZE_SAVINGS = 0.5;
   const savings = monthlyCost * CACHE_RIGHTSIZE_SAVINGS;
   const confidence = confidenceFromUtilization(0.80, r.utilization);
@@ -43,9 +44,9 @@ export function checkELC001(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `Memory utilisation of ${util.memoryAverage.toFixed(1)}% over ${util.period} indicates significant overprovisioning. Savings estimate is ~50% and varies by instance family and region.`,
     impact: 'medium',
     risk: 'medium',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: `rightsize_to_${suggested}`,
-    confidence,
+    confidence: clampConfidence(confidence),
     filePath,
     currentConfig: { node_type: r.instanceType, memory_avg_pct: util.memoryAverage },
     suggestedConfig: { node_type: suggested },
@@ -97,9 +98,9 @@ export function checkELC002(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `AWS Graviton ElastiCache nodes offer better price/performance. ${nodeType} → ${suggestedType} reduces cost by ~5%/mo.`,
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: `upgrade_to_${suggestedType}`,
-    confidence: 0.8,
+    confidence: clampConfidence(0.8),
     filePath,
     currentConfig: { node_type: nodeType },
     suggestedConfig: { node_type: suggestedType },
@@ -115,11 +116,15 @@ export function checkELC002(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** ELC-003: Idle ElastiCache cluster (near-zero CPU and memory). */
-export function checkELC003(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkELC003(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'elasticache_cluster' || !r.utilization) return null;
   if (r.utilization.cpuAverage >= cfg.elastiCacheIdleCPUThreshold) return null;
   if (r.utilization.memoryAverage >= cfg.elastiCacheIdleMemoryThreshold) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = getMonthlyCostStrict(r);
+  if (monthlyCost === null) {
+    ctx?.warn('ELC-003', r.id, r.type, 'monthly_cost missing or invalid');
+    return null;
+  }
   const savings = monthlyCost * 0.9;
   const nodeType = r.instanceType || strConfig(r, 'node_type');
   const filePath = strConfig(r, 'file_path');
@@ -133,9 +138,9 @@ export function checkELC003(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `CPU average of ${r.utilization.cpuAverage.toFixed(1)}% and memory average of ${r.utilization.memoryAverage.toFixed(1)}% are both below idle thresholds (${cfg.elastiCacheIdleCPUThreshold}% CPU, ${cfg.elastiCacheIdleMemoryThreshold}% memory). Savings estimate (~90%) excludes retained snapshot storage costs.`,
     impact: 'high',
     risk: 'medium',
-    estimatedSavings: savings,
+    estimatedSavings: guardSavings(savings),
     suggestedAction: 'delete',
-    confidence,
+    confidence: clampConfidence(confidence),
     filePath,
     currentConfig: { node_type: nodeType, cpu_avg_pct: r.utilization.cpuAverage, memory_avg_pct: r.utilization.memoryAverage },
     suggestedConfig: { action: 'delete' },
