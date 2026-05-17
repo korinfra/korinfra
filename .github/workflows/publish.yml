@@ -112,6 +112,7 @@ jobs:
       - name: Publish to GitHub Packages
         if: steps.check.outputs.skip != 'true'
         run: |
+          echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> "$NPM_CONFIG_USERCONFIG"
           npm pkg set name='@korinfra/korinfra'
           npm pkg set publishConfig.registry='https://npm.pkg.github.com'
           npm publish --access public
