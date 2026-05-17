@@ -90,6 +90,8 @@ const CONFIG_KNOWN_KEYS: ReadonlySet<string> = new Set([
   'anomaly.rolling_window_days', 'anomaly.critical_z_score', 'anomaly.high_z_score',
   'anomaly.medium_z_score', 'anomaly.trend_min_data_points',
   'anomaly.trend_significance_threshold', 'anomaly.forecast_days',
+  'mcp.session_cost_limit', 'mcp.max_sessions', 'mcp.http_rate_limit',
+  'mcp.session_idle_timeout_ms', 'mcp.max_body_size',
 ]);
 
 function isKnownConfigKey(dotPath: string): boolean {
@@ -838,6 +840,58 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
 
   if (command === 'mcp') {
     const rawSubcommand = commandArgs[0];
+
+    if (rawSubcommand === 'token') {
+      // Text-only path. `--json` is stripped by src/index.ts before routing here
+      // and JSON output is handled by runJsonCommand instead.
+      const action = commandArgs[1];
+
+      if (action === 'status') {
+        const { readPersistedTokenData, getTokenFilePath, getTokenFileMtimeMs } = await import('../mcp/token.js');
+        const filePath = getTokenFilePath();
+        const envOverride = Boolean(process.env['MCP_AUTH_TOKEN']);
+        const data = envOverride ? null : readPersistedTokenData();
+        const mtimeMs = envOverride ? 0 : getTokenFileMtimeMs();
+        if (envOverride) {
+          writeLines([`Source: MCP_AUTH_TOKEN env`, `Path:   ${filePath} (not used)`]);
+        } else if (data) {
+          writeLines([
+            `Path:    ${filePath}`,
+            `Version: ${data.version}`,
+            mtimeMs ? `Mtime:   ${new Date(mtimeMs).toISOString()}` : '',
+          ].filter(Boolean));
+        } else {
+          writeLines([`Path:    ${filePath}`, 'Status:  no token yet']);
+        }
+        return true;
+      }
+
+      if (action !== 'revoke' && action !== 'rotate') {
+        process.stderr.write('korinfra mcp token: usage: korinfra mcp token <revoke|rotate|status> [--json]\n');
+        process.exit(2);
+      }
+      if (process.env['MCP_AUTH_TOKEN']) {
+        process.stderr.write('korinfra mcp token: MCP_AUTH_TOKEN is set; unset it to rotate the persisted file.\n');
+        process.exit(2);
+      }
+      const { revokeToken, getTokenFilePath } = await import('../mcp/token.js');
+      try {
+        const result = revokeToken();
+        writeLines([
+          `Token:   ${result.token}`,
+          `Version: ${result.version}`,
+          `Path:    ${getTokenFilePath()}`,
+          '',
+          'The running MCP HTTP server picks this up on the next request.',
+        ]);
+        return true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`korinfra mcp token ${action}: failed: ${msg}\n`);
+        process.exit(1);
+      }
+    }
+
     const subcommand = rawSubcommand === 'uninstall' ? 'uninstall' : rawSubcommand === 'status' ? 'status' : 'install';
     const nonInteractive = hasFlag(commandArgs, '--non-interactive');
     const configFile = parseArg(commandArgs, '--config');
@@ -1628,6 +1682,65 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
   }
 
   if (command === 'mcp') {
+    if (commandArgs[0] === 'token') {
+      const action = commandArgs[1];
+
+      if (action === 'status') {
+        const { readPersistedTokenData, getTokenFilePath, getTokenFileMtimeMs } = await import('../mcp/token.js');
+        const filePath = getTokenFilePath();
+        const envOverride = Boolean(process.env['MCP_AUTH_TOKEN']);
+        const data = envOverride ? null : readPersistedTokenData();
+        const mtimeMs = envOverride ? 0 : getTokenFileMtimeMs();
+        process.stdout.write(JSON.stringify({
+          command: 'mcp token status',
+          status: 'ok',
+          path: filePath,
+          version: data?.version ?? null,
+          file_exists: data !== null,
+          mtime_ms: mtimeMs || null,
+          managed_by_env: envOverride,
+        }) + '\n');
+        return 0;
+      }
+
+      if (action !== 'revoke' && action !== 'rotate') {
+        process.stdout.write(JSON.stringify({
+          command: 'mcp token',
+          status: 'error',
+          error: 'usage: korinfra mcp token <revoke|rotate|status> [--json]',
+        }) + '\n');
+        return 2;
+      }
+      if (process.env['MCP_AUTH_TOKEN']) {
+        process.stdout.write(JSON.stringify({
+          command: `mcp token ${action}`,
+          status: 'error',
+          error: 'MCP_AUTH_TOKEN env var is set — token is managed externally. Unset it to rotate the persisted file.',
+        }) + '\n');
+        return 2;
+      }
+      const { revokeToken, getTokenFilePath } = await import('../mcp/token.js');
+      try {
+        const result = revokeToken();
+        process.stdout.write(JSON.stringify({
+          command: `mcp token ${action}`,
+          status: 'ok',
+          token: result.token,
+          version: result.version,
+          path: getTokenFilePath(),
+        }) + '\n');
+        return 0;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stdout.write(JSON.stringify({
+          command: `mcp token ${action}`,
+          status: 'error',
+          error: msg,
+        }) + '\n');
+        return 1;
+      }
+    }
+
     const subcommand = commandArgs[0] === 'uninstall' ? 'uninstall' : 'install';
     const nonInteractive = hasFlag(commandArgs, '--non-interactive');
     const configFile = parseArg(commandArgs, '--config');

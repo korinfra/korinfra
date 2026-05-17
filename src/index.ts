@@ -200,7 +200,8 @@ async function main(): Promise<void> {
       '  init        Initialize config',
       '  doctor      Diagnose environment',
       '  config      View or edit configuration',
-      '  mcp         Install MCP server',
+      '  mcp         Install MCP server  (subcommands: install, status, uninstall, token revoke|rotate|status)',
+      '  serve       Run the MCP server (stdio default; --http for HTTP transport)',
       '',
       'Run: korinfra <command> --help',
       '',
@@ -269,8 +270,9 @@ async function main(): Promise<void> {
   const forceHeadless = Boolean(process.env['KORINFRA_HEADLESS']);
   const outputEnv = process.env['KORINFRA_OUTPUT']; // 'json' | 'text' | undefined
   const isJson = args.includes('--json') || outputEnv === 'json';
+  const isMcpTokenCmd = command === 'mcp' && args[1] === 'token';
   const headless = args.includes('--no-tui') || isJson || !isTTY || isCI || isDumbTerm || forceHeadless
-    || outputEnv === 'text';
+    || outputEnv === 'text' || isMcpTokenCmd;
 
   if (headless) {
     const explicitCommand = command !== undefined && command !== '' && !command.startsWith('-');

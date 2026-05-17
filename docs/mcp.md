@@ -27,14 +27,24 @@ korinfra serve --http --port 3000
 - Bearer token authentication (auto-generated and persisted on first start)
 - 300 requests/minute rate limiting per IP (default, configurable via `mcp.http_rate_limit`)
 - Sessions idle for 30 minutes are cleaned up automatically (configurable via `mcp.session_idle_timeout_ms`)
+- Max request body: 10 MB. Override with `mcp.max_body_size` config key or `KORINFRA_MCP_MAX_BODY_SIZE=<bytes>` env (env wins).
 
-**Token rotation:**
+> **One trusted client per server.** All clients share a single bearer token, rate-limit bucket, SQLite connection, and session pool. Run separate `serve` processes on different ports for isolation.
+
+### Token management
+
+The token is persisted as JSON at `~/.korinfra/mcp-token` (mode `0600`): `{ "token": "...", "version": 1 }`. Legacy plain-string files are auto-migrated on first read.
 
 ```bash
-korinfra serve --http --port 3000 --rotate-token
+korinfra mcp token revoke   # bump version, generate new token, print it
+korinfra mcp token rotate   # alias for revoke
+korinfra mcp token status   # path, version, mtime (no token)
+korinfra mcp token revoke --json
 ```
 
-Deletes the persisted token and generates a new one. Use this if the token is compromised or when starting fresh in a new environment.
+The running server stats the file before every request and reloads on mtime change, so rotation takes effect on the next request — no restart. Writes use rename-into-place so concurrent reads never see a half-written file.
+
+Refuses to run when `MCP_AUTH_TOKEN` is set (operator-managed token). The legacy `korinfra serve --http --rotate-token` runs revoke + start in one step.
 
 ---
 
@@ -253,12 +263,14 @@ mcp.example.com {
 }
 ```
 
+### Single trusted client per server
+
+All clients of one server share its bearer token, rate-limit bucket, SQLite connection, and session pool. For multi-tenant access, run a separate `korinfra serve --http --port N` per client, or terminate per-user auth at a reverse proxy and run one MCP process per authenticated user behind it. See [Token management](#token-management) above.
+
 ### Authentication
 
-- Bearer token is auto-generated and persisted to `~/.korinfra/mcp-token` on first start, then reused on restarts
-- Set `MCP_AUTH_TOKEN` env var to override with a fixed 32+ char value
-- Use `korinfra serve --http --rotate-token` to delete the persisted token and generate a new one
-- Token file is created with mode `0o600` (readable/writable by owner only) on POSIX systems
+- Bearer token: auto-generated and persisted to `~/.korinfra/mcp-token` (mode `0600`, JSON format with version counter). See [Token management](#token-management).
+- `MCP_AUTH_TOKEN` env var overrides the file and disables version tracking + live rotation (operator-managed).
 
 ### Data redaction
 
