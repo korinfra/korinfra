@@ -1,0 +1,61 @@
+name: Cache cleanup (weekly)
+
+on:
+  schedule:
+    # Monday 05:00 UTC — between CodeQL (03:00) and Audit (06:00).
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: cache-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Delete caches from closed PRs
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+        with:
+          disable-sudo: true
+          egress-policy: audit
+
+      - name: Delete caches for recently closed PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # GitHub auto-deletes caches that haven't been accessed in 7 days.
+          # This weekly job complements that policy by reclaiming caches from
+          # PRs that closed in the past week (caches still "fresh" by access
+          # time but useless because the branch is gone).
+          closed_prs=$(gh pr list --state closed --limit 100 --json number --jq '.[].number')
+
+          if [ -z "$closed_prs" ]; then
+            echo "No closed PRs found."
+            exit 0
+          fi
+
+          deleted_count=0
+          for pr in $closed_prs; do
+            ref="refs/pull/${pr}/merge"
+            cache_ids=$(gh cache list --ref "$ref" --limit 100 --json id --jq '.[].id' 2>/dev/null || true)
+            if [ -n "$cache_ids" ]; then
+              echo "PR #${pr}: deleting $(echo "$cache_ids" | wc -l) cache(s)"
+              for id in $cache_ids; do
+                if gh cache delete "$id" 2>/dev/null; then
+                  deleted_count=$((deleted_count + 1))
+                fi
+              done
+            fi
+          done
+
+          echo "Done — deleted ${deleted_count} cache entries."
