@@ -2,13 +2,18 @@
 
 All notable changes to KorInfra are documented here.
 
-## [0.1.1] — 2026-05-17
+## [0.1.2] — 2026-05-17
 
 A reliability and hardening release. No breaking changes — safe to upgrade from `0.1.0`:
 
 ```bash
-npm install -g korinfra@0.1.1
+npm install -g korinfra@0.1.2
 ```
+
+> **Note**: version `0.1.1` was skipped. The git tag `v0.1.1` exists but the npm
+> publish failed because the `0.1.1` version slot was already consumed on the
+> registry (npm refuses re-use). `0.1.2` contains the exact same changes that
+> were planned for `0.1.1`.
 
 ### 💰 More trustworthy cost data
 
