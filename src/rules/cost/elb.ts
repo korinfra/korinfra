@@ -5,6 +5,7 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
+import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
 import { strConfig, boolConfig, numConfig, daysSince, sanitizeResourceName, normalizeToMonth, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization } from './helpers.js';
@@ -23,7 +24,7 @@ export function checkELB001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
   if (ageDays === null || ageDays < cfg.elbIdleDays) return null;
   const monthlyCost = getMonthlyCostStrict(r);
   if (monthlyCost === null) {
-    ctx?.warn('ELB-001', r.id, r.type, 'monthly_cost missing or invalid');
+    ctx?.warn('ELB-001', r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
     return null;
   }
   const filePath = strConfig(r, 'file_path');
@@ -53,7 +54,7 @@ export function checkELB001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
 }
 
 /** LB-002: Idle load balancer with no healthy targets or negligible traffic. */
-export function checkLB002(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkLB002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'load_balancer' && r.type !== 'alb' && r.type !== 'nlb') return null;
   // ELB-001 handles the zero-healthy-targets case; skip here to avoid duplicate recommendations.
   if ('healthy_target_count' in r.configuration && numConfig(r, 'healthy_target_count') === 0) return null;
@@ -63,8 +64,15 @@ export function checkLB002(r: Resource, cfg: Cfg): Recommendation | null {
     if (monthlyNetworkMB < cfg.lbIdleTrafficMB) idle = true;
   }
   if (!idle) return null;
-  const monthlyCost = getMonthlyCost(r);
-  const savings = monthlyCost > 0 ? monthlyCost : ALB_BASE_HOURLY * HOURS_PER_MONTH;
+  // Strict cost gating: fall back to fixed ALB_BASE_HOURLY would mis-quote
+  // NLBs ($0.006/hr base) and LCU-heavy ALBs (which exceed the $16/mo base).
+  // Skip + warn so the recommendation surfaces only with a reliable savings figure.
+  const monthlyCost = getMonthlyCostStrict(r);
+  if (monthlyCost === null) {
+    ctx?.warn('LB-002', r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
+    return null;
+  }
+  const savings = monthlyCost;
   const filePath = strConfig(r, 'file_path');
   return {
     ruleId: 'LB-002',

@@ -2,6 +2,33 @@
 
 All notable changes to KorInfra are documented here.
 
+## Unreleased
+
+### Changed
+
+- **Cost rules now surface every silently-skipped resource.** `scan --json`
+  emits a `warnings[]` array (and `summary.warningCount`) listing each
+  resource that DDB-001 or S3-001..004 skipped due to ambiguous data
+  (zero/zero DynamoDB capacity, non-finite consumed capacity, `'unknown'`
+  S3 lifecycle/tiering/versioning/encryption). Operators no longer need
+  `LOG_LEVEL=debug` to discover why a resource didn't get a recommendation
+  (#44 Item 1).
+- **SNAP-001, SNAP-002, RDS-003, LB-002 skip-with-warning when
+  `monthly_cost` is unavailable** instead of emitting
+  `estimatedSavings: $0` recommendations. RDS-003 only skips when its
+  tier-1 pricing-table lookups also fail. SNAP rules preserve the
+  `size_gb`-based fallback when only `monthly_cost` is missing. LB-002
+  drops the misleading `ALB_BASE_HOURLY` ($16/mo) fixed-rate fallback,
+  which mis-quoted NLBs and LCU-heavy ALBs by 3–4× (#44 Item 2).
+
+### Notes for operators
+
+- Expect `summary.warningCount` to be non-zero on scans against accounts
+  where Cost Explorer or service-specific IAM permissions are partial.
+  A re-scan with full permissions resolves the warnings.
+- Reason strings emitted by warnings are stable. The canonical set lives
+  in `src/rules/types.ts` as `RULE_WARN_REASONS`.
+
 ## [0.1.2] — 2026-05-17
 
 A reliability and hardening release. No breaking changes — safe to upgrade from `0.1.0`:

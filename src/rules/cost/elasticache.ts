@@ -5,6 +5,7 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
+import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
 import { strConfig, suggestCacheRightsize, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization } from './helpers.js';
@@ -28,7 +29,7 @@ export function checkELC001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
   if (suggested === r.instanceType) return null;
   const monthlyCost = getMonthlyCostStrict(r);
   if (monthlyCost === null) {
-    ctx?.warn('ELC-001', r.id, r.type, 'monthly_cost missing or invalid');
+    ctx?.warn('ELC-001', r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
     return null;
   }
   const CACHE_RIGHTSIZE_SAVINGS = 0.5;
@@ -122,7 +123,7 @@ export function checkELC003(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
   if (r.utilization.memoryAverage >= cfg.elastiCacheIdleMemoryThreshold) return null;
   const monthlyCost = getMonthlyCostStrict(r);
   if (monthlyCost === null) {
-    ctx?.warn('ELC-003', r.id, r.type, 'monthly_cost missing or invalid');
+    ctx?.warn('ELC-003', r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
     return null;
   }
   const savings = monthlyCost * 0.9;

@@ -4,7 +4,8 @@
  */
 
 import type { Resource } from '../../aws/types.js';
-import type { Recommendation } from '../types.js';
+import type { Recommendation, RuleContext } from '../types.js';
+import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
 import { strConfig, boolConfig, numConfig, getMonthlyCost, triStateConfig } from './helpers.js';
@@ -13,14 +14,17 @@ import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
 /** S3-001: Bucket without lifecycle policy. */
-export function checkS3001(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkS3001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 's3_bucket') return null;
   // Skip when the collector could not determine lifecycle state (transient
   // API failure / IAM denied) — emitting a "no lifecycle" recommendation
   // would be a false positive.
   const lifecycleState = triStateConfig(r, 'has_lifecycle');
   const lifecycleCountRaw = r.configuration?.['lifecycle_rules_count'];
-  if (lifecycleState === 'unknown' || lifecycleCountRaw === 'unknown') return null;
+  if (lifecycleState === 'unknown' || lifecycleCountRaw === 'unknown') {
+    ctx?.warn('S3-001', r.id, r.type, RULE_WARN_REASONS.S3_LIFECYCLE_UNKNOWN);
+    return null;
+  }
   if (numConfig(r, 'lifecycle_rules_count') > 0) return null;
   if (boolConfig(r, 'has_lifecycle')) return null;
   const monthlyCost = getMonthlyCost(r);
@@ -52,13 +56,19 @@ export function checkS3001(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** S3-002: Bucket with lifecycle rules but without Intelligent-Tiering transition. */
-export function checkS3002(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkS3002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 's3_bucket') return null;
   // Skip when collector failed to determine lifecycle or tiering state.
   const lifecycleState = triStateConfig(r, 'has_lifecycle');
   const tieringState = triStateConfig(r, 'has_intelligent_tiering');
-  if (lifecycleState === 'unknown' || tieringState === 'unknown') return null;
-  if (r.configuration?.['lifecycle_rules_count'] === 'unknown') return null;
+  if (lifecycleState === 'unknown' || tieringState === 'unknown') {
+    ctx?.warn('S3-002', r.id, r.type, RULE_WARN_REASONS.S3_LIFECYCLE_TIERING_UNKNOWN);
+    return null;
+  }
+  if (r.configuration?.['lifecycle_rules_count'] === 'unknown') {
+    ctx?.warn('S3-002', r.id, r.type, RULE_WARN_REASONS.S3_LIFECYCLE_COUNT_UNKNOWN);
+    return null;
+  }
   // Only fire when the bucket already has lifecycle rules (S3-001 handles the no-lifecycle case)
   // but is not using Intelligent-Tiering for automatic storage class optimisation.
   const lifecycleCount = numConfig(r, 'lifecycle_rules_count');
@@ -102,11 +112,14 @@ export function checkS3002(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** S3-003: Bucket without versioning. */
-export function checkS3003(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkS3003(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   void cfg;
   if (r.type !== 's3_bucket') return null;
   // Skip when versioning state could not be determined (transient API failure).
-  if (triStateConfig(r, 'versioning_enabled') === 'unknown') return null;
+  if (triStateConfig(r, 'versioning_enabled') === 'unknown') {
+    ctx?.warn('S3-003', r.id, r.type, RULE_WARN_REASONS.S3_VERSIONING_UNKNOWN);
+    return null;
+  }
   if (boolConfig(r, 'versioning_enabled')) return null;
   const filePath = strConfig(r, 'file_path');
   return {
@@ -135,13 +148,16 @@ export function checkS3003(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** S3-004: Bucket without server-side encryption. */
-export function checkS3004(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkS3004(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   void cfg;
   if (r.type !== 's3_bucket') return null;
   if (!('encryption_enabled' in r.configuration)) return null;
   // Skip when encryption state could not be determined (transient API failure)
   // — emitting a "no encryption" recommendation would be a false positive.
-  if (triStateConfig(r, 'encryption_enabled') === 'unknown') return null;
+  if (triStateConfig(r, 'encryption_enabled') === 'unknown') {
+    ctx?.warn('S3-004', r.id, r.type, RULE_WARN_REASONS.S3_ENCRYPTION_UNKNOWN);
+    return null;
+  }
   if (boolConfig(r, 'encryption_enabled')) return null;
   const filePath = strConfig(r, 'file_path');
   return {
