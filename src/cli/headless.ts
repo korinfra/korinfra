@@ -24,6 +24,7 @@ import { buildHistoryPipelineSteps, extractScanDetail, extractScanDiff, extractS
 import { asStr } from '../utils/coerce.js';
 import { stripAnsi } from './ui/text.js';
 import { buildSecurityPipelineSteps, extractSecurityFindings } from './pipelines/security.js';
+import { buildCostImpactPipelineSteps, extractCostImpact } from './pipelines/cost-impact.js';
 import { buildTagsPipelineSteps, extractTagCompliance } from './pipelines/tags.js';
 import { buildRecommendAnalysisPrompt, buildSecurityAnalysisPrompt } from './pipelines/analysis.js';
 import { getAnalysisPrompt, getPrompt } from '../agent/prompts.js';
@@ -464,6 +465,113 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       }
     }
 
+    return true;
+  }
+
+  if (command === 'cost-impact') {
+    const planFile = parseArg(commandArgs, '--plan-file', '-f');
+    if (planFile === null) {
+      process.stderr.write('Error: --plan-file <path> is required.\n');
+      process.stderr.write('Hint: terraform show -json plan.tfplan > plan.json\n');
+      process.exit(2);
+    }
+    // `--tfdir` is accepted for forward-compat with the documented invocation
+    // in issue #40, but the cross-reference to .tf source files is not yet
+    // wired up. Warn so users know the flag is currently a no-op.
+    if (parseArg(commandArgs, '--tfdir') !== null) {
+      process.stderr.write('[korinfra] note: --tfdir is accepted but not yet used; plan parsing reads only --plan-file.\n');
+    }
+    const absPlan = path.resolve(process.cwd(), planFile);
+    const cwd = process.cwd();
+    if (!absPlan.startsWith(cwd + path.sep) && absPlan !== cwd) {
+      process.stderr.write(`Error: --plan-file must stay within ${cwd}\n`);
+      process.exit(2);
+    }
+    if (!absPlan.toLowerCase().endsWith('.json')) {
+      process.stderr.write(`Error: --plan-file must be a .json file (terraform show -json output): ${absPlan}\n`);
+      process.exit(2);
+    }
+    if (!fs.existsSync(absPlan)) {
+      process.stderr.write(`Error: plan file not found: ${absPlan}\n`);
+      process.exit(2);
+    }
+    let currency = 'USD';
+    try {
+      const cfg = await loadConfig();
+      currency = cfg.output.currency;
+    } catch {
+      // No config — fall back to USD.
+    }
+    let context;
+    try {
+      context = await runSteps(buildCostImpactPipelineSteps({ planFile: absPlan, currency }));
+    } catch (e) {
+      process.stderr.write(`Error: ${e instanceof Error ? e.message : String(e)}\n`);
+      process.exit(1);
+    }
+    const impact = extractCostImpact(context);
+    const failOn = parseArg(commandArgs, '--fail-on');
+    const criticalCount = impact.findings.filter((f) => f.severity === 'critical').length;
+    const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
+
+    const netLabel = impact.summary.netDeltaMonthlyUsd >= 0
+      ? `+${formatMoney(impact.summary.netDeltaMonthlyUsd)}/mo`
+      : `-${formatMoney(Math.abs(impact.summary.netDeltaMonthlyUsd))}/mo`;
+    const annualLabel = impact.summary.netDeltaAnnualUsd >= 0
+      ? `+${formatMoney(impact.summary.netDeltaAnnualUsd)}/yr`
+      : `-${formatMoney(Math.abs(impact.summary.netDeltaAnnualUsd))}/yr`;
+
+    const lines: string[] = [
+      `korinfra cost-impact`,
+      `Plan: ${absPlan}`,
+      `Net delta: ${netLabel}  (annualized ${annualLabel})`,
+      `Changes: ${impact.summary.counts.create} created, ${impact.summary.counts.update} updated, ${impact.summary.counts.destroy} destroyed, ${impact.summary.counts.replace} replaced`,
+    ];
+    if (
+      impact.summary.unknownCount > 0 ||
+      impact.summary.unpricedCount > 0 ||
+      impact.summary.variableCount > 0
+    ) {
+      lines.push(
+        `Caveats: ${impact.summary.unknownCount} unknown, ${impact.summary.unpricedCount} unpriced, ${impact.summary.variableCount} variable`,
+      );
+    }
+    lines.push('');
+    if (impact.changes.length === 0) {
+      lines.push('No cost-impacting changes.');
+    } else {
+      for (const row of impact.changes.slice(0, 50)) {
+        const sign = row.deltaUsd > 0 ? '+' : row.deltaUsd < 0 ? '-' : ' ';
+        const deltaStr = row.costStatus === 'unknown' || row.costStatus === 'unpriced'
+          ? '—'
+          : `${sign}${formatMoney(Math.abs(row.deltaUsd))}`;
+        lines.push(`  ${row.action.padEnd(8)} ${stripAnsi(row.address).padEnd(40)} ${deltaStr.padStart(10)} (${row.costStatus})`);
+      }
+      if (impact.changes.length > 50) {
+        lines.push(`  ... ${impact.changes.length - 50} more (run with --json for the full list)`);
+      }
+    }
+    if (impact.findings.length > 0) {
+      lines.push('');
+      lines.push(`Findings (${impact.findings.length} would trigger after apply):`);
+      const severityOrder = ['critical', 'high', 'medium', 'low'] as const;
+      const sortedFindings = [...impact.findings].sort(
+        (a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity),
+      );
+      for (const f of sortedFindings.slice(0, 10)) {
+        lines.push(`  [${f.severity.toUpperCase()}] ${f.ruleId} @ ${stripAnsi(f.address)} — ${stripAnsi(f.title)}`);
+      }
+      if (sortedFindings.length > 10) {
+        lines.push(`  ... ${sortedFindings.length - 10} more (run with --json for the full list)`);
+      }
+    }
+    lines.push('');
+    lines.push('Next:');
+    lines.push('- korinfra cost-impact --plan-file plan.json --json     (machine-readable)');
+    lines.push('- korinfra security --dir ./terraform                   (post-apply security review)');
+    writeLines(lines);
+
+    if (shouldFailOnCritical) process.exit(1);
     return true;
   }
 
@@ -1607,6 +1715,87 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
       })),
       next: [
         { label: 'scan now', command: 'korinfra scan' },
+      ],
+    };
+    process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+    return shouldFailOnCritical ? 1 : 0;
+  }
+
+  if (command === 'cost-impact') {
+    const planFile = parseArg(commandArgs, '--plan-file', '-f');
+    if (planFile === null) {
+      process.stdout.write(JSON.stringify({
+        command: 'cost-impact',
+        status: 'error',
+        error: '--plan-file <path> is required',
+        hint: 'terraform show -json plan.tfplan > plan.json',
+      }, null, 2) + '\n');
+      return 2;
+    }
+    const absPlan = path.resolve(process.cwd(), planFile);
+    const cwd = process.cwd();
+    if (!absPlan.startsWith(cwd + path.sep) && absPlan !== cwd) {
+      process.stdout.write(JSON.stringify({
+        command: 'cost-impact',
+        status: 'error',
+        error: `--plan-file must stay within ${cwd}`,
+      }, null, 2) + '\n');
+      return 2;
+    }
+    if (!absPlan.toLowerCase().endsWith('.json')) {
+      process.stdout.write(JSON.stringify({
+        command: 'cost-impact',
+        status: 'error',
+        error: `--plan-file must be a .json file (terraform show -json output): ${absPlan}`,
+      }, null, 2) + '\n');
+      return 2;
+    }
+    if (!fs.existsSync(absPlan)) {
+      process.stdout.write(JSON.stringify({
+        command: 'cost-impact',
+        status: 'error',
+        error: `plan file not found: ${absPlan}`,
+      }, null, 2) + '\n');
+      return 2;
+    }
+    // `--tfdir` is accepted for forward-compat with the documented invocation
+    // in issue #40, but the cross-reference to .tf source files is not yet
+    // wired up. The flag is parsed and ignored.
+    const tfdirIgnored = parseArg(commandArgs, '--tfdir') !== null;
+    let currency = 'USD';
+    try {
+      const cfg = await loadConfig();
+      currency = cfg.output.currency;
+    } catch {
+      // No config — fall back to USD.
+    }
+    let context;
+    try {
+      context = await runSteps(buildCostImpactPipelineSteps({ planFile: absPlan, currency }));
+    } catch (e) {
+      process.stdout.write(JSON.stringify({
+        command: 'cost-impact',
+        status: 'error',
+        error: e instanceof Error ? e.message : String(e),
+      }, null, 2) + '\n');
+      return 1;
+    }
+    const impact = extractCostImpact(context);
+    const failOn = parseArg(commandArgs, '--fail-on');
+    const criticalCount = impact.findings.filter((f) => f.severity === 'critical').length;
+    const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
+    const out = {
+      command: 'cost-impact',
+      status: 'completed',
+      summary: impact.summary,
+      changes: impact.changes,
+      findings: impact.findings,
+      warnings: tfdirIgnored
+        ? [...impact.warnings, '--tfdir is accepted but not yet used; cross-referencing to .tf source files is planned for a future release']
+        : impact.warnings,
+      next: [
+        { label: 'generate report', command: 'korinfra report --format html --output reports/cost-impact.html' },
+        { label: 'review post-apply security rules', command: 'korinfra security --dir ./terraform' },
       ],
     };
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');

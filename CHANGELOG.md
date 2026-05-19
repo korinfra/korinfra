@@ -2,6 +2,20 @@
 
 All notable changes to KorInfra are documented here.
 
+## [Unreleased]
+
+### 🔮 New features
+
+- **Terraform plan cost-impact analysis.** Analyze the cost and security impact
+  of a Terraform plan before apply via
+  `korinfra cost-impact --plan-file <plan.json>`. Reads `terraform show -json`
+  output, computes per-change before/after monthly cost deltas, and surfaces
+  cost + security rule findings that would trigger against the post-apply
+  state. JSON output suitable for CI integration with `--fail-on critical`
+  to block PRs that introduce critical security regressions. Also exposed as
+  an MCP tool (`analyze_plan`). See [docs/ci-integration.md](docs/ci-integration.md)
+  for a GitHub Actions example. (#40)
+
 ## [0.1.2] — 2026-05-17
 
 A reliability and hardening release. No breaking changes — safe to upgrade from `0.1.0`:

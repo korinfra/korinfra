@@ -16,6 +16,7 @@ import { ReportCommand } from './commands/report.js';
 import { HistoryCommand } from './commands/history.js';
 import { TagsCommand } from './commands/tags.js';
 import { SecurityCommand } from './commands/security.js';
+import { CostImpactCommand } from './commands/cost-impact.js';
 import { InitCommand } from './commands/init.js';
 import { DoctorCommand } from './commands/doctor.js';
 import { ConfigCommand } from './commands/config.js';
@@ -70,6 +71,7 @@ type View =
   | { kind: 'history'; args: string[] }
   | { kind: 'tags'; args: string[] }
   | { kind: 'security'; args: string[] }
+  | { kind: 'cost-impact'; args: string[] }
   | { kind: 'init'; args: string[] }
   | { kind: 'doctor'; args: string[] }
   | { kind: 'config'; args: string[] }
@@ -98,6 +100,7 @@ function resolveInitialView(args: string[]): View {
     case 'history':   return commandView('history', rest);
     case 'tags':      return commandView('tags', rest);
     case 'security':  return commandView('security', rest);
+    case 'cost-impact': return commandView('cost-impact', rest);
     case 'init':      return commandView('init', rest);
     case 'doctor':    return commandView('doctor', rest);
     case 'config':      return commandView('config', rest);
@@ -734,6 +737,7 @@ export function App({ args, provider = null }: AppProps): React.JSX.Element {
             case 'history':   navigate(commandView('history', []));   break;
             case 'tags':      navigate(commandView('tags', []));      break;
             case 'security':  navigate(commandView('security', []));  break;
+            case 'cost-impact': navigate(commandView('cost-impact', [])); break;
             case 'init':      navigate(commandView('init', []));      break;
             case 'doctor':    navigate(commandView('doctor', []));    break;
             case 'config':    navigate(commandView('config', []));    break;
@@ -879,6 +883,18 @@ export function App({ args, provider = null }: AppProps): React.JSX.Element {
     );
   }
 
+  if (view.kind === 'cost-impact') {
+    return withStatus(
+      <CostImpactCommand
+        key={runAgainKey}
+        args={view.args}
+        onRunAgain={onRunAgain}
+        onBack={goBack}
+        onAction={handleAction}
+      />,
+    );
+  }
+
   if (view.kind === 'init') {
     return withStatus(<InitCommand args={view.args} onBack={goBackAndReload} onAction={handleAction} />);
   }
@@ -922,7 +938,7 @@ export function App({ args, provider = null }: AppProps): React.JSX.Element {
   const suggestion = suggestCommand(unknownName);
   const suggestionLine = suggestion
     ? `Did you mean "${suggestion}"?`
-    : 'Available commands: scan, costs, resources, security, recommend, fix, report, tags, history, init, doctor, config, pricing, mcp.';
+    : 'Available commands: scan, costs, resources, security, cost-impact, recommend, fix, report, tags, history, init, doctor, config, pricing, mcp.';
   const unknownActions = suggestion !== null
     ? [{ key: 'Enter', label: `run ${suggestion}`, action: { type: 'navigate' as const, command: suggestion as TuiCommand } }]
     : [];
