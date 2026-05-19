@@ -138,14 +138,31 @@ describe('checkSNAP001 — orphaned snapshot', () => {
     expect(checkSNAP001(makeSnapshot({ configuration: { size_gb: 500, volume_id: 'vol-abc', monthlyCost: 30 } }), cfg)!.estimatedSavings).toBeCloseTo(30, 2);
     // falls back to size_gb * 0.05
     expect(checkSNAP001(makeSnapshot({ configuration: { size_gb: 200, volume_id: 'vol-abc', monthlyCost: 0 } }), cfg)!.estimatedSavings).toBeCloseTo(10, 2);
-    // zero when no data
-    expect(checkSNAP001(makeSnapshot({ configuration: { size_gb: 0, volume_id: 'vol-abc', monthlyCost: 0 } }), cfg)!.estimatedSavings).toBe(0);
+    // post-#44: skips with null when BOTH monthly_cost and size_gb are missing (no savings signal)
+    expect(checkSNAP001(makeSnapshot({ configuration: { size_gb: 0, volume_id: 'vol-abc', monthlyCost: 0 } }), cfg)).toBeNull();
   });
 
   it('does not fire for wrong type, non-available state, or empty volume_id', () => {
     expect(checkSNAP001(makeSnapshot({ type: 'ebs_volume' }), cfg)).toBeNull();
     expect(checkSNAP001(makeSnapshot({ state: 'pending' }), cfg)).toBeNull();
     expect(checkSNAP001(makeSnapshot({ configuration: { size_gb: 500, volume_id: '', monthlyCost: 25 } }), cfg)).toBeNull();
+  });
+
+  it('skips and warns when both monthly_cost and size_gb are missing (#44 Item 2)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeSnapshot({ configuration: { size_gb: 0, volume_id: 'vol-abc', monthlyCost: 0 } });
+    expect(checkSNAP001(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      ruleId: 'SNAP-001',
+      resourceId: r.id,
+      reason: 'monthly_cost missing and size_gb unavailable',
+    });
   });
 });
 
@@ -178,5 +195,23 @@ describe('checkSNAP002 — very old snapshot', () => {
     const old = makeOldSnapshot(400);
     old.type = 'ebs_volume';
     expect(checkSNAP002(old, cfg)).toBeNull();
+  });
+
+  it('skips and warns when both monthly_cost and size_gb are missing (#44 Item 2)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeOldSnapshot(400);
+    r.configuration = { size_gb: 0, volume_id: 'vol-abc', monthlyCost: 0 };
+    expect(checkSNAP002(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      ruleId: 'SNAP-002',
+      resourceId: r.id,
+      reason: 'monthly_cost missing and size_gb unavailable',
+    });
   });
 });

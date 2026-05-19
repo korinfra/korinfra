@@ -164,3 +164,75 @@ describe('S3 rules — collector "unknown" state', () => {
     ).toBeNull();
   });
 });
+
+// ─── S3 rules — emit warnings on unknown skips (#44 Item 1) ──────────────────
+
+describe('S3 rules — emit warnings on unknown skips', () => {
+  function makeCtx() {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    return {
+      warnings,
+      ctx: {
+        warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+          warnings.push({ ruleId, resourceId, resourceType, reason });
+        },
+      },
+    };
+  }
+
+  it('S3-001 warns when lifecycle state is unknown', () => {
+    const { ctx, warnings } = makeCtx();
+    const r = makeS3Bucket({ configuration: { monthlyCost: 200, has_lifecycle: 'unknown', lifecycle_rules_count: 'unknown' } });
+    expect(checkS3001(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      ruleId: 'S3-001',
+      resourceId: r.id,
+      reason: 'lifecycle state could not be determined (transient API failure)',
+    });
+  });
+
+  it('S3-002 warns when lifecycle or tiering is unknown', () => {
+    const { ctx, warnings } = makeCtx();
+    const r = makeS3Bucket({ configuration: { monthlyCost: 200, has_lifecycle: 'unknown', has_intelligent_tiering: false } });
+    expect(checkS3002(r, cfg, ctx)).toBeNull();
+    expect(warnings[0]).toMatchObject({
+      ruleId: 'S3-002',
+      reason: 'lifecycle or intelligent-tiering state could not be determined',
+    });
+  });
+
+  it('S3-002 warns when lifecycle_rules_count is unknown', () => {
+    const { ctx, warnings } = makeCtx();
+    const r = makeS3Bucket({
+      configuration: { monthlyCost: 200, has_lifecycle: true, lifecycle_rules_count: 'unknown', has_intelligent_tiering: false },
+    });
+    expect(checkS3002(r, cfg, ctx)).toBeNull();
+    expect(warnings[0]).toMatchObject({
+      ruleId: 'S3-002',
+      reason: 'lifecycle_rules_count could not be determined',
+    });
+  });
+
+  it('S3-003 warns when versioning is unknown', () => {
+    const { ctx, warnings } = makeCtx();
+    const r = makeS3Bucket({ configuration: { monthlyCost: 100, versioning_enabled: 'unknown' } });
+    expect(checkS3003(r, cfg, ctx)).toBeNull();
+    expect(warnings[0]).toMatchObject({
+      ruleId: 'S3-003',
+      resourceId: r.id,
+      reason: 'versioning state could not be determined',
+    });
+  });
+
+  it('S3-004 warns when encryption is unknown', () => {
+    const { ctx, warnings } = makeCtx();
+    const r = makeS3Bucket({ configuration: { monthlyCost: 500, encryption_enabled: 'unknown' } });
+    expect(checkS3004(r, cfg, ctx)).toBeNull();
+    expect(warnings[0]).toMatchObject({
+      ruleId: 'S3-004',
+      resourceId: r.id,
+      reason: 'encryption state could not be determined',
+    });
+  });
+});
