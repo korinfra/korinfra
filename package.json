@@ -125,7 +125,7 @@
     "npm-run-all2": "^8.0.4",
     "secretlint": "^13.0.2",
     "tsdown": "^0.22.0",
-    "tsx": "4.22.1",
+    "tsx": "4.22.3",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.59.3",
     "unrun": "^0.3.0",
