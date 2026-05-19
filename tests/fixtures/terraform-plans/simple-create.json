@@ -1,0 +1,25 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.6.0",
+  "resource_changes": [
+    {
+      "address": "aws_instance.web",
+      "type": "aws_instance",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "instance_type": "t3.micro",
+          "ami": "ami-0abcdef1234567890",
+          "tags": { "Environment": "production", "Team": "backend", "Project": "api" }
+        },
+        "after_unknown": { "id": true, "arn": true }
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "aws": { "expressions": { "region": { "constant_value": "us-east-1" } } }
+    }
+  }
+}

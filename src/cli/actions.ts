@@ -3,6 +3,7 @@ export type TuiCommand =
   | 'costs'
   | 'resources'
   | 'security'
+  | 'cost-impact'
   | 'recommend'
   | 'fix'
   | 'report'

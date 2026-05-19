@@ -5,6 +5,7 @@
  */
 
 import type { Resource } from '../aws/types.js';
+import { floatValue, boolValue } from '../utils/coerce.js';
 import type { AwsPricingClient } from './client.js';
 import {
   estimateEC2Cost,
@@ -22,22 +23,6 @@ import {
 } from './resources.js';
 
 // ─── Helper utilities ─────────────────────────────────────────────────────────
-
-function floatValue(raw: unknown): number {
-  if (typeof raw === 'number') return raw;
-  if (typeof raw === 'string') {
-    const n = parseFloat(raw);
-    if (!Number.isFinite(n)) return 0;
-    return n;
-  }
-  return 0;
-}
-
-function boolValue(raw: unknown): boolean {
-  if (typeof raw === 'boolean') return raw;
-  if (typeof raw === 'string') return raw === 'true';
-  return false;
-}
 
 function parsePeriodDays(period: string): number {
   if (!period.endsWith('d')) return 0;

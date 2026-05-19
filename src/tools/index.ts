@@ -24,6 +24,7 @@ import { getRiCoverageTool } from './get-ri-coverage.js';
 // Note: applyTagsRealTool is intentionally excluded from allTools — destructive write op,
 // must NOT be exposed via MCP server. Only used by tags command agent (tagsWriteTools).
 import { applyTagsRealTool } from './apply-tags-real.js';
+import { analyzePlanTool } from './analyze-plan.js';
 import type { ToolDefinition } from './types.js';
 
 export type { ToolDefinition, ToolResult } from './types.js';
@@ -54,6 +55,7 @@ export const allTools: ToolDefinition[] = [
   findOrphanEbsTool,
   findIdleRdsTool,
   getRiCoverageTool,
+  analyzePlanTool,
 ];
 
 /** Get a tool by name. */

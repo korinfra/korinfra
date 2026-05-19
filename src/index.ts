@@ -39,7 +39,7 @@ const SYSTEM_PROTECTED_ENV_KEYS = new Set([
 
 const KNOWN_COMMANDS = [
   'scan', 'resources', 'costs', 'recommend', 'history', 'changes', 'config', 'doctor', 'mcp',
-  'fix', 'tags', 'pricing', 'report', 'security', 'init', 'serve',
+  'fix', 'tags', 'pricing', 'report', 'security', 'cost-impact', 'init', 'serve',
 ];
 
 function suggestKnownCommand(input: string): string | null {
@@ -186,6 +186,7 @@ async function main(): Promise<void> {
       '  costs       Cost breakdown',
       '  resources   List AWS resources',
       '  security    Terraform security checks',
+      '  cost-impact Cost impact of a Terraform plan',
       '  history     View scan history',
       '  changes     Audit recent AWS API activity',
       '',

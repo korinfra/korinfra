@@ -1,0 +1,30 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.6.0",
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.public_legacy",
+      "type": "aws_db_instance",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "instance_class": "db.t3.medium",
+          "engine": "mysql",
+          "allocated_storage": 100,
+          "multi_az": false,
+          "storage_type": "gp2",
+          "storage_encrypted": false,
+          "publicly_accessible": true,
+          "backup_retention_period": 0,
+          "tags": { "Environment": "production", "Team": "data", "Project": "legacy" }
+        }
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "aws": { "expressions": { "region": { "constant_value": "us-east-1" } } }
+    }
+  }
+}
