@@ -156,15 +156,15 @@ Or if you have korinfra installed globally:
 
 ---
 
-## Tools (20)
+## Tools (21)
 
-19 tools are shared between agent mode (in-process) and MCP server mode (external clients). Two additional tools are restricted: `git_commit_push` (exclusively for `fix` command agent, not exposed via MCP) and `apply_tags_real` (only callable via TUI confirmation gate, not exposed via MCP).
+20 tools are shared between agent mode (in-process) and MCP server mode (external clients). Two additional tools are restricted: `git_commit_push` (exclusively for `fix` command agent, not exposed via MCP) and `apply_tags_real` (only callable via TUI confirmation gate, not exposed via MCP).
 
 | Tool | Description |
 |---|---|
 | `collect_aws_resources` | Collect live AWS inventory with utilization metrics. Data is redacted at `moderate` level before being returned. |
 | `get_costs` | Cost breakdown (daily/monthly, by service/region) from Cost Explorer. |
-| `list_rules` | List all 66 cost rules + 46 security rules with metadata. |
+| `list_rules` | List all 67 cost rules + 46 security rules with metadata. |
 | `evaluate_rules` | Run deterministic rules against collected resource data. Returns findings with estimated monthly savings. |
 | `save_scan` | Persist scan results (resources, costs, findings, recommendations) to SQLite. |
 | `get_history` | Retrieve past scans from the local DB. |
@@ -182,6 +182,7 @@ Or if you have korinfra installed globally:
 | `find_orphan_ebs` | Detect unattached EBS volumes still billing. Returns volumes with age and associated costs. |
 | `find_idle_rds` | Detect zero-connection RDS instances: DatabaseConnections ≈ 0 for > 7 days AND CPU < 10%. |
 | `get_ri_coverage` | Reserved Instance utilization analysis: compare RI commitments vs. on-demand spend by service. |
+| `get_compute_optimizer_recommendations` | Surface AWS Compute Optimizer ML-based rightsizing recommendations for EC2, ASG, EBS, Lambda, ECS, and RDS. Opt-in; requires Compute Optimizer enabled on the account. |
 
 ---
 

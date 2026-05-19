@@ -10,6 +10,14 @@ export const THRESHOLDS = {
   onDemandRunningDays: 30, // EC2-005: days on-demand before RI suggestion
   instanceMaxAgeDays: 365, // EC2-013: max instance age before flagging
 
+  // EC2-014 (Spot opportunity detection)
+  spotMinUptimeDays: 7, // baseline uptime gate before considering Spot
+  spotNonProdUptimeDays: 14, // tag-corroboration branch min uptime
+  spotStableUptimeDays: 30, // stable-workload branch min uptime
+  spotP99CeilingPct: 80.0, // skip near-maxed instances (poor Spot rescue)
+  spotSpikeRatioMax: 1.5, // cpuP99/cpuP95 above this = spiky workload
+  spotNonProdEnvironments: ['dev', 'staging', 'test'], // env tag values implying non-prod
+
   // EBS
   snapshotRetentionDays: 90, // EBS-002: snapshot age threshold
   snapshotMaxAgeDays: 365, // SNAP-002: max snapshot age before flagging
@@ -65,6 +73,8 @@ export const THRESHOLDS = {
   ec2RightsizeMultiplier: 0.60,
   ec2RIDiscountMultiplier: 0.40,
   ec2GravitonMultiplier: 0.20,
+  ec2SpotSavingsMultiplier: 0.70, // EC2-014: Spot is 60-90% off on-demand; conservative midpoint
+
   ebsGP2ToGP3SavingsRatio: 0.20, // gp2→gp3 savings ratio
   ebsLowActualIOPS: 100, // threshold for low IOPS utilization
   ebsIO1ToGP3Multiplier: 0.80, // io1/io2→gp3 migration savings (80-90% typical for IOPS<=3000)

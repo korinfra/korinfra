@@ -159,9 +159,9 @@ The highest-quality recommendation (by `qualityScore`) per `(ruleId, resourceId)
 
 ---
 
-## Complete Cost Rule Reference (66 rules)
+## Complete Cost Rule Reference (67 rules)
 
-### EC2 (13 rules)
+### EC2 (14 rules)
 
 | ID | Title | Impact | Risk | Description |
 |----|-------|--------|------|-------------|
@@ -178,6 +178,7 @@ The highest-quality recommendation (by `qualityScore`) per `(ruleId, resourceId)
 | EC2-011 | EC2 without EBS optimization enabled | medium | low | Non-burstable EC2 instance without EBS optimization loses throughput |
 | EC2-012 | EC2 without IMDSv2 enforced | high | low | Instance metadata service v1 is a common attack vector |
 | EC2-013 | EC2 running for more than 1 year | low | low | Long-running instances should be periodically reviewed |
+| EC2-014 | Candidate for Spot pricing | high | medium | Long-running on-demand EC2 instance with non-prod tag or stable CPU pattern — strong Spot candidate (~70% savings) |
 
 ### EBS / Snapshots (9 rules)
 

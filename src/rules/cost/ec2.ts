@@ -593,6 +593,101 @@ export function checkEC2013(r: Resource, cfg: Cfg): Recommendation | null {
   };
 }
 
+/**
+ * EC2-014: On-demand instance is a candidate for Spot pricing.
+ *
+ * Fires on long-running on-demand instances that look like good Spot candidates.
+ * Two independent triggers (the issue spec's third — `autoscale_min_size === 0` —
+ * is deferred until an Auto Scaling collector populates that field).
+ *
+ *   Branch A — tag corroboration: Environment tag in {dev,staging,test} AND uptime > 14d.
+ *   Branch B — stable workload:   uptime > 30d AND CPU is non-idle, not maxed, not spiky.
+ *
+ * Savings: `monthlyCost × cfg.ec2SpotSavingsMultiplier` (default 0.70). We don't
+ * use the real-pricing-delta pattern (`estimateEC2CostSync`) because
+ * `FALLBACK_EC2_PRICES` only knows on-demand rates — Spot prices are volatile
+ * per AZ/time and cannot be hardcoded. This matches EC2-005's RI multiplier approach.
+ */
+export function checkEC2014(r: Resource, cfg: Cfg): Recommendation | null {
+  if (r.type !== 'ec2_instance' || r.state !== 'running') return null;
+
+  // Skip already-committed pricing (Spot or scheduled both have committed rates)
+  const lifecycle = strConfig(r, 'lifecycle');
+  if (lifecycle === 'spot' || lifecycle === 'scheduled') return null;
+
+  // Bare-metal has poor Spot capacity and slow recovery — skip
+  if (r.instanceType.endsWith('.metal')) return null;
+
+  const uptimeDays = daysSince(r.launchTime);
+  if (uptimeDays === null || uptimeDays <= cfg.spotMinUptimeDays) return null;
+
+  // Branch A — tag corroboration
+  const env = (r.tags['Environment'] ?? r.tags['environment'] ?? '').toLowerCase();
+  const tagMatch =
+    cfg.spotNonProdEnvironments.includes(env) &&
+    uptimeDays > cfg.spotNonProdUptimeDays;
+
+  // Branch B — stable workload (CPU stability proxy; raw variance not collected)
+  let stableWorkload = false;
+  const util = r.utilization;
+  if (util && util.dataPoints > 0 && uptimeDays > cfg.spotStableUptimeDays) {
+    const spikeRatio = util.cpuP99 / Math.max(util.cpuP95, 1);
+    stableWorkload =
+      util.cpuAverage >= cfg.idleCPUThreshold && // not idle — EC2-001 territory
+      util.cpuP99 <= cfg.spotP99CeilingPct &&    // not maxed-out — interruption rescue risky
+      spikeRatio < cfg.spotSpikeRatioMax;        // not spiky
+  }
+
+  if (!tagMatch && !stableWorkload) return null;
+
+  const monthlyCost = getMonthlyCost(r);
+  const savings = monthlyCost * cfg.ec2SpotSavingsMultiplier;
+  if (!Number.isFinite(savings) || savings <= 0) return null;
+
+  // Confidence: medium with variance alone, high when tag corroborates
+  const baseConfidence = stableWorkload && tagMatch ? 0.85
+                       : tagMatch                   ? 0.80
+                       :                              0.55;
+  const confidence = confidenceFromUtilization(baseConfidence, util);
+  const risk = tagMatch ? 'low' : 'medium';
+
+  const reasoningParts: string[] = [];
+  if (tagMatch) reasoningParts.push(`tagged Environment=${env}`);
+  if (stableWorkload && util) {
+    reasoningParts.push(`stable workload (avg ${util.cpuAverage.toFixed(1)}%, P95 ${util.cpuP95.toFixed(1)}%, P99 ${util.cpuP99.toFixed(1)}%)`);
+  }
+  const filePath = strConfig(r, 'file_path');
+
+  return {
+    ruleId: 'EC2-014',
+    resourceId: r.id,
+    resourceType: r.type,
+    title: `Migrate on-demand EC2 instance ${r.name} (${r.instanceType}) to Spot pricing`,
+    description: `Instance ${r.name} (${r.instanceType}) has run on-demand for ${uptimeDays} days; ${reasoningParts.join(' and ')}. Spot is 60-90% cheaper than on-demand but can be reclaimed with 2-minute notice — best for fault-tolerant or non-production workloads.`,
+    reasoning: `${reasoningParts.join('. ')}. Recommendation applies a ${(cfg.ec2SpotSavingsMultiplier * 100).toFixed(0)}% Spot savings multiplier to the monthly on-demand cost (${monthlyCost.toFixed(2)} ${cfg.currency}/mo).`,
+    impact: 'high',
+    risk,
+    estimatedSavings: guardSavings(savings),
+    suggestedAction: 'migrate_to_spot',
+    confidence: clampConfidence(confidence),
+    filePath,
+    currentConfig: {
+      pricing: 'on_demand',
+      instance_type: r.instanceType,
+      environment: env || null,
+      uptime_days: uptimeDays,
+    },
+    suggestedConfig: { pricing: 'spot_or_asg_with_spot' },
+    patchContent: `# Migrate ${sanitizeResourceName(r.name)} to Spot via a Spot-backed Auto Scaling Group\n# https://docs.aws.amazon.com/autoscaling/ec2/userguide/asg-purchase-options.html`,
+    implementationSteps: [
+      'Verify the workload is fault-tolerant (handles SIGTERM, has retries, no long-running in-memory state)',
+      'Create a launch template based on the current instance configuration',
+      'Create an Auto Scaling group with a mixed instances policy: 100% Spot or 80/20 Spot/On-Demand',
+      filePath ? `Update ${filePath} to point at the new ASG, then drain and terminate the existing instance` : 'Drain the existing instance via target group deregistration, then terminate',
+    ],
+  };
+}
+
 export const ec2Rules = [
   checkEC2001,
   checkEC2002,
@@ -607,4 +702,5 @@ export const ec2Rules = [
   checkEC2011,
   checkEC2012,
   checkEC2013,
+  checkEC2014,
 ];

@@ -21,6 +21,7 @@ import { findIdleEc2Tool } from './find-idle-ec2.js';
 import { findOrphanEbsTool } from './find-orphan-ebs.js';
 import { findIdleRdsTool } from './find-idle-rds.js';
 import { getRiCoverageTool } from './get-ri-coverage.js';
+import { getComputeOptimizerRecommendationsTool } from './get-compute-optimizer-recommendations.js';
 // Note: applyTagsRealTool is intentionally excluded from allTools — destructive write op,
 // must NOT be exposed via MCP server. Only used by tags command agent (tagsWriteTools).
 import { applyTagsRealTool } from './apply-tags-real.js';
@@ -54,6 +55,7 @@ export const allTools: ToolDefinition[] = [
   findOrphanEbsTool,
   findIdleRdsTool,
   getRiCoverageTool,
+  getComputeOptimizerRecommendationsTool,
 ];
 
 /** Get a tool by name. */
@@ -111,6 +113,7 @@ export const recommendTools: ToolDefinition[] = [
   findOrphanEbsTool,
   findIdleRdsTool,
   getRiCoverageTool,
+  getComputeOptimizerRecommendationsTool,
 ];
 
 /** Tools needed for report command */
