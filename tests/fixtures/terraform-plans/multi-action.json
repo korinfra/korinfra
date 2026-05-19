@@ -1,0 +1,65 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.6.0",
+  "resource_changes": [
+    {
+      "address": "aws_instance.new_web",
+      "type": "aws_instance",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "instance_type": "m5.large",
+          "tags": { "Environment": "production", "Team": "backend", "Project": "web" }
+        }
+      }
+    },
+    {
+      "address": "aws_instance.existing_app",
+      "type": "aws_instance",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "instance_type": "m5.large",
+          "tags": { "Environment": "production", "Team": "backend", "Project": "app" }
+        },
+        "after": {
+          "instance_type": "m5.2xlarge",
+          "tags": { "Environment": "production", "Team": "backend", "Project": "app" }
+        }
+      }
+    },
+    {
+      "address": "aws_instance.legacy_worker",
+      "type": "aws_instance",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "instance_type": "t3.large",
+          "tags": { "Environment": "production", "Team": "backend", "Project": "worker" }
+        },
+        "after": null
+      }
+    },
+    {
+      "address": "aws_s3_bucket.static_assets",
+      "type": "aws_s3_bucket",
+      "change": {
+        "actions": ["no-op"],
+        "before": {
+          "bucket": "my-static-assets",
+          "tags": { "Environment": "production", "Team": "frontend", "Project": "web" }
+        },
+        "after": {
+          "bucket": "my-static-assets",
+          "tags": { "Environment": "production", "Team": "frontend", "Project": "web" }
+        }
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "aws": { "expressions": { "region": { "constant_value": "us-east-1" } } }
+    }
+  }
+}

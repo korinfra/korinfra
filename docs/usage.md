@@ -35,6 +35,7 @@ korinfra scan        # collect → 66 cost + 46 security rules → costs → ano
 korinfra costs       # cost charts + anomaly detection
 korinfra resources   # resource inventory table
 korinfra security    # 46 security rules on Terraform files
+korinfra cost-impact # cost + security impact of a terraform plan (see CI integration guide)
 korinfra recommend   # browse saved recommendations from DB
 korinfra history     # scan history (list/show/diff)
 korinfra tags        # tag compliance audit (list mode)
