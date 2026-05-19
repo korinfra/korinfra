@@ -44,6 +44,7 @@ export const CMD_DESCRIPTIONS: Record<string, string> = {
   doctor: 'Diagnose environment',
   config: 'View or edit configuration',
   mcp: 'Install MCP server for IDE integration',
+  rules: 'Browse built-in cost optimization rules',
 };
 
 // ─── Mode labels ──────────────────────────────────────────────────────────────

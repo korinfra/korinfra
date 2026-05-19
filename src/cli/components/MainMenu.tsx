@@ -37,6 +37,7 @@ const COMMANDS: Command[] = [
   { value: 'security',  label: 'security',  description: CMD_DESCRIPTIONS['security'] ?? '',  descriptionNarrow: 'Terraform security rules',             group: 'analyze' },
   { value: 'history',   label: 'history',   description: CMD_DESCRIPTIONS['history'] ?? '',   descriptionNarrow: 'Scan history and diffs',               group: 'analyze' },
   { value: 'changes',  label: 'changes',  description: CMD_DESCRIPTIONS['changes'] ?? '',  descriptionNarrow: 'Audit AWS API activity',               group: 'analyze' },
+  { value: 'rules',    label: 'rules',    description: CMD_DESCRIPTIONS['rules'] ?? '',    descriptionNarrow: 'Browse cost rules',                    group: 'analyze' },
   // Action
   { value: 'recommend', label: 'recommend', description: CMD_DESCRIPTIONS['recommend'] ?? '', descriptionNarrow: 'Optimization recommendations',         group: 'action' },
   { value: 'fix',       label: 'fix',       description: CMD_DESCRIPTIONS['fix'] ?? '',       descriptionNarrow: 'Apply a fix with AI',                  group: 'action', requiresAi: true },

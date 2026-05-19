@@ -86,6 +86,7 @@ Plus: cost anomaly detection (z-score) and 30-day trend forecasting. [Full rule 
 | `doctor` | Verify credentials, config, storage, and AI provider |
 | `config` | View or edit config values at runtime |
 | `serve` | Start MCP server — `stdio` (default) or `--http --port N` |
+| `rules` | List built-in cost optimization rules — `list --json`, `list --filter <category>` |
 
 </details>
 

@@ -409,3 +409,70 @@ scan:
     - Team
     - Project
 ```
+
+## CLI reference
+
+The cost rule catalog is exposed through the headless CLI for scripting and CI/CD use:
+
+```bash
+# Human-readable catalog, grouped by category
+korinfra rules list
+
+# Machine-readable JSON (CI/CD-friendly — no TTY required)
+korinfra rules list --json
+
+# Filter by category or id-prefix
+korinfra rules list --filter ec2          # all 14 EC2-category rules
+korinfra rules list --filter ebs          # ebs category — includes SNAP-* rules
+korinfra rules list --filter LAM          # id-prefix match
+
+# Filter by impact / risk severity
+korinfra rules list --impact high         # high-impact rules only
+korinfra rules list --risk medium         # medium-risk rules only
+korinfra rules list --impact high --filter ec2   # combine
+```
+
+**JSON shape:**
+
+```json
+{
+  "command": "rules list",
+  "status": "completed",
+  "summary": { "total": 66, "totalAllRules": 66 },
+  "total": 66,
+  "rules": [
+    {
+      "id": "EC2-001",
+      "category": "ec2",
+      "title": "Idle EC2 instance",
+      "description": "EC2 instance with <5% average CPU over 7+ days",
+      "impact": "high",
+      "risk": "medium"
+    }
+  ],
+  "next": [{ "label": "run rules against AWS", "command": "korinfra scan" }]
+}
+```
+
+**Common CI/CD checks:**
+
+```bash
+# Fail the pipeline if a required rule is missing from the binary
+korinfra rules list --json \
+  | jq -e '.rules[] | select(.id == "EC2-012")' > /dev/null \
+  || { echo "EC2-012 rule missing — aborting"; exit 1; }
+
+# Count rules per category for a dashboard
+korinfra rules list --json | jq '[.rules[] | .category] | group_by(.) | map({(.[0]): length}) | add'
+
+# Re-generate this file's rule list from the binary's own output
+korinfra rules list --json | jq '.rules[] | "- **\(.id)** \(.title)"' -r
+```
+
+**Notes:**
+
+- `--filter` matches case-insensitively against category (exact) or id-prefix.
+- `--impact` and `--risk` accept `low`, `medium`, or `high`. Other values exit with code 2.
+- The `total` field is mirrored at top-level and under `summary.total` for compatibility with both the issue #25 proposal and the rest of korinfra's JSON envelopes.
+- `--filter=ec2` (equals form) is not parsed today — use `--filter ec2` (space-separated). This is a project-wide flag-parsing convention.
+- Security rules are not in this catalog. Run `korinfra security --json --dir <terraform-path>` to enumerate findings against your `.tf` files.

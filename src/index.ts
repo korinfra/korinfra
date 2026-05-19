@@ -39,7 +39,7 @@ const SYSTEM_PROTECTED_ENV_KEYS = new Set([
 
 const KNOWN_COMMANDS = [
   'scan', 'resources', 'costs', 'recommend', 'history', 'changes', 'config', 'doctor', 'mcp',
-  'fix', 'tags', 'pricing', 'report', 'security', 'init', 'serve',
+  'fix', 'tags', 'pricing', 'report', 'security', 'init', 'serve', 'rules',
 ];
 
 function suggestKnownCommand(input: string): string | null {
@@ -188,6 +188,7 @@ async function main(): Promise<void> {
       '  security    Terraform security checks',
       '  history     View scan history',
       '  changes     Audit recent AWS API activity',
+      '  rules       List built-in cost optimization rules',
       '',
       'Actions',
       '  recommend   Show recommendations',
@@ -208,7 +209,7 @@ async function main(): Promise<void> {
       'Flags:',
       '  --version, -V   Print version and exit',
       '  --help, -h      Show this help text',
-      '  --json          JSON output mode (scan, costs, resources, report, history, pricing status)',
+      '  --json          JSON output mode (scan, costs, resources, report, history, pricing status, rules)',
       '  --verbose       Enable verbose logging',
       '  --no-tui        Use terminal output for explicit commands',
       '',
@@ -271,8 +272,11 @@ async function main(): Promise<void> {
   const outputEnv = process.env['KORINFRA_OUTPUT']; // 'json' | 'text' | undefined
   const isJson = args.includes('--json') || outputEnv === 'json';
   const isMcpTokenCmd = command === 'mcp' && args[1] === 'token';
+  // `korinfra rules <anything>` (subcommand or flag) → headless dispatcher.
+  // `korinfra rules` (bare) → TUI panel.
+  const isRulesHeadless = command === 'rules' && args[1] !== undefined;
   const headless = args.includes('--no-tui') || isJson || !isTTY || isCI || isDumbTerm || forceHeadless
-    || outputEnv === 'text' || isMcpTokenCmd;
+    || outputEnv === 'text' || isMcpTokenCmd || isRulesHeadless;
 
   if (headless) {
     const explicitCommand = command !== undefined && command !== '' && !command.startsWith('-');
@@ -290,7 +294,10 @@ async function main(): Promise<void> {
         process.exit(1);
       } else {
         const handled = await runHeadlessCommand(command, cleanArgs);
-        if (handled) process.exit(0);
+        // Honor process.exitCode if a handler set it (usage / validation errors).
+        // Calling process.exit(0) directly would override it; process.exit() with
+        // no arg uses process.exitCode if set, else 0.
+        if (handled) process.exit();
         process.stderr.write(getUnsupportedCommandGuidance(command) + '\n');
         process.exit(1);
       }
