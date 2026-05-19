@@ -75,8 +75,8 @@ function loadHeadlessConfigFile(configFile: string): Record<string, string> {
     realPath = fs.realpathSync(absConfig);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') throw new Error(`--config: file does not exist: ${absConfig}`);
-    throw new Error(`--config: cannot resolve path: ${err instanceof Error ? err.message : String(err)}`);
+    if (code === 'ENOENT') throw new Error(`--config: file does not exist: ${absConfig}`, { cause: err });
+    throw new Error(`--config: cannot resolve path: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }
   const stat = fs.statSync(realPath);
   if (!stat.isFile()) {
