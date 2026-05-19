@@ -38,6 +38,63 @@ import type { PipelineContext, PipelineStep } from './components/DirectPipeline.
 import { parseArg, hasFlag } from './utils/parseArgs.js';
 import { validateRegions } from './utils/validateRegions.js';
 
+// ─── Headless config-file loader ─────────────────────────────────────────────
+
+// Hard cap on headless --config files. These hold a handful of string keys
+// (profile, ai_provider, ide, ...); anything larger is almost certainly an
+// attempt to feed us an unrelated file.
+const HEADLESS_CONFIG_MAX_BYTES = 64 * 1024;
+const HEADLESS_CONFIG_EXTENSIONS = ['.json', '.yaml', '.yml'] as const;
+
+/**
+ * Read and parse a user-supplied --config file for headless commands.
+ *
+ * Sanitizes the path before handing it to fs: rejects null bytes, enforces a
+ * known extension, resolves symlinks via realpathSync, and requires a regular
+ * file under a size cap. Without these checks the raw CLI argument flows
+ * directly into fs.readFileSync (CWE-23).
+ */
+function loadHeadlessConfigFile(configFile: string): Record<string, string> {
+  if (typeof configFile !== 'string' || configFile === '') {
+    throw new Error('--config: expected a non-empty file path');
+  }
+  if (configFile.includes('\0')) {
+    throw new Error('--config: path contains a null byte');
+  }
+  const ext = path.extname(configFile).toLowerCase();
+  if (!(HEADLESS_CONFIG_EXTENSIONS as readonly string[]).includes(ext)) {
+    throw new Error(
+      `--config: unsupported file extension "${ext || '(none)'}". Use one of: ${HEADLESS_CONFIG_EXTENSIONS.join(', ')}`
+    );
+  }
+  const absConfig = path.resolve(process.cwd(), configFile);
+  // Dereference symlinks so we read (and stat) the actual target, not a link
+  // that could be swapped between checks.
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync(absConfig);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') throw new Error(`--config: file does not exist: ${absConfig}`, { cause: err });
+    throw new Error(`--config: cannot resolve path: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+  const stat = fs.statSync(realPath);
+  if (!stat.isFile()) {
+    throw new Error(`--config: not a regular file: ${realPath}`);
+  }
+  if (stat.size > HEADLESS_CONFIG_MAX_BYTES) {
+    throw new Error(`--config: file exceeds ${HEADLESS_CONFIG_MAX_BYTES} bytes: ${realPath}`);
+  }
+  const raw = fs.readFileSync(realPath, 'utf8');
+  const parsed: unknown = ext === '.json'
+    ? JSON.parse(raw)
+    : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {};
+  }
+  return parsed as Record<string, string>;
+}
+
 // ─── Headless AI provider factory ────────────────────────────────────────────
 
 async function createHeadlessProvider() {
@@ -800,11 +857,11 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     // Load config file params (YAML or JSON)
     let fileParams: Record<string, string> = {};
     if (configFile) {
-      const absConfig = path.resolve(process.cwd(), configFile);
-      const raw = fs.readFileSync(absConfig, 'utf8');
-      const parsed: unknown = absConfig.endsWith('.json') ? JSON.parse(raw) : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
-      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        fileParams = parsed as Record<string, string>;
+      try {
+        fileParams = loadHeadlessConfigFile(configFile);
+      } catch (err) {
+        process.stderr.write(`korinfra init: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exit(2);
       }
     }
 
@@ -921,11 +978,11 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     // Load config file params
     let fileParams: Record<string, string> = {};
     if (configFile) {
-      const absConfig = path.resolve(process.cwd(), configFile);
-      const raw = fs.readFileSync(absConfig, 'utf8');
-      const parsed: unknown = absConfig.endsWith('.json') ? JSON.parse(raw) : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
-      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        fileParams = parsed as Record<string, string>;
+      try {
+        fileParams = loadHeadlessConfigFile(configFile);
+      } catch (err) {
+        process.stderr.write(`korinfra mcp: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exit(2);
       }
     }
 
@@ -1653,11 +1710,15 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
 
     let fileParams: Record<string, string> = {};
     if (configFile) {
-      const absConfig = path.resolve(process.cwd(), configFile);
-      const raw = fs.readFileSync(absConfig, 'utf8');
-      const parsed: unknown = absConfig.endsWith('.json') ? JSON.parse(raw) : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
-      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        fileParams = parsed as Record<string, string>;
+      try {
+        fileParams = loadHeadlessConfigFile(configFile);
+      } catch (err) {
+        process.stdout.write(JSON.stringify({
+          command: 'init',
+          status: 'error',
+          error: err instanceof Error ? err.message : String(err),
+        }) + '\n');
+        return 2;
       }
     }
 
@@ -1771,11 +1832,15 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
 
     let fileParams: Record<string, string> = {};
     if (configFile) {
-      const absConfig = path.resolve(process.cwd(), configFile);
-      const raw = fs.readFileSync(absConfig, 'utf8');
-      const parsed: unknown = absConfig.endsWith('.json') ? JSON.parse(raw) : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
-      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        fileParams = parsed as Record<string, string>;
+      try {
+        fileParams = loadHeadlessConfigFile(configFile);
+      } catch (err) {
+        process.stdout.write(JSON.stringify({
+          command: `mcp ${subcommand}`,
+          status: 'error',
+          error: err instanceof Error ? err.message : String(err),
+        }) + '\n');
+        return 2;
       }
     }
 
