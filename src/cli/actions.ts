@@ -15,6 +15,7 @@ export type TuiCommand =
   | 'doctor'
   | 'config'
   | 'mcp'
+  | 'rules'
   | '__filter__'
   | '__ask__';
 
