@@ -44,6 +44,28 @@ korinfra requires **read-only access** to scan your AWS account. See the [IAM po
 
 The `fix` command edits Terraform files locally — it does **not** call AWS APIs to make changes.
 
+### Compute Optimizer (optional)
+
+The `get_compute_optimizer_recommendations` MCP tool and the
+`korinfra recommend --source compute-optimizer` headless command surface
+AWS Compute Optimizer's ML-based rightsizing recommendations alongside the
+deterministic rule output. Compute Optimizer is **opt-in** — enable it once
+per account via the AWS console (Compute Optimizer → Get started) or
+`aws compute-optimizer update-enrollment-status --status Active`.
+
+Additional read permissions for the scanning role:
+
+```
+compute-optimizer:GetEC2InstanceRecommendations
+compute-optimizer:GetAutoScalingGroupRecommendations
+compute-optimizer:GetEBSVolumeRecommendations
+compute-optimizer:GetLambdaFunctionRecommendations
+compute-optimizer:GetECSServiceRecommendations
+compute-optimizer:GetRDSDatabaseRecommendations
+```
+
+Findings can take up to 24 hours to populate after enrollment.
+
 ---
 
 ## Full config reference

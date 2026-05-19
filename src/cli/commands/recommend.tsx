@@ -325,6 +325,7 @@ export function RecommendCommand({
   const minSavingsStr = parseArg(args, '--min-savings');
   const rawMinSavings = parseFloat(minSavingsStr ?? '0');
   const minSavings = Number.isFinite(rawMinSavings) && rawMinSavings >= 0 ? rawMinSavings : 0;
+  const source = parseArg(args, '--source');
 
   const [step, setStep] = useState<RecommendStep>('loading');
   const [rows, setRows] = useState<RecRow[]>([]);
@@ -407,6 +408,24 @@ export function RecommendCommand({
 
   // ── AI freshness ──────────────────────────────────────────────────────────
   const { label: aiLabel, isStale } = aiAgeLabel(dbAgeMs);
+
+  // ── --source compute-optimizer: headless-only in this release ─────────────
+  if (source === 'compute-optimizer') {
+    return (
+      <ScreenShell
+        header={<CommandHeader command="recommend" description="Compute Optimizer (headless only)" />}
+        hints={<InteractionHints hints={[IH_COMMAND, IH_HELP, ...(onBack !== undefined ? [IH_BACK] : []), IH_QUIT]} />}
+      >
+        <Box marginLeft={GAP_SECTION_WIDE} marginTop={GAP_AFTER_HEADER}>
+          <EmptyState
+            icon={icons.info ?? 'i'}
+            message="AWS Compute Optimizer recommendations are available headless-only in this release."
+            hint="Run: korinfra recommend --source compute-optimizer --no-tui"
+          />
+        </Box>
+      </ScreenShell>
+    );
+  }
 
   // ── Loading ───────────────────────────────────────────────────────────────
   if (step === 'loading') {

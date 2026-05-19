@@ -2,6 +2,29 @@
 
 All notable changes to KorInfra are documented here.
 
+## [Unreleased]
+
+### 💰 Wider recommendation coverage
+
+- **New rule: EC2-014 — Spot opportunity detection.** Flags long-running
+  on-demand EC2 instances with either a non-prod `Environment` tag
+  (`dev`/`staging`/`test`) or a stable CPU pattern as candidates for Spot
+  pricing, with an estimated 70% monthly savings. Suppresses the generic
+  EC2-005 (RI candidate) recommendation when both would fire on the same
+  resource (#42).
+
+### 🔌 New Compute Optimizer integration
+
+- **New MCP tool: `get_compute_optimizer_recommendations`.** Surfaces AWS
+  Compute Optimizer's ML-based rightsizing recommendations for EC2, Auto
+  Scaling, EBS, Lambda, ECS, and RDS. Opt-in; returns a friendly
+  `status: 'not_enabled'` payload when Compute Optimizer is not enabled on
+  the account (#42).
+- **New CLI flag: `korinfra recommend --source compute-optimizer`.**
+  Headless-only in this release (text + JSON output); the TUI shows a
+  hand-off message pointing to the headless invocation. Full async TUI
+  panel will follow in a separate release.
+
 ## [0.1.2] — 2026-05-17
 
 A reliability and hardening release. No breaking changes — safe to upgrade from `0.1.0`:

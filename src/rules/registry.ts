@@ -19,6 +19,7 @@ export const ruleRegistry: readonly RuleInfo[] = [
   { id: 'EC2-011', category: 'ec2', title: 'EC2 instance without EBS optimization enabled', description: 'Non-burstable EC2 instance without EBS optimization enabled loses throughput.', impact: 'medium', risk: 'low' },
   { id: 'EC2-012', category: 'ec2', title: 'EC2 instance without IMDSv2 enforced', description: 'Instance metadata service v1 is a common attack vector. Enforce IMDSv2.', impact: 'high', risk: 'low' },
   { id: 'EC2-013', category: 'ec2', title: 'EC2 instance running for more than 1 year', description: 'Long-running instances should be periodically reviewed for continued need.', impact: 'low', risk: 'low' },
+  { id: 'EC2-014', category: 'ec2', title: 'Candidate for Spot pricing', description: 'Long-running on-demand EC2 instance with non-prod tag or stable CPU pattern — strong Spot candidate (~70% savings).', impact: 'high', risk: 'medium' },
   // EBS
   { id: 'EBS-001', category: 'ebs', title: 'Unattached EBS volume', description: "EBS volume in 'available' state not attached to any instance", impact: 'high', risk: 'low' },
   { id: 'EBS-002', category: 'ebs', title: 'Old EBS snapshot (>90 days)', description: 'Snapshot older than 90 days unlikely needed for point-in-time recovery', impact: 'low', risk: 'low' },

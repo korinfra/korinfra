@@ -533,6 +533,60 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
   }
 
   if (command === 'recommend') {
+    const source = parseArg(commandArgs, '--source');
+    if (source !== null && source !== 'compute-optimizer') {
+      writeLines([
+        `korinfra recommend: unknown --source value '${source}'. Valid: 'compute-optimizer'.`,
+      ]);
+      process.exitCode = 1;
+      return true;
+    }
+    if (source === 'compute-optimizer') {
+      if (hasFlag(commandArgs, '--refresh')) {
+        process.stderr.write('[korinfra] note: --refresh is ignored when --source is set\n');
+      }
+      const { getComputeOptimizerRecommendationsTool } = await import('../tools/get-compute-optimizer-recommendations.js');
+      const handlerArgs: Record<string, unknown> = {};
+      try {
+        const cfg = await loadConfig();
+        if (cfg.aws.default_profile) handlerArgs['profile'] = cfg.aws.default_profile;
+        if (cfg.aws.default_region) handlerArgs['regions'] = [cfg.aws.default_region];
+      } catch {
+        // No config file; rely on AWS_* env vars and the SDK default provider chain.
+      }
+      const handlerResult = await getComputeOptimizerRecommendationsTool.handler(handlerArgs);
+      const parsed = JSON.parse(handlerResult.content[0]?.text ?? '{}') as {
+        status?: string;
+        message?: string;
+        summary?: { total?: number; estimatedMonthlySavingsUsd?: number; byType?: Record<string, number> };
+        recommendations?: Array<{ resourceType?: string; resourceArn?: string; finding?: string; estimatedMonthlySavingsUsd?: number }>;
+        next?: Array<{ label?: string; command?: string; url?: string }>;
+      };
+      if (parsed.status === 'not_enabled') {
+        writeLines([
+          '[Source: AWS Compute Optimizer]',
+          parsed.message ?? 'Compute Optimizer is not enabled.',
+          '',
+          'Next:',
+          ...(parsed.next ?? []).map((n) => `- ${n.label ?? ''}${n.command ? `: ${n.command}` : ''}${n.url ? `: ${n.url}` : ''}`),
+        ]);
+        return true;
+      }
+      const recs = parsed.recommendations ?? [];
+      const total = parsed.summary?.total ?? recs.length;
+      const totalSavings = parsed.summary?.estimatedMonthlySavingsUsd ?? 0;
+      writeLines([
+        '[Source: AWS Compute Optimizer]',
+        `Recommendations: ${total}`,
+        totalSavings > 0 ? `Estimated savings: ${formatMoney(totalSavings)}/mo` : 'Estimated savings: none',
+        '',
+        ...recs.slice(0, 20).map((r) =>
+          `- [${stripAnsi(r.finding ?? 'Unknown')}] ${r.resourceType ?? '?'} ${stripAnsi(r.resourceArn ?? '')} — ${formatMoney(r.estimatedMonthlySavingsUsd ?? 0)}/mo`,
+        ),
+        ...(recs.length > 20 ? [`... ${recs.length - 20} more`] : []),
+      ]);
+      return true;
+    }
     const isRefresh = hasFlag(commandArgs, '--refresh');
     if (isRefresh) {
       const provider = await createHeadlessProvider();
@@ -1335,6 +1389,56 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
   }
 
   if (command === 'recommend') {
+    const source = parseArg(commandArgs, '--source');
+    if (source !== null && source !== 'compute-optimizer') {
+      process.stdout.write(JSON.stringify({
+        command: 'recommend',
+        status: 'error',
+        error: `unknown --source value '${source}'. Valid: 'compute-optimizer'.`,
+      }, null, 2) + '\n');
+      return 1;
+    }
+    if (source === 'compute-optimizer') {
+      if (hasFlag(commandArgs, '--refresh')) {
+        process.stderr.write('[korinfra] note: --refresh is ignored when --source is set\n');
+      }
+      const { getComputeOptimizerRecommendationsTool } = await import('../tools/get-compute-optimizer-recommendations.js');
+      const handlerArgs: Record<string, unknown> = {};
+      // loadConfig throws if no .korinfra/config.yaml — treat as "use env defaults"
+      try {
+        const cfg = await loadConfig();
+        if (cfg.aws.default_profile) handlerArgs['profile'] = cfg.aws.default_profile;
+        if (cfg.aws.default_region) handlerArgs['regions'] = [cfg.aws.default_region];
+      } catch {
+        // No config file; rely on AWS_* env vars and the SDK default provider chain.
+      }
+      const handlerResult = await getComputeOptimizerRecommendationsTool.handler(handlerArgs);
+      const parsed = JSON.parse(handlerResult.content[0]?.text ?? '{}') as {
+        status?: string;
+        message?: string;
+        summary?: { total?: number; estimatedMonthlySavingsUsd?: number; byType?: Record<string, number> };
+        recommendations?: unknown[];
+        next?: unknown[];
+      };
+      const out = {
+        command: 'recommend',
+        source: 'compute-optimizer',
+        status: parsed.status ?? 'completed',
+        summary: {
+          total: parsed.summary?.total ?? 0,
+          critical: 0,
+          high: 0,
+          medium: 0,
+          low: 0,
+          estimatedMonthlySavingsUsd: parsed.summary?.estimatedMonthlySavingsUsd ?? 0,
+          byType: parsed.summary?.byType ?? {},
+        },
+        recommendations: parsed.recommendations ?? [],
+        next: parsed.next ?? [],
+      };
+      process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+      return 0;
+    }
     const isRefresh = hasFlag(commandArgs, '--refresh');
     if (isRefresh) {
       const provider = await createHeadlessProvider();
