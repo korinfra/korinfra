@@ -5,8 +5,9 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
+import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
-import { suggestRDSRightsize, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, confidenceFromUtilization, costOrWarn, calculateSavingsWithPricingFallback, CONF_CERTAIN, CONF_HIGH, CONF_LIKELY, CONF_PROBABLE, CONF_COST_OPT, CONF_ESTIMATE } from './helpers.js';
+import { suggestRDSRightsize, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization, costOrWarn, calculateSavingsWithPricingFallback, CONF_CERTAIN, CONF_HIGH, CONF_LIKELY, CONF_PROBABLE, CONF_COST_OPT, CONF_ESTIMATE } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { RDS_GP2_STORAGE_PER_GB, RDS_GP3_STORAGE_PER_GB, RDS_IO1_STORAGE_PER_GB, RDS_IO2_STORAGE_PER_GB, estimateRDSCostSync } from '../../pricing/resources.js';
 
@@ -81,7 +82,7 @@ export function checkRDS002(r: Resource, _cfg: Cfg): Recommendation | null {
 }
 
 /** RDS-003: Oversized RDS instance (CPU avg < threshold). */
-export function checkRDS003(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkRDS003(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'rds_instance' || !r.utilization) return null;
   if (r.utilization.cpuAverage >= cfg.rdsRightsizeCPUThreshold) return null;
   // Also guard on P95 — a bursty workload with low average but high P95 should not be downsized
@@ -93,13 +94,23 @@ export function checkRDS003(r: Resource, cfg: Cfg): Recommendation | null {
   const suggestedType = suggestRDSRightsize(r.instanceType, r.utilization.cpuP95, cfg.rdsRightsizeCPUThreshold);
   if (!suggestedType || suggestedType === r.instanceType) return null;
 
-  const monthlyCost = getMonthlyCost(r);
   const currentMonthly = estimateRDSCostSync(r.instanceType, r.region);
   const suggestedMonthly = estimateRDSCostSync(suggestedType, r.region);
   let savings: number;
   if (currentMonthly > 0 && suggestedMonthly > 0) {
+    // Tier 1: pricing-table lookup succeeded for both sides — savings precise
+    // and independent of the AWS-reported monthly_cost.
     savings = currentMonthly - suggestedMonthly;
   } else {
+    // Tier 2: pricing-table lookup failed; can only estimate savings as a
+    // fraction of the AWS-reported monthly_cost. Skip + warn if that's missing
+    // too — RDS-003 has a narrower trigger than RDS-001/009 (which warn purely
+    // on missing cost).
+    const monthlyCost = getMonthlyCostStrict(r);
+    if (monthlyCost === null) {
+      ctx?.warn('RDS-003', r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
+      return null;
+    }
     savings = monthlyCost * cfg.rdsRightsizeMultiplier;
   }
   savings = guardSavings(savings);

@@ -270,6 +270,41 @@ describe('MCP tools with realistic data', () => {
     expect(ruleIds).toContain('S3-004');
   });
 
+  // #44 Item 1: warnings emitted by strict-gated rules flow through evaluate_rules
+  // to the JSON output, so dashboards and CI can surface skipped resources.
+  it('evaluate_rules surfaces warnings for resources that strict-gated rules skipped', async () => {
+    // An old EBS snapshot with no monthly_cost AND no size should trigger SNAP-001's
+    // strict gate. Snapshots without size_gb let the pricing engine compute $0 and
+    // skip enrichment (vs. ebs_volume which gets a baseline gp3 estimate).
+    const orphanSnapshot = {
+      id: 'snap-orphan-no-cost-no-size',
+      arn: 'arn:aws:ec2:us-east-1:123456789012:snapshot/snap-orphan-no-cost-no-size',
+      type: 'ebs_snapshot',
+      name: 'orphan-no-cost-no-size',
+      region: 'us-east-1',
+      state: 'available',
+      instanceType: '',
+      tags: {},
+      launchTime: new Date(Date.now() - 400 * 86_400_000).toISOString(),
+      collectedAt: new Date().toISOString(),
+      configuration: { volume_id: 'vol-source-deleted' }, // no monthlyCost, no size_gb
+    };
+    const result = await evaluateRulesTool.handler({ resources: [orphanSnapshot] });
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0]!.text);
+    expect(data.warnings).toBeDefined();
+    expect(data.warnings.length).toBeGreaterThanOrEqual(1);
+    // EBS-002 emits the MISSING_COST warning; SNAP-001/002 emit MISSING_COST_AND_SIZE.
+    const warningReasons = (data.warnings as Array<{ ruleId: string; reason: string }>).map((w) => w.reason);
+    expect(warningReasons).toEqual(
+      expect.arrayContaining(['monthly_cost missing or invalid']),
+    );
+    expect(warningReasons).toEqual(
+      expect.arrayContaining(['monthly_cost missing and size_gb unavailable']),
+    );
+    expect(data.summary.warningCount).toBeGreaterThanOrEqual(1);
+  });
+
   it('detect_cost_anomalies returns anomalies for realistic cost data', async () => {
     const data = makeRealisticAccount().costTimeSeries;
     const result = await detectAnomalesTool.handler({

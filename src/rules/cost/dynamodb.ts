@@ -4,7 +4,8 @@
  */
 
 import type { Resource } from '../../aws/types.js';
-import type { Recommendation } from '../types.js';
+import type { Recommendation, RuleContext } from '../types.js';
+import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
 import { strConfig, boolConfig, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
@@ -19,7 +20,7 @@ import { logger } from '../../utils/logger.js';
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
 /** DDB-001: DynamoDB provisioned capacity at low utilisation. */
-export function checkDDB001(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkDDB001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'dynamodb_table') return null;
   const billingMode = strConfig(r, 'billing_mode');
   if (billingMode === 'PAY_PER_REQUEST') return null;
@@ -36,13 +37,16 @@ export function checkDDB001(r: Resource, cfg: Cfg): Recommendation | null {
   if (hasUtilizationData) {
     if (!Number.isFinite(consumedRead) || !Number.isFinite(consumedWrite)) {
       logger.debug({ resourceId: r.id }, 'DDB-001: non-finite consumed capacity, skipping');
+      ctx?.warn('DDB-001', r.id, r.type, RULE_WARN_REASONS.DDB_NON_FINITE);
       return null;
     }
     if (provisionedRead === 0 && provisionedWrite === 0 && consumedRead === 0 && consumedWrite === 0) {
       logger.debug({ resourceId: r.id }, 'DDB-001: zero provisioned and zero consumed capacity (paused or new table), skipping');
+      ctx?.warn('DDB-001', r.id, r.type, RULE_WARN_REASONS.DDB_ZERO_CAPACITY);
       return null;
     }
     // Skip if consumed capacity is above the threshold of provisioned — table is well-utilized.
+    // This is a legitimate skip (no rightsizing needed), not a data-quality issue — no warning emitted.
     const readUtilPct = provisionedRead > 0 ? ((consumedRead) / provisionedRead) * 100 : 0;
     const writeUtilPct = provisionedWrite > 0 ? ((consumedWrite) / provisionedWrite) * 100 : 0;
     if (readUtilPct >= cfg.dynamoDBProvisionedUtilThreshold && writeUtilPct >= cfg.dynamoDBProvisionedUtilThreshold) return null;

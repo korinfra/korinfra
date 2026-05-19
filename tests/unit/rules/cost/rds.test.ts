@@ -122,6 +122,31 @@ describe('checkRDS003 — oversized RDS instance', () => {
     expect(checkRDS003(makeRDS({ type: 'ec2_instance', instanceType: 'db.m5.xlarge', utilization: makeUtil(2.0, 5) }), cfg)).toBeNull();
     expect(checkRDS003(makeRDS({ instanceType: 'db.t3.nano', utilization: makeUtil(0.5, 1) }), cfg)).toBeNull();
   });
+
+  // #44 Item 2: when both pricing-table tiers fail, fall back to monthly_cost; warn + skip if missing too.
+  it('skips and warns when pricing-table lookup fails AND monthly_cost is missing', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    // 'db.zzz.xlarge' is intentionally not in FALLBACK_RDS_PRICES so both pricing lookups return 0;
+    // 'xlarge' is a valid size index so suggestRDSRightsize produces 'db.zzz.medium' (different from
+    // the input) and the rule proceeds past the suggestedType === r.instanceType early-out.
+    const r = makeRDS({
+      instanceType: 'db.zzz.xlarge',
+      utilization: makeUtil(5.0, 10),
+      configuration: { monthlyCost: NaN },
+    });
+    expect(checkRDS003(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      ruleId: 'RDS-003',
+      resourceId: r.id,
+      reason: 'monthly_cost missing or invalid',
+    });
+  });
 });
 
 // ─── RDS-002: Production RDS without Multi-AZ ─────────────────────────────────

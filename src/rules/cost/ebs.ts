@@ -5,8 +5,9 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
+import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
-import { daysSince, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, confidenceFromUtilization, costOrWarn, CONF_CERTAIN, CONF_STRONG, CONF_HIGH, CONF_PROBABLE, CONF_COST_OPT, CONF_REVIEW_ONLY } from './helpers.js';
+import { daysSince, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization, costOrWarn, CONF_CERTAIN, CONF_STRONG, CONF_HIGH, CONF_PROBABLE, CONF_COST_OPT, CONF_REVIEW_ONLY } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { asStr } from '../../utils/coerce.js';
 import { EBS_GP3_PER_GB, EBS_GP3_IOPS_PRICE, EBS_IO1_PER_GB, EBS_IO1_IOPS_PRICE, EBS_SNAPSHOT_PER_GB } from '../../pricing/resources.js';
@@ -319,14 +320,25 @@ export function checkEBS007(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** SNAP-001: Orphaned snapshot (source volume deleted or unknown). */
-export function checkSNAP001(r: Resource, _cfg: Cfg): Recommendation | null {
+export function checkSNAP001(r: Resource, _cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ebs_snapshot') return null;
   if (r.state !== 'available') return null;
   const volumeID = r.configuration?.['volume_id'];
   if (volumeID === undefined || volumeID === '' || volumeID === null) return null; // insufficient data
   const sizeGB = numConfig(r, 'volume_size') || numConfig(r, 'size_gb');
-  const monthlyCost = getMonthlyCost(r);
-  const savings = monthlyCost > 0 ? monthlyCost : sizeGB > 0 ? sizeGB * EBS_SNAPSHOT_PER_GB : 0;
+  // Prefer the AWS-reported monthly_cost; fall back to size-based estimate
+  // when only size is available. If BOTH are missing the rule has no signal
+  // to quantify the orphaned snapshot and must skip rather than emit $0.
+  const monthlyCostStrict = getMonthlyCostStrict(r);
+  let savings: number;
+  if (monthlyCostStrict !== null) {
+    savings = monthlyCostStrict;
+  } else if (sizeGB > 0) {
+    savings = sizeGB * EBS_SNAPSHOT_PER_GB;
+  } else {
+    ctx?.warn('SNAP-001', r.id, r.type, RULE_WARN_REASONS.MISSING_COST_AND_SIZE);
+    return null;
+  }
 
   const volumeIDStr = asStr(volumeID);
   return {
@@ -354,14 +366,22 @@ export function checkSNAP001(r: Resource, _cfg: Cfg): Recommendation | null {
 }
 
 /** SNAP-002: EBS snapshot older than 1 year. */
-export function checkSNAP002(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkSNAP002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ebs_snapshot') return null;
   if (!r.launchTime) return null;
   const age = daysSince(r.launchTime);
   if (age === null || age <= cfg.snapshotMaxAgeDays) return null;
   const sizeGB = numConfig(r, 'volume_size') || numConfig(r, 'size_gb');
-  const monthlyCost = getMonthlyCost(r);
-  const savings = monthlyCost > 0 ? monthlyCost : sizeGB > 0 ? sizeGB * EBS_SNAPSHOT_PER_GB : 0;
+  const monthlyCostStrict = getMonthlyCostStrict(r);
+  let savings: number;
+  if (monthlyCostStrict !== null) {
+    savings = monthlyCostStrict;
+  } else if (sizeGB > 0) {
+    savings = sizeGB * EBS_SNAPSHOT_PER_GB;
+  } else {
+    ctx?.warn('SNAP-002', r.id, r.type, RULE_WARN_REASONS.MISSING_COST_AND_SIZE);
+    return null;
+  }
   return {
     ruleId: 'SNAP-002',
     resourceId: r.id,
