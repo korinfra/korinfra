@@ -66,6 +66,21 @@ compute-optimizer:GetRDSDatabaseRecommendations
 
 Findings can take up to 24 hours to populate after enrollment.
 
+Usage:
+
+```bash
+# Headless text output (defaults to the configured region)
+korinfra recommend --source compute-optimizer --no-tui
+
+# JSON for CI / scripting; --fail-on critical maps to CO performanceRisk=High
+korinfra recommend --source compute-optimizer --json --fail-on critical
+```
+
+The tool returns `{ status: 'not_enabled' }` when the account hasn't enrolled,
+and `{ status: 'access_denied' }` when the calling role is missing the
+`compute-optimizer:Get*` IAM permissions — neither raises an error, so CI
+pipelines can branch on the status field.
+
 ---
 
 ## Full config reference
