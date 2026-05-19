@@ -162,7 +162,7 @@ export function checkEC2004(r: Resource, cfg: Cfg): Recommendation | null {
   if (r.type !== 'ec2_instance' || !r.utilization) return null;
   const util = r.utilization;
   if (util.cpuP95 >= cfg.rightsizeCPUThreshold) return null;
-  if (r.instanceType.endsWith('.metal')) return null;
+  if (r.instanceType.includes('.metal')) return null;
 
   const MEMORY_BOUND_THRESHOLD_MB = 2000;
   const NETWORK_INTENSIVE_THRESHOLD_MB = 100_000;
@@ -615,7 +615,7 @@ export function checkEC2014(r: Resource, cfg: Cfg): Recommendation | null {
   if (lifecycle === 'spot' || lifecycle === 'scheduled') return null;
 
   // Bare-metal has poor Spot capacity and slow recovery — skip
-  if (r.instanceType.endsWith('.metal')) return null;
+  if (r.instanceType.includes('.metal')) return null;
 
   const uptimeDays = daysSince(r.launchTime);
   if (uptimeDays === null || uptimeDays <= cfg.spotMinUptimeDays) return null;

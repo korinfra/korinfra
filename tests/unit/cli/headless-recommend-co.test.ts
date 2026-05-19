@@ -195,14 +195,14 @@ describe('runJsonCommand("recommend", [--source compute-optimizer])', () => {
     expect(out.source).toBe('compute-optimizer');
     expect(out.status).toBe('ok');
     expect(out.summary.total).toBe(1);
-    expect(out.summary.critical).toBe(1); // performanceRisk=High → critical
+    expect(out.summary.critical).toBe(1); // savings $100/mo → critical bucket (>= 100)
     expect(out.summary.high).toBe(0);
     expect(out.summary.byType['ec2']).toBe(1);
     expect(out.summary.estimatedMonthlySavingsUsd).toBeCloseTo(100, 2);
     expect(out.recommendations).toHaveLength(1);
   });
 
-  it('exits 1 with --fail-on critical when performanceRisk=High is present', async () => {
+  it('exits 1 with --fail-on critical when savings >= $100/mo (critical bucket)', async () => {
     sendImpls['GetEC2InstanceRecommendationsCommand'] = () => Promise.resolve({
       instanceRecommendations: [{
         instanceArn: 'arn:aws:ec2:us-east-1:111122223333:instance/i-1',
@@ -210,22 +210,23 @@ describe('runJsonCommand("recommend", [--source compute-optimizer])', () => {
         finding: 'Overprovisioned',
         currentPerformanceRisk: 'High',
         lookBackPeriodInDays: 14,
-        recommendationOptions: [{ rank: 1, instanceType: 'm6i.small', savingsOpportunity: { estimatedMonthlySavings: { value: 100 } } }],
+        recommendationOptions: [{ rank: 1, instanceType: 'm6i.small', savingsOpportunity: { estimatedMonthlySavings: { value: 150 } } }],
       }],
     });
     const code = await runJsonCommand('recommend', ['--source', 'compute-optimizer', '--fail-on', 'critical']);
     expect(code).toBe(1);
   });
 
-  it('exits 0 with --fail-on critical when no performanceRisk=High is present', async () => {
+  it('exits 0 with --fail-on critical when savings < $100/mo (no critical bucket)', async () => {
     sendImpls['GetEC2InstanceRecommendationsCommand'] = () => Promise.resolve({
       instanceRecommendations: [{
         instanceArn: 'arn:aws:ec2:us-east-1:111122223333:instance/i-1',
         currentInstanceType: 'm5.large',
         finding: 'Overprovisioned',
-        currentPerformanceRisk: 'Medium',
+        currentPerformanceRisk: 'High',
         lookBackPeriodInDays: 14,
-        recommendationOptions: [{ rank: 1, instanceType: 'm6i.small', savingsOpportunity: { estimatedMonthlySavings: { value: 100 } } }],
+        // $50/mo → falls into 'high' bucket (50-100), not 'critical' (>= 100)
+        recommendationOptions: [{ rank: 1, instanceType: 'm6i.small', savingsOpportunity: { estimatedMonthlySavings: { value: 50 } } }],
       }],
     });
     const code = await runJsonCommand('recommend', ['--source', 'compute-optimizer', '--fail-on', 'critical']);

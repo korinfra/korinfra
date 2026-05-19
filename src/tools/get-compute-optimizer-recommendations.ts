@@ -23,7 +23,7 @@ import {
 import pThrottle from 'p-throttle';
 import { getCredentials, resolveRegion } from '../aws/credentials.js';
 import { logApiCall } from '../aws/rate-limiter.js';
-import { redactObject } from '../redaction/index.js';
+import { redact, redactObject } from '../redaction/index.js';
 import { logger } from '../utils/logger.js';
 import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition, ToolResult } from './types.js';
@@ -52,7 +52,7 @@ const throttledCoCall = _coThrottle(
       logApiCall({ service: 'compute-optimizer', operation, region, timestamp: new Date(ts).toISOString(), durationMs: Date.now() - ts, estimatedCost: 0 });
       return result;
     } catch (err) {
-      logApiCall({ service: 'compute-optimizer', operation, region, timestamp: new Date(ts).toISOString(), durationMs: Date.now() - ts, estimatedCost: 0, error: String(err) });
+      logApiCall({ service: 'compute-optimizer', operation, region, timestamp: new Date(ts).toISOString(), durationMs: Date.now() - ts, estimatedCost: 0, error: redact(err instanceof Error ? err.message : String(err), 'moderate') });
       throw err;
     }
   },
@@ -482,10 +482,14 @@ export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
         if (settled.status === 'fulfilled') {
           const { region, result } = settled.value;
           allRecommendations.push(...result.items);
-          if (result.optInRequired) anyOptInRequired = true;
+          if (result.optInRequired) {
+            anyOptInRequired = true;
+            warnings.push(`${region}: Compute Optimizer not opted in — skipped`);
+          }
           if (result.accessDenied) {
             anyAccessDenied = true;
             firstMissingPermission = firstMissingPermission ?? result.missingPermission;
+            warnings.push(`${region}: access denied (${result.missingPermission ?? 'compute-optimizer'}) — skipped`);
           }
           for (const e of result.otherErrors) {
             warnings.push(`${region}/${e.resourceType}: ${e.message}`);

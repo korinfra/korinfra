@@ -1468,7 +1468,7 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
         status?: string;
         message?: string;
         summary?: { total?: number; estimatedMonthlySavingsUsd?: number; byType?: Record<string, number> };
-        recommendations?: Array<{ performanceRisk?: string }>;
+        recommendations?: Array<{ estimatedMonthlySavingsUsd?: number; performanceRisk?: string }>;
         warnings?: string[];
         next?: unknown[];
       };
