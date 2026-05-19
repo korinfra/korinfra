@@ -513,8 +513,11 @@ export function RecommendCommand({
         const target = displayRows[selectedIdx];
         if (!target) return;
         try { updateRecommendationStatus(getDb(), target.id, 'dismissed'); } catch { /* non-fatal */ }
-        setRows((prev) => prev.filter((r) => r.id !== target.id));
-        setSelectedIdx((i) => Math.max(0, i - 1));
+        setRows((prev) => {
+          const next = prev.filter((r) => r.id !== target.id);
+          setSelectedIdx((i) => Math.min(i, Math.max(0, next.length - 1)));
+          return next;
+        });
         showToast({ level: 'success', message: 'Dismissed' });
         return;
       }

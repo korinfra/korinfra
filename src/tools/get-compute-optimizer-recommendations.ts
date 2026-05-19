@@ -20,10 +20,25 @@ import {
   GetLambdaFunctionRecommendationsCommand,
   GetRDSDatabaseRecommendationsCommand,
 } from '@aws-sdk/client-compute-optimizer';
+import pThrottle from 'p-throttle';
 import { getCredentials, resolveRegion } from '../aws/credentials.js';
+import { logApiCall } from '../aws/rate-limiter.js';
 import { redactObject } from '../redaction/index.js';
+import { logger } from '../utils/logger.js';
 import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition, ToolResult } from './types.js';
+
+const OPERATION_NAMES: Record<string, string> = {
+  ec2: 'GetEC2InstanceRecommendations',
+  asg: 'GetAutoScalingGroupRecommendations',
+  ebs: 'GetEBSVolumeRecommendations',
+  lambda: 'GetLambdaFunctionRecommendations',
+  ecs: 'GetECSServiceRecommendations',
+  rds: 'GetRDSDatabaseRecommendations',
+};
+
+// 5 req/sec — conservative; AWS Compute Optimizer default TPS is 20
+const coThrottle = pThrottle({ limit: 5, interval: 1000 });
 
 type ResourceTypeKey = 'ec2' | 'asg' | 'ebs' | 'lambda' | 'ecs' | 'rds';
 
@@ -61,6 +76,28 @@ function isOptInRequired(err: unknown): boolean {
   if (e.name === 'OptInRequiredException') return true;
   const msg = (e.message ?? '').toLowerCase();
   return msg.includes('not opted in') || msg.includes('opt-in required');
+}
+
+/**
+ * Detect the IAM-missing case (separate from opt-in). Surfaces a different
+ * message because the user fix is different: they must add the
+ * `compute-optimizer:Get*` permissions to the calling role.
+ */
+function isAccessDenied(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { name?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+  if (e.name === 'AccessDeniedException') return true;
+  if (e.$metadata?.httpStatusCode === 403) return true;
+  const msg = (e.message ?? '').toLowerCase();
+  return msg.includes('not authorized') || msg.includes('access denied');
+}
+
+function extractMissingPermission(err: unknown): string | null {
+  if (!err || typeof err !== 'object') return null;
+  const e = err as { message?: string };
+  // AWS messages look like: "User: arn:... is not authorized to perform: compute-optimizer:GetEC2InstanceRecommendations"
+  const m = /perform:\s*([a-zA-Z0-9_:-]+)/.exec(e.message ?? '');
+  return m ? (m[1] ?? null) : null;
 }
 
 function bestOption<T extends { rank?: number }>(opts: T[] | undefined): T | undefined {
@@ -229,9 +266,16 @@ async function callRegion(
   region: string,
   types: ResourceTypeKey[],
   maxItems: number,
-): Promise<{ items: NormalizedRecommendation[]; optInRequired: boolean }> {
+): Promise<{
+  items: NormalizedRecommendation[];
+  optInRequired: boolean;
+  accessDenied: boolean;
+  missingPermission: string | null;
+}> {
   const items: NormalizedRecommendation[] = [];
   let optInRequired = false;
+  let accessDenied = false;
+  let missingPermission: string | null = null;
 
   const callsByType: Record<ResourceTypeKey, () => Promise<NormalizedRecommendation[]>> = {
     ec2: async () => {
@@ -271,18 +315,34 @@ async function callRegion(
     },
   };
 
-  const results = await Promise.allSettled(types.map((t) => callsByType[t]()));
+  const throttledCall = coThrottle(async (t: ResourceTypeKey): Promise<NormalizedRecommendation[]> => {
+    const operation = OPERATION_NAMES[t] ?? `Get${t}Recommendations`;
+    const ts = Date.now();
+    try {
+      const result = await callsByType[t]();
+      logApiCall({ service: 'compute-optimizer', operation, region, timestamp: new Date(ts).toISOString(), durationMs: Date.now() - ts, estimatedCost: 0 });
+      return result;
+    } catch (err) {
+      logApiCall({ service: 'compute-optimizer', operation, region, timestamp: new Date(ts).toISOString(), durationMs: Date.now() - ts, estimatedCost: 0, error: String(err) });
+      throw err;
+    }
+  });
+
+  const results = await Promise.allSettled(types.map((t) => throttledCall(t)));
   for (const result of results) {
     if (result.status === 'fulfilled') {
       items.push(...result.value);
     } else if (isOptInRequired(result.reason)) {
       optInRequired = true;
+    } else if (isAccessDenied(result.reason)) {
+      accessDenied = true;
+      missingPermission = missingPermission ?? extractMissingPermission(result.reason);
+    } else {
+      logger.debug({ err: result.reason, region }, '[compute-optimizer] per-type call failed');
     }
-    // Other per-type rejections (regional outage, throttling) are silently swallowed
-    // — Promise.allSettled keeps the rest of the call set alive.
   }
 
-  return { items, optInRequired };
+  return { items, optInRequired, accessDenied, missingPermission };
 }
 
 export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
@@ -335,6 +395,8 @@ export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
 
       const allRecommendations: NormalizedRecommendation[] = [];
       let anyOptInRequired = false;
+      let anyAccessDenied = false;
+      let firstMissingPermission: string | null = null;
 
       const perRegion = await Promise.allSettled(
         regions.map(async (region) => {
@@ -347,8 +409,13 @@ export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
         if (result.status === 'fulfilled') {
           allRecommendations.push(...result.value.items);
           if (result.value.optInRequired) anyOptInRequired = true;
+          if (result.value.accessDenied) {
+            anyAccessDenied = true;
+            firstMissingPermission = firstMissingPermission ?? result.value.missingPermission;
+          }
+        } else {
+          logger.debug({ err: result.reason }, '[compute-optimizer] per-region call failed');
         }
-        // Per-region rejection (e.g. unsupported region) is swallowed silently.
       }
 
       // If we got nothing AND the opt-in flag is set, treat as account-level not_enabled.
@@ -365,6 +432,28 @@ export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
         });
       }
 
+      // If everything failed with AccessDenied and we got no recs, surface the missing IAM hint.
+      if (allRecommendations.length === 0 && anyAccessDenied) {
+        return jsonResult({
+          source: 'compute-optimizer',
+          status: 'access_denied',
+          message: firstMissingPermission
+            ? `The calling role is not authorized to call ${firstMissingPermission}.`
+            : 'The calling role is not authorized to call the Compute Optimizer APIs.',
+          regions,
+          next: [
+            { label: 'required IAM policy', permissions: [
+              'compute-optimizer:GetEC2InstanceRecommendations',
+              'compute-optimizer:GetAutoScalingGroupRecommendations',
+              'compute-optimizer:GetEBSVolumeRecommendations',
+              'compute-optimizer:GetLambdaFunctionRecommendations',
+              'compute-optimizer:GetECSServiceRecommendations',
+              'compute-optimizer:GetRDSDatabaseRecommendations',
+            ] },
+          ],
+        });
+      }
+
       const byType: Partial<Record<ResourceTypeKey, number>> = {};
       let estimatedMonthlySavingsUsd = 0;
       for (const r of allRecommendations) {
@@ -372,16 +461,21 @@ export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
         estimatedMonthlySavingsUsd += r.estimatedMonthlySavingsUsd;
       }
 
+      // Sort descending by savings so the most actionable items show first.
+      const sorted = [...allRecommendations].sort(
+        (a, b) => b.estimatedMonthlySavingsUsd - a.estimatedMonthlySavingsUsd,
+      );
+
       return jsonResult(redactObject({
         source: 'compute-optimizer',
         status: 'ok',
         regions,
         summary: {
-          total: allRecommendations.length,
+          total: sorted.length,
           byType,
           estimatedMonthlySavingsUsd,
         },
-        recommendations: allRecommendations,
+        recommendations: sorted,
       }, 'moderate'));
     } catch (err) {
       if (isOptInRequired(err)) {
@@ -392,6 +486,26 @@ export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
           next: [
             { label: 'enable in console', url: 'https://console.aws.amazon.com/compute-optimizer/' },
             { label: 'enable via CLI', command: 'aws compute-optimizer update-enrollment-status --status Active' },
+          ],
+        });
+      }
+      if (isAccessDenied(err)) {
+        const perm = extractMissingPermission(err);
+        return jsonResult({
+          source: 'compute-optimizer',
+          status: 'access_denied',
+          message: perm
+            ? `The calling role is not authorized to call ${perm}.`
+            : 'The calling role is not authorized to call the Compute Optimizer APIs.',
+          next: [
+            { label: 'required IAM policy', permissions: [
+              'compute-optimizer:GetEC2InstanceRecommendations',
+              'compute-optimizer:GetAutoScalingGroupRecommendations',
+              'compute-optimizer:GetEBSVolumeRecommendations',
+              'compute-optimizer:GetLambdaFunctionRecommendations',
+              'compute-optimizer:GetECSServiceRecommendations',
+              'compute-optimizer:GetRDSDatabaseRecommendations',
+            ] },
           ],
         });
       }

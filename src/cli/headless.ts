@@ -562,16 +562,23 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
         recommendations?: Array<{ resourceType?: string; resourceArn?: string; finding?: string; estimatedMonthlySavingsUsd?: number }>;
         next?: Array<{ label?: string; command?: string; url?: string }>;
       };
-      if (parsed.status === 'not_enabled') {
+      if (parsed.status === 'not_enabled' || parsed.status === 'access_denied') {
         writeLines([
           '[Source: AWS Compute Optimizer]',
-          parsed.message ?? 'Compute Optimizer is not enabled.',
+          parsed.message ?? `Compute Optimizer call failed (${parsed.status}).`,
           '',
           'Next:',
-          ...(parsed.next ?? []).map((n) => `- ${n.label ?? ''}${n.command ? `: ${n.command}` : ''}${n.url ? `: ${n.url}` : ''}`),
+          ...(parsed.next ?? []).map((n) => {
+            const detail = (n as { command?: string; url?: string; permissions?: string[] });
+            if (detail.command) return `- ${n.label ?? ''}: ${detail.command}`;
+            if (detail.url) return `- ${n.label ?? ''}: ${detail.url}`;
+            if (Array.isArray(detail.permissions)) return `- ${n.label ?? ''}: ${detail.permissions.join(', ')}`;
+            return `- ${n.label ?? ''}`;
+          }),
         ]);
         return true;
       }
+      // Recommendations are pre-sorted descending by savings inside the tool.
       const recs = parsed.recommendations ?? [];
       const total = parsed.summary?.total ?? recs.length;
       const totalSavings = parsed.summary?.estimatedMonthlySavingsUsd ?? 0;
@@ -1417,27 +1424,36 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
         status?: string;
         message?: string;
         summary?: { total?: number; estimatedMonthlySavingsUsd?: number; byType?: Record<string, number> };
-        recommendations?: unknown[];
+        recommendations?: Array<{ performanceRisk?: string }>;
         next?: unknown[];
       };
+      // Map Compute Optimizer performanceRisk → korinfra impact buckets so the
+      // existing `--fail-on critical` flag works against CO output.
+      // High = critical, Medium = high, Low = medium, VeryLow = low.
+      const recs = parsed.recommendations ?? [];
+      const critical = recs.filter((r) => r.performanceRisk === 'High').length;
+      const high = recs.filter((r) => r.performanceRisk === 'Medium').length;
+      const medium = recs.filter((r) => r.performanceRisk === 'Low').length;
+      const low = recs.filter((r) => r.performanceRisk === 'VeryLow').length;
       const out = {
         command: 'recommend',
         source: 'compute-optimizer',
         status: parsed.status ?? 'completed',
         summary: {
           total: parsed.summary?.total ?? 0,
-          critical: 0,
-          high: 0,
-          medium: 0,
-          low: 0,
+          critical,
+          high,
+          medium,
+          low,
           estimatedMonthlySavingsUsd: parsed.summary?.estimatedMonthlySavingsUsd ?? 0,
           byType: parsed.summary?.byType ?? {},
         },
-        recommendations: parsed.recommendations ?? [],
+        recommendations: recs,
         next: parsed.next ?? [],
       };
       process.stdout.write(JSON.stringify(out, null, 2) + '\n');
-      return 0;
+      const failOn = parseArg(commandArgs, '--fail-on');
+      return failOn === 'critical' && critical > 0 ? 1 : 0;
     }
     const isRefresh = hasFlag(commandArgs, '--refresh');
     if (isRefresh) {

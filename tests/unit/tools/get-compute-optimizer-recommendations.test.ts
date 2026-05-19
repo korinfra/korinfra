@@ -156,6 +156,56 @@ describe('get_compute_optimizer_recommendations tool', () => {
     expect(ebsSpy).not.toHaveBeenCalled();
   });
 
+  it('returns status:access_denied with a missing-permission hint on AccessDeniedException', async () => {
+    const err = new Error('User: arn:aws:iam::111122223333:user/x is not authorized to perform: compute-optimizer:GetEC2InstanceRecommendations on resource *');
+    (err as Error & { name: string }).name = 'AccessDeniedException';
+    for (const k of Object.keys(sendImpls)) {
+      sendImpls[k] = () => Promise.reject(err);
+    }
+    const result = await getComputeOptimizerRecommendationsTool.handler({ regions: ['us-east-1'] });
+    const out = parse(result.content[0]?.text ?? '');
+    expect(out.status).toBe('access_denied');
+    expect(out.source).toBe('compute-optimizer');
+    expect(out.message ?? '').toContain('compute-optimizer:GetEC2InstanceRecommendations');
+    expect(out.next).toBeDefined();
+    expect(result.isError).not.toBe(true);
+  });
+
+  it('sorts recommendations descending by savings within the tool', async () => {
+    sendImpls['GetEC2InstanceRecommendationsCommand'] = () => Promise.resolve({
+      instanceRecommendations: [
+        {
+          instanceArn: 'arn:aws:ec2:us-east-1:111122223333:instance/i-low',
+          currentInstanceType: 'm5.small',
+          finding: 'Overprovisioned',
+          currentPerformanceRisk: 'Low',
+          lookBackPeriodInDays: 14,
+          recommendationOptions: [{ rank: 1, instanceType: 'm6i.nano', savingsOpportunity: { estimatedMonthlySavings: { value: 5 } } }],
+        },
+        {
+          instanceArn: 'arn:aws:ec2:us-east-1:111122223333:instance/i-mid',
+          currentInstanceType: 'm5.xlarge',
+          finding: 'Overprovisioned',
+          currentPerformanceRisk: 'VeryLow',
+          lookBackPeriodInDays: 14,
+          recommendationOptions: [{ rank: 1, instanceType: 'm6i.large', savingsOpportunity: { estimatedMonthlySavings: { value: 50 } } }],
+        },
+        {
+          instanceArn: 'arn:aws:ec2:us-east-1:111122223333:instance/i-high',
+          currentInstanceType: 'm5.4xlarge',
+          finding: 'Overprovisioned',
+          currentPerformanceRisk: 'VeryLow',
+          lookBackPeriodInDays: 14,
+          recommendationOptions: [{ rank: 1, instanceType: 'm6i.large', savingsOpportunity: { estimatedMonthlySavings: { value: 200 } } }],
+        },
+      ],
+    });
+    const result = await getComputeOptimizerRecommendationsTool.handler({ regions: ['us-east-1'], resourceTypes: ['ec2'] });
+    const out = parse(result.content[0]?.text ?? '');
+    expect(out.recommendations).toHaveLength(3);
+    expect(out.recommendations!.map((r) => r.estimatedMonthlySavingsUsd)).toEqual([200, 50, 5]);
+  });
+
   it('returns status:not_enabled when OptInRequiredException is thrown', async () => {
     const err = new Error('The account is not opted in to AWS Compute Optimizer');
     (err as Error & { name: string }).name = 'OptInRequiredException';

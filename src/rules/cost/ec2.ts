@@ -5,8 +5,7 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
-import type { ThresholdsOverride } from '../config.js';
-import type { THRESHOLDS } from '../config.js';
+import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
 import { FALLBACK_EC2_PRICES, EBS_GP3_PER_GB, estimateEC2CostSync } from '../../pricing/resources.js';
 import {
   splitInstanceType,
