@@ -76,6 +76,7 @@ interface ParsedOutput {
     performanceRisk?: string;
     lookbackPeriodInDays?: number;
   }>;
+  warnings?: string[];
   next?: Array<{ label?: string; url?: string; command?: string }>;
 }
 
@@ -293,5 +294,126 @@ describe('get_compute_optimizer_recommendations tool', () => {
       resourceTypes: ['unknown-thing'],
     });
     expect(ec2Spy).toHaveBeenCalled();
+  });
+
+  it('paginates via nextToken until the per-type cap is reached', async () => {
+    // Three pages, then nextToken absent. With maxItemsPerType=250 the tool
+    // should keep paging until AWS stops returning nextToken.
+    let callCount = 0;
+    sendImpls['GetEC2InstanceRecommendationsCommand'] = () => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({
+          instanceRecommendations: Array.from({ length: 100 }, (_, i) => ({
+            instanceArn: `arn:aws:ec2:us-east-1:111122223333:instance/i-page1-${i}`,
+            currentInstanceType: 'm5.large',
+            finding: 'Overprovisioned',
+            currentPerformanceRisk: 'Low',
+            lookBackPeriodInDays: 14,
+            recommendationOptions: [{ rank: 1, instanceType: 'm6i.small', savingsOpportunity: { estimatedMonthlySavings: { value: 10 } } }],
+          })),
+          nextToken: 'page2',
+        });
+      }
+      if (callCount === 2) {
+        return Promise.resolve({
+          instanceRecommendations: Array.from({ length: 100 }, (_, i) => ({
+            instanceArn: `arn:aws:ec2:us-east-1:111122223333:instance/i-page2-${i}`,
+            currentInstanceType: 'm5.large',
+            finding: 'Overprovisioned',
+            currentPerformanceRisk: 'Low',
+            lookBackPeriodInDays: 14,
+            recommendationOptions: [{ rank: 1, instanceType: 'm6i.small', savingsOpportunity: { estimatedMonthlySavings: { value: 20 } } }],
+          })),
+          nextToken: 'page3',
+        });
+      }
+      return Promise.resolve({
+        instanceRecommendations: Array.from({ length: 50 }, (_, i) => ({
+          instanceArn: `arn:aws:ec2:us-east-1:111122223333:instance/i-page3-${i}`,
+          currentInstanceType: 'm5.large',
+          finding: 'Overprovisioned',
+          currentPerformanceRisk: 'Low',
+          lookBackPeriodInDays: 14,
+          recommendationOptions: [{ rank: 1, instanceType: 'm6i.small', savingsOpportunity: { estimatedMonthlySavings: { value: 30 } } }],
+        })),
+        // nextToken absent → end of pagination
+      });
+    };
+    const result = await getComputeOptimizerRecommendationsTool.handler({
+      regions: ['us-east-1'],
+      resourceTypes: ['ec2'],
+      maxItemsPerType: 250,
+    });
+    const out = parse(result.content[0]?.text ?? '');
+    expect(callCount).toBe(3);
+    expect(out.summary?.total).toBe(250); // 100 + 100 + 50
+  });
+
+  it('caps paginated results at maxItemsPerType (stops early)', async () => {
+    let callCount = 0;
+    sendImpls['GetEC2InstanceRecommendationsCommand'] = () => {
+      callCount++;
+      return Promise.resolve({
+        instanceRecommendations: Array.from({ length: 100 }, (_, i) => ({
+          instanceArn: `arn:aws:ec2:us-east-1:111122223333:instance/i-${callCount}-${i}`,
+          currentInstanceType: 'm5.large',
+          finding: 'Overprovisioned',
+          currentPerformanceRisk: 'Low',
+          lookBackPeriodInDays: 14,
+          recommendationOptions: [{ rank: 1, instanceType: 'm6i.small', savingsOpportunity: { estimatedMonthlySavings: { value: 1 } } }],
+        })),
+        nextToken: `page${callCount + 1}`, // AWS would keep paging forever
+      });
+    };
+    const result = await getComputeOptimizerRecommendationsTool.handler({
+      regions: ['us-east-1'],
+      resourceTypes: ['ec2'],
+      maxItemsPerType: 30,
+    });
+    const out = parse(result.content[0]?.text ?? '');
+    // 30 < 100, so first page fits; loop should stop after first call.
+    expect(callCount).toBe(1);
+    expect(out.summary?.total).toBe(30);
+  });
+
+  it('returns status:partial_failure when every call fails with a non-opt-in / non-access-denied error', async () => {
+    const transientErr = new Error('Service unavailable - try again later');
+    (transientErr as Error & { name: string }).name = 'ServiceUnavailableException';
+    for (const k of Object.keys(sendImpls)) {
+      sendImpls[k] = () => Promise.reject(transientErr);
+    }
+    const result = await getComputeOptimizerRecommendationsTool.handler({ regions: ['us-east-1'] });
+    const out = parse(result.content[0]?.text ?? '');
+    expect(out.status).toBe('partial_failure');
+    expect(out.source).toBe('compute-optimizer');
+    expect(out.warnings).toBeDefined();
+    expect(out.warnings!.length).toBeGreaterThan(0);
+    expect(result.isError).not.toBe(true);
+  });
+
+  it('returns status:partial when some calls fail but others succeed', async () => {
+    const transientErr = new Error('Throttled');
+    (transientErr as Error & { name: string }).name = 'ThrottlingException';
+    sendImpls['GetEC2InstanceRecommendationsCommand'] = () => Promise.resolve({
+      instanceRecommendations: [{
+        instanceArn: 'arn:aws:ec2:us-east-1:111122223333:instance/i-ok',
+        currentInstanceType: 'm5.large',
+        finding: 'Overprovisioned',
+        currentPerformanceRisk: 'Low',
+        lookBackPeriodInDays: 14,
+        recommendationOptions: [{ rank: 1, instanceType: 'm6i.small', savingsOpportunity: { estimatedMonthlySavings: { value: 10 } } }],
+      }],
+    });
+    sendImpls['GetEBSVolumeRecommendationsCommand'] = () => Promise.reject(transientErr);
+    const result = await getComputeOptimizerRecommendationsTool.handler({
+      regions: ['us-east-1'],
+      resourceTypes: ['ec2', 'ebs'],
+    });
+    const out = parse(result.content[0]?.text ?? '');
+    expect(out.status).toBe('partial');
+    expect(out.summary?.total).toBe(1);
+    expect(out.warnings).toBeDefined();
+    expect(out.warnings!.some((w) => w.includes('ebs'))).toBe(true);
   });
 });

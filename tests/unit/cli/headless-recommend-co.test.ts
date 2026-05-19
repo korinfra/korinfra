@@ -280,4 +280,39 @@ describe('runJsonCommand("recommend", [--source compute-optimizer])', () => {
     expect(out.status).toBe('error');
     expect(out.error).toContain("unknown --source value 'bogus'");
   });
+
+  it('JSON path emits status:partial_failure with exit 1 when all calls fail transiently', async () => {
+    const transientErr = new Error('Throttling');
+    (transientErr as Error & { name: string }).name = 'ThrottlingException';
+    for (const k of Object.keys(sendImpls)) {
+      sendImpls[k] = () => Promise.reject(transientErr);
+    }
+    const code = await runJsonCommand('recommend', ['--source', 'compute-optimizer']);
+    expect(code).toBe(1);
+    const out = JSON.parse(stdoutBuf) as { status: string; warnings?: string[] };
+    expect(out.status).toBe('partial_failure');
+    expect(out.warnings).toBeDefined();
+  });
+
+  it('JSON path emits status:partial with exit 0 when some calls succeed and others fail', async () => {
+    const throttleErr = new Error('Throttling');
+    (throttleErr as Error & { name: string }).name = 'ThrottlingException';
+    sendImpls['GetEC2InstanceRecommendationsCommand'] = () => Promise.resolve({
+      instanceRecommendations: [{
+        instanceArn: 'arn:aws:ec2:us-east-1:111122223333:instance/i-ok',
+        currentInstanceType: 'm5.large',
+        finding: 'Overprovisioned',
+        currentPerformanceRisk: 'Low',
+        lookBackPeriodInDays: 14,
+        recommendationOptions: [{ rank: 1, instanceType: 'm6i.small', savingsOpportunity: { estimatedMonthlySavings: { value: 25 } } }],
+      }],
+    });
+    sendImpls['GetEBSVolumeRecommendationsCommand'] = () => Promise.reject(throttleErr);
+    const code = await runJsonCommand('recommend', ['--source', 'compute-optimizer']);
+    expect(code).toBe(0);
+    const out = JSON.parse(stdoutBuf) as { status: string; warnings?: string[]; summary: { total: number } };
+    expect(out.status).toBe('partial');
+    expect(out.summary.total).toBe(1);
+    expect(out.warnings).toBeDefined();
+  });
 });

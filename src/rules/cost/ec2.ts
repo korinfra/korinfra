@@ -624,7 +624,7 @@ export function checkEC2014(r: Resource, cfg: Cfg): Recommendation | null {
   const env = (r.tags['Environment'] ?? r.tags['environment'] ?? '').toLowerCase();
   const tagMatch =
     cfg.spotNonProdEnvironments.includes(env) &&
-    uptimeDays > cfg.spotNonProdUptimeDays;
+    uptimeDays >= cfg.spotNonProdUptimeDays;
 
   // Branch B — stable workload (CPU stability proxy; raw variance not collected)
   let stableWorkload = false;

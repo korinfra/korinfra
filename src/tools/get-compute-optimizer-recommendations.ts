@@ -37,8 +37,26 @@ const OPERATION_NAMES: Record<string, string> = {
   rds: 'GetRDSDatabaseRecommendations',
 };
 
-// 5 req/sec — conservative; AWS Compute Optimizer default TPS is 20
-const coThrottle = pThrottle({ limit: 5, interval: 1000 });
+// 5 req/sec — conservative; AWS Compute Optimizer default TPS is 20.
+// throttledCoCall is defined at module level so ALL regions share one token bucket.
+const _coThrottle = pThrottle({ limit: 5, interval: 1000 });
+const throttledCoCall = _coThrottle(
+  async (
+    callFn: () => Promise<NormalizedRecommendation[]>,
+    operation: string,
+    region: string,
+  ): Promise<NormalizedRecommendation[]> => {
+    const ts = Date.now();
+    try {
+      const result = await callFn();
+      logApiCall({ service: 'compute-optimizer', operation, region, timestamp: new Date(ts).toISOString(), durationMs: Date.now() - ts, estimatedCost: 0 });
+      return result;
+    } catch (err) {
+      logApiCall({ service: 'compute-optimizer', operation, region, timestamp: new Date(ts).toISOString(), durationMs: Date.now() - ts, estimatedCost: 0, error: String(err) });
+      throw err;
+    }
+  },
+);
 
 type ResourceTypeKey = 'ec2' | 'asg' | 'ebs' | 'lambda' | 'ecs' | 'rds';
 
@@ -261,6 +279,35 @@ function normalizeRds(rec: Record<string, unknown>, region: string): NormalizedR
   return out;
 }
 
+interface Page<R> {
+  items: R[];
+  nextToken: string | undefined;
+}
+
+/**
+ * Loop on `nextToken` until either the per-type cap is reached or AWS stops
+ * paginating. AWS Compute Optimizer's `maxResults` parameter is per-page
+ * (typical max 100) and pagination is required to honour `maxItemsPerType`.
+ */
+async function paginate<R>(
+  caller: (nextToken: string | undefined, pageSize: number) => Promise<Page<R>>,
+  cap: number,
+): Promise<R[]> {
+  const collected: R[] = [];
+  let nextToken: string | undefined;
+  // AWS Compute Optimizer caps maxResults at 100 for most operations.
+  const PAGE_LIMIT = 100;
+  do {
+    const remaining = cap - collected.length;
+    if (remaining <= 0) break;
+    const pageSize = Math.min(PAGE_LIMIT, remaining);
+    const page = await caller(nextToken, pageSize);
+    collected.push(...page.items);
+    nextToken = page.nextToken;
+  } while (nextToken && collected.length < cap);
+  return collected.slice(0, cap);
+}
+
 async function callRegion(
   client: ComputeOptimizerClient,
   region: string,
@@ -271,78 +318,103 @@ async function callRegion(
   optInRequired: boolean;
   accessDenied: boolean;
   missingPermission: string | null;
+  /** Per-type errors that were neither opt-in nor access-denied (throttling, regional, network). */
+  otherErrors: Array<{ resourceType: ResourceTypeKey; message: string }>;
 }> {
   const items: NormalizedRecommendation[] = [];
   let optInRequired = false;
   let accessDenied = false;
   let missingPermission: string | null = null;
+  const otherErrors: Array<{ resourceType: ResourceTypeKey; message: string }> = [];
 
+  // Each fetcher pages through nextToken until the per-type cap is reached.
   const callsByType: Record<ResourceTypeKey, () => Promise<NormalizedRecommendation[]>> = {
     ec2: async () => {
-      const out = await client.send(new GetEC2InstanceRecommendationsCommand({ maxResults: maxItems }));
-      return (out.instanceRecommendations ?? [])
-        .map((r) => normalizeEc2(r as unknown as Record<string, unknown>, region))
+      const raw = await paginate<unknown>(async (nextToken, pageSize) => {
+        const out = await client.send(new GetEC2InstanceRecommendationsCommand({ maxResults: pageSize, nextToken }));
+        return { items: out.instanceRecommendations ?? [], nextToken: out.nextToken };
+      }, maxItems);
+      return raw
+        .map((r) => normalizeEc2(r as Record<string, unknown>, region))
         .filter((x): x is NormalizedRecommendation => x !== null);
     },
     asg: async () => {
-      const out = await client.send(new GetAutoScalingGroupRecommendationsCommand({ maxResults: maxItems }));
-      return (out.autoScalingGroupRecommendations ?? [])
-        .map((r) => normalizeAsg(r as unknown as Record<string, unknown>, region))
+      const raw = await paginate<unknown>(async (nextToken, pageSize) => {
+        const out = await client.send(new GetAutoScalingGroupRecommendationsCommand({ maxResults: pageSize, nextToken }));
+        return { items: out.autoScalingGroupRecommendations ?? [], nextToken: out.nextToken };
+      }, maxItems);
+      return raw
+        .map((r) => normalizeAsg(r as Record<string, unknown>, region))
         .filter((x): x is NormalizedRecommendation => x !== null);
     },
     ebs: async () => {
-      const out = await client.send(new GetEBSVolumeRecommendationsCommand({ maxResults: maxItems }));
-      return (out.volumeRecommendations ?? [])
-        .map((r) => normalizeEbs(r as unknown as Record<string, unknown>, region))
+      const raw = await paginate<unknown>(async (nextToken, pageSize) => {
+        const out = await client.send(new GetEBSVolumeRecommendationsCommand({ maxResults: pageSize, nextToken }));
+        return { items: out.volumeRecommendations ?? [], nextToken: out.nextToken };
+      }, maxItems);
+      return raw
+        .map((r) => normalizeEbs(r as Record<string, unknown>, region))
         .filter((x): x is NormalizedRecommendation => x !== null);
     },
     lambda: async () => {
-      const out = await client.send(new GetLambdaFunctionRecommendationsCommand({ maxResults: maxItems }));
-      return (out.lambdaFunctionRecommendations ?? [])
-        .map((r) => normalizeLambda(r as unknown as Record<string, unknown>, region))
+      const raw = await paginate<unknown>(async (nextToken, pageSize) => {
+        const out = await client.send(new GetLambdaFunctionRecommendationsCommand({ maxResults: pageSize, nextToken }));
+        return { items: out.lambdaFunctionRecommendations ?? [], nextToken: out.nextToken };
+      }, maxItems);
+      return raw
+        .map((r) => normalizeLambda(r as Record<string, unknown>, region))
         .filter((x): x is NormalizedRecommendation => x !== null);
     },
     ecs: async () => {
-      const out = await client.send(new GetECSServiceRecommendationsCommand({ maxResults: maxItems }));
-      return (out.ecsServiceRecommendations ?? [])
-        .map((r) => normalizeEcs(r as unknown as Record<string, unknown>, region))
+      const raw = await paginate<unknown>(async (nextToken, pageSize) => {
+        const out = await client.send(new GetECSServiceRecommendationsCommand({ maxResults: pageSize, nextToken }));
+        return { items: out.ecsServiceRecommendations ?? [], nextToken: out.nextToken };
+      }, maxItems);
+      return raw
+        .map((r) => normalizeEcs(r as Record<string, unknown>, region))
         .filter((x): x is NormalizedRecommendation => x !== null);
     },
     rds: async () => {
-      const out = await client.send(new GetRDSDatabaseRecommendationsCommand({ maxResults: maxItems }));
-      return (out.rdsDBRecommendations ?? [])
-        .flatMap((r) => normalizeRds(r as unknown as Record<string, unknown>, region));
+      const raw = await paginate<unknown>(async (nextToken, pageSize) => {
+        const out = await client.send(new GetRDSDatabaseRecommendationsCommand({ maxResults: pageSize, nextToken }));
+        return { items: out.rdsDBRecommendations ?? [], nextToken: out.nextToken };
+      }, maxItems);
+      return raw.flatMap((r) => normalizeRds(r as Record<string, unknown>, region));
     },
   };
 
-  const throttledCall = coThrottle(async (t: ResourceTypeKey): Promise<NormalizedRecommendation[]> => {
-    const operation = OPERATION_NAMES[t] ?? `Get${t}Recommendations`;
-    const ts = Date.now();
+  // Tag each call with its resource type so errors can be attributed and
+  // surfaced in `otherErrors` rather than silently dropped.
+  const tagged = await Promise.all(types.map(async (t): Promise<
+    | { type: ResourceTypeKey; status: 'ok'; items: NormalizedRecommendation[] }
+    | { type: ResourceTypeKey; status: 'opt_in' }
+    | { type: ResourceTypeKey; status: 'access_denied'; missingPermission: string | null }
+    | { type: ResourceTypeKey; status: 'error'; message: string }
+  > => {
     try {
-      const result = await callsByType[t]();
-      logApiCall({ service: 'compute-optimizer', operation, region, timestamp: new Date(ts).toISOString(), durationMs: Date.now() - ts, estimatedCost: 0 });
-      return result;
+      const fetched = await throttledCoCall(callsByType[t], OPERATION_NAMES[t] ?? `Get${t}Recommendations`, region);
+      return { type: t, status: 'ok', items: fetched };
     } catch (err) {
-      logApiCall({ service: 'compute-optimizer', operation, region, timestamp: new Date(ts).toISOString(), durationMs: Date.now() - ts, estimatedCost: 0, error: String(err) });
-      throw err;
+      if (isOptInRequired(err)) return { type: t, status: 'opt_in' };
+      if (isAccessDenied(err)) return { type: t, status: 'access_denied', missingPermission: extractMissingPermission(err) };
+      const e = err as { name?: string; message?: string } | undefined;
+      return { type: t, status: 'error', message: e?.message ?? e?.name ?? 'unknown error' };
     }
-  });
+  }));
 
-  const results = await Promise.allSettled(types.map((t) => throttledCall(t)));
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      items.push(...result.value);
-    } else if (isOptInRequired(result.reason)) {
-      optInRequired = true;
-    } else if (isAccessDenied(result.reason)) {
+  for (const r of tagged) {
+    if (r.status === 'ok') items.push(...r.items);
+    else if (r.status === 'opt_in') optInRequired = true;
+    else if (r.status === 'access_denied') {
       accessDenied = true;
-      missingPermission = missingPermission ?? extractMissingPermission(result.reason);
+      missingPermission = missingPermission ?? r.missingPermission;
     } else {
-      logger.debug({ err: result.reason, region }, '[compute-optimizer] per-type call failed');
+      otherErrors.push({ resourceType: r.type, message: r.message });
+      logger.debug({ err: r.message, region, resourceType: r.type }, '[compute-optimizer] per-type call failed');
     }
   }
 
-  return { items, optInRequired, accessDenied, missingPermission };
+  return { items, optInRequired, accessDenied, missingPermission, otherErrors };
 }
 
 export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
@@ -397,24 +469,31 @@ export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
       let anyOptInRequired = false;
       let anyAccessDenied = false;
       let firstMissingPermission: string | null = null;
+      const warnings: string[] = [];
 
       const perRegion = await Promise.allSettled(
         regions.map(async (region) => {
           const client = new ComputeOptimizerClient({ region, credentials });
-          return callRegion(client, region, types, maxItems);
+          return { region, result: await callRegion(client, region, types, maxItems) };
         }),
       );
 
-      for (const result of perRegion) {
-        if (result.status === 'fulfilled') {
-          allRecommendations.push(...result.value.items);
-          if (result.value.optInRequired) anyOptInRequired = true;
-          if (result.value.accessDenied) {
+      for (const settled of perRegion) {
+        if (settled.status === 'fulfilled') {
+          const { region, result } = settled.value;
+          allRecommendations.push(...result.items);
+          if (result.optInRequired) anyOptInRequired = true;
+          if (result.accessDenied) {
             anyAccessDenied = true;
-            firstMissingPermission = firstMissingPermission ?? result.value.missingPermission;
+            firstMissingPermission = firstMissingPermission ?? result.missingPermission;
+          }
+          for (const e of result.otherErrors) {
+            warnings.push(`${region}/${e.resourceType}: ${e.message}`);
           }
         } else {
-          logger.debug({ err: result.reason }, '[compute-optimizer] per-region call failed');
+          const reason = settled.reason as { name?: string; message?: string } | undefined;
+          warnings.push(`region failed: ${reason?.message ?? reason?.name ?? 'unknown error'}`);
+          logger.debug({ err: settled.reason }, '[compute-optimizer] per-region call failed');
         }
       }
 
@@ -454,6 +533,19 @@ export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
         });
       }
 
+      // If everything failed for some other reason (throttling, regional outage,
+      // network) we'd otherwise return a misleading `status: 'ok'` with zero
+      // recommendations. Surface it as a partial-failure status instead.
+      if (allRecommendations.length === 0 && warnings.length > 0) {
+        return jsonResult(redactObject({
+          source: 'compute-optimizer',
+          status: 'partial_failure',
+          message: 'All Compute Optimizer calls failed; no recommendations could be retrieved.',
+          regions,
+          warnings,
+        }, 'moderate'));
+      }
+
       const byType: Partial<Record<ResourceTypeKey, number>> = {};
       let estimatedMonthlySavingsUsd = 0;
       for (const r of allRecommendations) {
@@ -468,7 +560,9 @@ export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
 
       return jsonResult(redactObject({
         source: 'compute-optimizer',
-        status: 'ok',
+        // If we got recommendations but also some failures, mark as partial so
+        // consumers (CI especially) know the dataset is incomplete.
+        status: warnings.length > 0 ? 'partial' : 'ok',
         regions,
         summary: {
           total: sorted.length,
@@ -476,6 +570,7 @@ export const getComputeOptimizerRecommendationsTool: ToolDefinition = {
           estimatedMonthlySavingsUsd,
         },
         recommendations: sorted,
+        ...(warnings.length > 0 ? { warnings } : {}),
       }, 'moderate'));
     } catch (err) {
       if (isOptInRequired(err)) {

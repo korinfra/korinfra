@@ -158,7 +158,7 @@ Or if you have korinfra installed globally:
 
 ## Tools (21)
 
-20 tools are shared between agent mode (in-process) and MCP server mode (external clients). Two additional tools are restricted: `git_commit_push` (exclusively for `fix` command agent, not exposed via MCP) and `apply_tags_real` (only callable via TUI confirmation gate, not exposed via MCP).
+21 tools are shared between agent mode (in-process) and MCP server mode (external clients). Two additional tools are restricted: `git_commit_push` (exclusively for `fix` command agent, not exposed via MCP) and `apply_tags_real` (only callable via TUI confirmation gate, not exposed via MCP).
 
 | Tool | Description |
 |---|---|
