@@ -39,6 +39,7 @@ korinfra recommend   # browse saved recommendations from DB
 korinfra history     # scan history (list/show/diff)
 korinfra tags        # tag compliance audit (list mode)
 korinfra report      # export to JSON/CSV/HTML from DB
+korinfra rules list  # inspect built-in cost optimization rules (no AWS, no DB)
 
 # These commands require AI:
 korinfra fix               # needs AI for Terraform patch generation

@@ -31,6 +31,8 @@ import { createAgentProvider } from '../agent/index.js';
 import { runHeadlessAgent } from './headless-agent.js';
 import { getDb } from '../storage/index.js';
 import { PricingCache } from '../pricing/index.js';
+import { listRules } from '../rules/registry.js';
+import type { RuleInfo } from '../rules/types.js';
 import { getRecommendationById, listPendingRecommendations, listRecommendations } from '../storage/queries/recommendations.js';
 import { buildAgentPrompt, detectGitHubRepo } from './commands/fix-core.js';
 import { fixTools } from '../tools/index.js';
@@ -165,6 +167,81 @@ function writeLines(lines: string[]): void {
   for (const line of lines) {
     process.stdout.write(`${line}\n`);
   }
+}
+
+type Severity = 'low' | 'medium' | 'high';
+
+function isSeverity(value: string): value is Severity {
+  return value === 'low' || value === 'medium' || value === 'high';
+}
+
+interface RulesFilters {
+  text: string | null;
+  impact: Severity | null;
+  risk: Severity | null;
+}
+
+function applyRulesFilter(rules: readonly RuleInfo[], filters: RulesFilters): RuleInfo[] {
+  const t = filters.text !== null && filters.text !== '' ? filters.text.toLowerCase() : null;
+  return rules.filter((r) => {
+    if (t !== null
+      && r.category.toLowerCase() !== t
+      && !r.id.toLowerCase().startsWith(t)) return false;
+    if (filters.impact !== null && r.impact !== filters.impact) return false;
+    if (filters.risk !== null && r.risk !== filters.risk) return false;
+    return true;
+  });
+}
+
+/**
+ * Returns true when `flag` appears in args without a following value (or with a
+ * value that starts with `-`, which `parseArg` already rejects). This lets
+ * callers distinguish "flag absent" from "flag present but missing value" —
+ * the latter is a usage error rather than a silent no-op for required-value
+ * flags like `--filter`, `--impact`, `--risk`.
+ */
+function isFlagWithoutValue(args: string[], flag: string): boolean {
+  const idx = args.findIndex((a) => a === flag);
+  if (idx === -1) return false;
+  const next = args[idx + 1];
+  return next === undefined || next.startsWith('-');
+}
+
+function parseRulesFilters(commandArgs: string[]): RulesFilters | { error: string } {
+  const REQUIRED_VALUE_EXAMPLES: Record<string, string> = {
+    '--filter': '--filter ec2',
+    '--impact': '--impact high',
+    '--risk': '--risk high',
+  };
+  for (const flag of ['--filter', '--impact', '--risk']) {
+    if (isFlagWithoutValue(commandArgs, flag)) {
+      const example = REQUIRED_VALUE_EXAMPLES[flag] ?? '';
+      return { error: `${flag} requires a value (e.g. ${example}).` };
+    }
+  }
+  const filterRaw = parseArg(commandArgs, '--filter');
+  const text = filterRaw === null ? null : (filterRaw.trim() === '' ? null : filterRaw.trim());
+  const impactRaw = parseArg(commandArgs, '--impact');
+  const riskRaw = parseArg(commandArgs, '--risk');
+  if (impactRaw !== null && !isSeverity(impactRaw.toLowerCase())) {
+    return { error: `Invalid --impact "${impactRaw}". Use low, medium, or high.` };
+  }
+  if (riskRaw !== null && !isSeverity(riskRaw.toLowerCase())) {
+    return { error: `Invalid --risk "${riskRaw}". Use low, medium, or high.` };
+  }
+  return {
+    text,
+    impact: impactRaw === null ? null : impactRaw.toLowerCase() as Severity,
+    risk: riskRaw === null ? null : riskRaw.toLowerCase() as Severity,
+  };
+}
+
+function describeActiveFilters(filters: RulesFilters): string[] {
+  const parts: string[] = [];
+  if (filters.text !== null) parts.push(`filter=${filters.text}`);
+  if (filters.impact !== null) parts.push(`impact=${filters.impact}`);
+  if (filters.risk !== null) parts.push(`risk=${filters.risk}`);
+  return parts;
 }
 
 // ─── Headless: text output ────────────────────────────────────────────────────
@@ -1075,6 +1152,66 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     return true;
   }
 
+  if (command === 'rules') {
+    const firstArg = commandArgs[0];
+    const subcommand = firstArg === undefined || firstArg.startsWith('-') ? 'list' : firstArg;
+    if (subcommand !== 'list') {
+      writeLines([
+        `korinfra rules ${subcommand}: unknown subcommand.`,
+        '',
+        'Usage:',
+        '  korinfra rules list',
+        '  korinfra rules list --json',
+        '  korinfra rules list --filter <category-or-id-prefix>',
+        '  korinfra rules list --impact high   (also: low, medium)',
+        '  korinfra rules list --risk high     (also: low, medium)',
+      ]);
+      process.exitCode = 2;
+      return true;
+    }
+
+    const filtersResult = parseRulesFilters(commandArgs);
+    if ('error' in filtersResult) {
+      writeLines([`korinfra rules list: ${filtersResult.error}`]);
+      process.exitCode = 2;
+      return true;
+    }
+    const filters = filtersResult;
+    const allRules = listRules();
+    const filtered = applyRulesFilter(allRules, filters);
+    const activeFilters = describeActiveFilters(filters);
+
+    const lines: string[] = ['korinfra rules'];
+    if (activeFilters.length > 0) lines.push(`Filters: ${activeFilters.join(', ')}`);
+    lines.push(`Rules: ${filtered.length}${activeFilters.length > 0 ? ` of ${allRules.length}` : ''}`);
+    lines.push('');
+
+    if (filtered.length === 0) {
+      lines.push(`(no rules match ${activeFilters.length > 0 ? activeFilters.join(', ') : 'the active filters'})`);
+      lines.push('');
+    } else {
+      const byCategory = new Map<string, RuleInfo[]>();
+      for (const rule of filtered) {
+        const arr = byCategory.get(rule.category) ?? [];
+        arr.push(rule);
+        byCategory.set(rule.category, arr);
+      }
+      for (const [category, rules] of [...byCategory.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+        lines.push(`${category.toUpperCase()} (${rules.length})`);
+        for (const rule of rules) {
+          lines.push(`  ${rule.id}  [impact=${rule.impact} risk=${rule.risk}]  ${rule.title}`);
+        }
+        lines.push('');
+      }
+    }
+
+    lines.push('Next:');
+    lines.push('- korinfra rules list --json   (machine-readable output)');
+    lines.push('- korinfra scan                (run all rules against AWS)');
+    writeLines(lines);
+    return true;
+  }
+
   return false;
 }
 
@@ -1923,6 +2060,53 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
       durationMs: Date.now() - startMs,
     }, null, 2) + '\n');
     return agentResult.aborted ? 1 : 0;
+  }
+
+  if (command === 'rules') {
+    const firstArg = commandArgs[0];
+    const subcommand = firstArg === undefined || firstArg.startsWith('-') ? 'list' : firstArg;
+    if (subcommand !== 'list') {
+      process.stdout.write(JSON.stringify({
+        command: `rules ${subcommand}`,
+        status: 'error',
+        error: `Unknown subcommand "${subcommand}". Supported: list`,
+      }, null, 2) + '\n');
+      return 2;
+    }
+
+    const filtersResult = parseRulesFilters(commandArgs);
+    if ('error' in filtersResult) {
+      process.stdout.write(JSON.stringify({
+        command: 'rules list',
+        status: 'error',
+        error: filtersResult.error,
+      }, null, 2) + '\n');
+      return 2;
+    }
+    const filters = filtersResult;
+    const allRules = listRules();
+    const filtered = applyRulesFilter(allRules, filters);
+
+    const out = {
+      command: 'rules list',
+      status: 'completed',
+      ...(filters.text !== null ? { filter: filters.text } : {}),
+      ...(filters.impact !== null ? { impact: filters.impact } : {}),
+      ...(filters.risk !== null ? { risk: filters.risk } : {}),
+      summary: {
+        total: filtered.length,
+        totalAllRules: allRules.length,
+      },
+      // `total` at top-level mirrors the shape proposed in issue #25, while
+      // `summary.total` keeps consistency with other commands' JSON envelopes.
+      total: filtered.length,
+      rules: filtered,
+      next: [
+        { label: 'run rules against AWS', command: 'korinfra scan' },
+      ],
+    };
+    process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+    return 0;
   }
 
   return false;

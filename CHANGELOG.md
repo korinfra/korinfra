@@ -2,6 +2,21 @@
 
 All notable changes to KorInfra are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **`korinfra rules list`** — headless command that prints the catalog of built-in
+  cost optimization rules. Supports `--json` for machine-readable output, plus
+  three composable filters: `--filter <category-or-id-prefix>` (e.g. `ec2`,
+  `rds`, `LAM`), `--impact <low|medium|high>`, and `--risk <low|medium|high>`.
+  Enables CI/CD compliance gates
+  (`korinfra rules list --json | jq -e '.rules[] | select(.id=="EC2-012")'`) and
+  automated regeneration of the rule catalog in `docs/rules.md` from the
+  binary's own output. JSON shape exposes `total` at the top level for issue
+  #25 compatibility and `summary.total` for consistency with other commands.
+  Closes #25.
+
 ## [0.1.2] — 2026-05-17
 
 A reliability and hardening release. No breaking changes — safe to upgrade from `0.1.0`:
