@@ -435,6 +435,7 @@ describe('loadThresholds() — file safety', () => {
   });
 
   it('refuses to follow a symlink at the thresholds.yaml path', async () => {
+    if (process.platform === 'win32') return; // symlinkSync requires elevation on Windows
     const realFile = path.join(tmpDir, 'attacker.yaml');
     const linkPath = path.join(tmpDir, 'thresholds.yaml');
     fs.writeFileSync(realFile, 'scan:\n  lookback_days: 99\n', { mode: 0o600 });

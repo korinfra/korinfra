@@ -252,6 +252,19 @@ export const semanticColors = NO_COLOR
       },
     } as const;
 
+// ─── Severity color helper ────────────────────────────────────────────────
+// Maps a lowercase severity string to its semantic color token.
+// Returns undefined for unknown values (renders in default terminal color).
+
+export function getSeverityColor(level: string): string | undefined {
+  const v = level.toLowerCase();
+  if (v === 'critical') return semanticColors.severity.critical;
+  if (v === 'high') return semanticColors.severity.high;
+  if (v === 'medium') return semanticColors.severity.medium;
+  if (v === 'low') return semanticColors.severity.low;
+  return undefined;
+}
+
 // ─── Scroll indicators ─────────────────────────────────────────────────────
 // Consistent scroll indicators across all scrollable views.
 

@@ -3,6 +3,7 @@ import { getCredentials } from '../aws/credentials.js';
 import { redactObject } from '../redaction/index.js';
 import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition } from './types.js';
+import { formatDateISO } from '../utils/date.js';
 
 export const getRiCoverageTool: ToolDefinition = {
   name: 'get_ri_coverage',
@@ -28,10 +29,9 @@ export const getRiCoverageTool: ToolDefinition = {
 
       const endDate = new Date();
       const startDate = new Date(endDate.getTime() - days * 86_400_000);
-      const fmt = (d: Date): string => d.toISOString().slice(0, 10);
 
       const result = await client.send(new GetReservationCoverageCommand({
-        TimePeriod: { Start: fmt(startDate), End: fmt(endDate) },
+        TimePeriod: { Start: formatDateISO(startDate), End: formatDateISO(endDate) },
         GroupBy: [
           { Type: 'DIMENSION', Key: 'SERVICE' },
           { Type: 'DIMENSION', Key: 'REGION' },

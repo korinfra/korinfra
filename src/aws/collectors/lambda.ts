@@ -4,6 +4,7 @@ import { ResourceGroupsTaggingAPIClient, GetResourcesCommand } from '@aws-sdk/cl
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import type { Resource } from '../types.js';
 import { throttledCall } from '../rate-limiter.js';
+import { buildCmdOptions, extractNextToken } from '../utils.js';
 import { logger } from '../../utils/logger.js';
 import { dbg } from '../debug.js';
 
@@ -23,9 +24,9 @@ async function listAllFunctions(
     dbg(`    lambda ListFunctions page:${pageCount + 1} start — region:${region} soFar:${resources.length}`);
     const t_lf = Date.now();
     const out = await throttledCall('lambda', 'ListFunctions', region, () =>
-      client.send(new ListFunctionsCommand({ Marker: marker }), { ...(signal ? { abortSignal: signal } : {}) }),
+      client.send(new ListFunctionsCommand({ Marker: marker }), buildCmdOptions(signal)),
     );
-    marker = out.NextMarker ?? undefined;
+    marker = extractNextToken(out.NextMarker);
     pageCount++;
     dbg(`    lambda ListFunctions page:${pageCount} done — ${Date.now() - t_lf}ms inPage:${out.Functions?.length ?? 0} hasMore:${Boolean(marker)}`);
 
@@ -95,7 +96,7 @@ async function fetchLambdaTags(
         taggingClient.send(new GetResourcesCommand({
           ResourceTypeFilters: ['lambda:function'],
           PaginationToken: paginationToken,
-        }), { ...(signal ? { abortSignal: signal } : {}) }),
+        }), buildCmdOptions(signal)),
       );
       tagPage++;
       dbg(`    lambda GetResources(tags) page:${tagPage} done — ${Date.now() - t_tg}ms resources:${out.ResourceTagMappingList?.length ?? 0} hasMore:${Boolean(out.PaginationToken)}`);
@@ -106,7 +107,7 @@ async function fetchLambdaTags(
           Object.fromEntries((r.Tags ?? []).map((t) => [t.Key ?? '', t.Value ?? ''])),
         );
       }
-      paginationToken = out.PaginationToken ?? undefined;
+      paginationToken = extractNextToken(out.PaginationToken);
     } catch (err) {
       logger.debug({ err }, 'lambda bulk tag fetch: non-fatal');
       break;

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   estimateEC2Cost,
   estimateEBSCost,
@@ -136,5 +136,96 @@ describe('estimateELBCost', () => {
     expect(await estimateELBCost(null, 'us-east-1', 'gateway')).toBeCloseTo((0.0125 + 0.004) * 730);
     expect(await estimateELBCost(null, 'us-east-1', 'classic')).toBeCloseTo(0.025 * 730);
     expect(await estimateELBCost(null, 'us-east-1', 'unknown')).toBeCloseTo(0.025 * 730);
+  });
+});
+
+// ─── RDS with live pricing client ────────────────────────────────────────────
+
+describe('estimateRDSCost with live pricing client (multiAZ doubling fix)', () => {
+  it('uses live pricing directly when client returns non-null (no doubling even if multiAZ=true)', async () => {
+    // Mock client that returns a live hourly price of 0.5
+    const mockClient = {
+      getOnDemandPrice: vi.fn().mockResolvedValue(0.5),
+    };
+
+    const cost = await estimateRDSCost(
+      mockClient as any,
+      'db.m5.large',
+      'mysql',
+      true,
+      100,
+      'us-east-1',
+      'gp3',
+      0,
+    );
+
+    // Expected: 0.5 * 730 (hourly from live pricing) + 100 * 0.115 (gp3 storage)
+    // Live pricing already includes multiAZ, so NO doubling applied
+    expect(cost).toBeCloseTo(0.5 * 730 + 100 * 0.115, 1);
+  });
+
+  it('applies doubling to fallback price when client returns null and multiAZ=true', async () => {
+    const mockClient = {
+      getOnDemandPrice: vi.fn().mockResolvedValue(null),
+    };
+
+    const cost = await estimateRDSCost(
+      mockClient as any,
+      'db.m5.large',
+      'mysql',
+      true,
+      100,
+      'us-east-1',
+      'gp3',
+      0,
+    );
+
+    // Fallback price for db.m5.large is 0.171, doubled to 0.342 for multiAZ
+    // Expected: 0.171 * 2 * 730 + 100 * 0.115
+    expect(cost).toBeCloseTo(0.171 * 2 * 730 + 100 * 0.115, 1);
+  });
+
+  it('does not apply doubling when multiAZ=false, regardless of client', async () => {
+    const mockClient = {
+      getOnDemandPrice: vi.fn().mockResolvedValue(null),
+    };
+
+    const cost = await estimateRDSCost(
+      mockClient as any,
+      'db.m5.large',
+      'mysql',
+      false,
+      100,
+      'us-east-1',
+      'gp3',
+      0,
+    );
+
+    // Fallback price is 0.171, no doubling because multiAZ=false
+    // Expected: 0.171 * 730 + 100 * 0.115
+    expect(cost).toBeCloseTo(0.171 * 730 + 100 * 0.115, 1);
+  });
+
+  it('correctly uses cache key with multiAZ flag when querying client', async () => {
+    const mockClient = {
+      getOnDemandPrice: vi.fn().mockResolvedValue(0.5),
+    };
+
+    await estimateRDSCost(
+      mockClient as any,
+      'db.m5.large',
+      'mysql',
+      true,
+      0,
+      'us-east-1',
+    );
+
+    // Verify that the client was called with the correct arguments
+    expect(mockClient.getOnDemandPrice).toHaveBeenCalledWith(
+      'AmazonRDS',
+      'db.m5.large:mysql',
+      'us-east-1',
+      true,
+    );
   });
 });

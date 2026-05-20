@@ -148,7 +148,7 @@ function McpInstallWizard({
       }
 
       if (step === 'scope') {
-        if (input === 'b' || key.escape) { setStep('ide'); return; }
+        if (input === 'b' || key.escape) { setStep('ide'); setScopeIdx(0); return; }
         if (key.upArrow) { setScopeIdx((i) => Math.max(0, i - 1)); return; }
         if (key.downArrow) { setScopeIdx((i) => Math.min(1, i + 1)); return; }
         if (key.return) {

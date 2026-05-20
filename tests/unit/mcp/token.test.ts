@@ -168,7 +168,8 @@ describe('persistTokenData (atomic write)', () => {
     // Write goes to a sibling .tmp-... path, NOT the final path.
     expect(writeSpy).toHaveBeenCalledOnce();
     const writtenPath = String(writeSpy.mock.calls[0]?.[0]);
-    expect(writtenPath).toMatch(new RegExp(`^${getTokenFilePath()}\\.tmp-\\d+-\\d+-[0-9a-f]+$`));
+    const escapedBase = getTokenFilePath().replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+    expect(writtenPath).toMatch(new RegExp(`^${escapedBase}\\.tmp-\\d+-\\d+-[0-9a-f]+$`));
     expect(writeSpy.mock.calls[0]?.[1]).toBe(JSON.stringify({ token: VALID_TOKEN_64, version: 7 }));
     expect(writeSpy.mock.calls[0]?.[2]).toEqual({ mode: 0o600, encoding: 'utf8' });
 

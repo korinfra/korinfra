@@ -7,7 +7,7 @@ import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { strConfig, boolConfig, numConfig, daysSince, sanitizeResourceName, normalizeToMonth, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization } from './helpers.js';
+import { strConfig, boolConfig, numConfig, daysSince, sanitizeResourceName, normalizeToMonth, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization, CONF_LIKELY, CONF_PROBABLE } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { HOURS_PER_MONTH, ALB_BASE_HOURLY } from '../../pricing/resources.js';
 
@@ -38,7 +38,7 @@ export function checkELB001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
     risk: 'low',
     estimatedSavings: guardSavings(monthlyCost),
     suggestedAction: 'delete',
-    confidence: clampConfidence(0.9),
+    confidence: clampConfidence(CONF_LIKELY),
     filePath,
     currentConfig: { healthy_target_count: 0, type: r.type },
     suggestedConfig: { action: 'delete' },
@@ -108,7 +108,7 @@ export function checkELB002(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_to_alb',
-    confidence: clampConfidence(0.85),
+    confidence: clampConfidence(CONF_PROBABLE),
     filePath,
     currentConfig: { lb_type: 'classic' },
     suggestedConfig: { lb_type: 'application' },
@@ -143,7 +143,7 @@ export function checkELB003(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'add_https_listener',
-    confidence: clampConfidence(0.9),
+    confidence: clampConfidence(CONF_LIKELY),
     filePath,
     currentConfig: { has_https_listener: false, lb_type: 'application' },
     suggestedConfig: { has_https_listener: true },

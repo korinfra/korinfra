@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useInitialRunDone } from '../hooks/useInitialRunDone.js';
 
-import { Box, Text, useApp, useInput, useStdout } from 'ink';
+import { Box, Text, useApp, useStdout } from 'ink';
 
 
 import { defaultStoragePath } from '../../config/paths.js';
@@ -20,7 +20,7 @@ import { BADGE_PASS, BADGE_FAIL, BADGE_WARN, DOT_SEP } from '../ui/text.js';
 import { useTuiViewportLayout } from '../hooks/useTuiViewportLayout.js';
 import type { ActionHint, TuiAction } from '../actions.js';
 import { truncateWidth } from '../ui/width.js';
-import { useGlobalOverlay } from '../hooks/useGlobalOverlay.js';
+import { useOverlayAwareInput } from '../hooks/useOverlayAwareInput.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,7 +80,6 @@ export interface DoctorCommandProps {
 
 export function DoctorCommand({ onBack, onAction }: DoctorCommandProps): React.JSX.Element {
   const { exit } = useApp();
-  const { helpOpen, paletteOpen } = useGlobalOverlay();
   const { stdout } = useStdout();
   const storagePath = defaultStoragePath();
   const checkDefs = useMemo(() => buildChecks(storagePath), [storagePath]);
@@ -106,7 +105,7 @@ export function DoctorCommand({ onBack, onAction }: DoctorCommandProps): React.J
   );
   const [done, setDone] = useState(initialDone);
   const [cancelled, setCancelled] = useState(false);
-  const [runKey] = useState(0);
+  const runKey = 0;
   const [selectedCheckIdx, setSelectedCheckIdx] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
   const startTimeRef = useRef<number>(Date.now());
@@ -120,10 +119,10 @@ export function DoctorCommand({ onBack, onAction }: DoctorCommandProps): React.J
       setElapsedMs(Date.now() - startTimeRef.current);
     }, 1000);
     return () => clearInterval(interval);
-  }, [runKey, done, cancelled]);
+  }, [done, cancelled]);
 
 
-  useInput((input, key) => {
+  useOverlayAwareInput((input, key) => {
     if (input === 'q') exit();
     if (key.upArrow) {
       setSelectedCheckIdx((i) => Math.max(0, i - 1));
@@ -157,7 +156,7 @@ export function DoctorCommand({ onBack, onAction }: DoctorCommandProps): React.J
       }
       if (onBack !== undefined) onBack();
     }
-  }, { isActive: !helpOpen && !paletteOpen });
+  });
 
   useEffect(() => {
     // If this is a remount (e.g. after HelpOverlay close or

@@ -3,6 +3,7 @@ import { ListTablesCommand, DescribeTableCommand, ListTagsOfResourceCommand } fr
 import pLimit from 'p-limit';
 import type { Resource } from '../types.js';
 import { throttledCall } from '../rate-limiter.js';
+import { buildCmdOptions, extractNextToken } from '../utils.js';
 import { dbg } from '../debug.js';
 
 async function listTables(
@@ -16,10 +17,7 @@ async function listTables(
   do {
     dbg(`    dynamodb ListTables page:${pageNum + 1} start — region:${region} soFar:${acc.length}`);
     const t_lt = Date.now();
-    const cmdOptions: Record<string, unknown> = {};
-    if (signal) {
-      cmdOptions['abortSignal'] = signal;
-    }
+    const cmdOptions = buildCmdOptions(signal);
     const out = await throttledCall('dynamodb', 'ListTables', region, () =>
       client.send(
         new ListTablesCommand({ ExclusiveStartTableName: token }),
@@ -28,7 +26,7 @@ async function listTables(
     );
     pageNum++;
     acc.push(...(out.TableNames ?? []));
-    token = out.LastEvaluatedTableName ?? undefined;
+    token = extractNextToken(out.LastEvaluatedTableName);
     dbg(`    dynamodb ListTables page:${pageNum} done — ${Date.now() - t_lt}ms inPage:${out.TableNames?.length ?? 0} hasMore:${Boolean(token)}`);
   } while (token !== undefined);
   return acc;
@@ -54,10 +52,7 @@ async function describeTableOnly(
   name: string,
   signal?: AbortSignal,
 ): Promise<TableDescribeResult> {
-  const cmdOptions: Record<string, unknown> = {};
-  if (signal) {
-    cmdOptions['abortSignal'] = signal;
-  }
+  const cmdOptions = buildCmdOptions(signal);
   const out = await throttledCall('dynamodb', 'DescribeTable', region, () =>
     client.send(new DescribeTableCommand({ TableName: name }), cmdOptions),
   );
@@ -91,10 +86,7 @@ async function fetchTableTags(
   signal?: AbortSignal,
 ): Promise<Record<string, string>> {
   try {
-    const cmdOptions: Record<string, unknown> = {};
-    if (signal) {
-      cmdOptions['abortSignal'] = signal;
-    }
+    const cmdOptions = buildCmdOptions(signal);
     const tagsOut = await throttledCall('dynamodb', 'ListTagsOfResource', region, () =>
       client.send(new ListTagsOfResourceCommand({ ResourceArn: arn }), cmdOptions),
     );

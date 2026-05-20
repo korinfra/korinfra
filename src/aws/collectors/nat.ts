@@ -2,14 +2,9 @@ import { DescribeNatGatewaysCommand } from '@aws-sdk/client-ec2';
 import type { EC2Client} from '@aws-sdk/client-ec2';
 import type { Resource } from '../types.js';
 import { throttledCall } from '../rate-limiter.js';
-import { tagsToMap } from '../utils.js';
+import { tagsToMap, buildCmdOptions, extractNextToken, isValidAccountId } from '../utils.js';
 import { logger } from '../../utils/logger.js';
 import { dbg } from '../debug.js';
-
-/** Validate account ID is a non-empty string. */
-function isValidAccountId(accountId: string | undefined): accountId is string {
-  return typeof accountId === 'string' && accountId.length > 0;
-}
 
 export async function collectNATGateways(
   client: EC2Client,
@@ -26,9 +21,9 @@ export async function collectNATGateways(
     dbg(`    nat DescribeNatGateways page:${pageNum + 1} start — region:${region} soFar:${resources.length}`);
     const t_nat = Date.now();
     const out = await throttledCall('ec2', 'DescribeNatGateways', region, () =>
-      client.send(new DescribeNatGatewaysCommand({ NextToken: nextToken }), { ...(signal ? { abortSignal: signal } : {}) }),
+      client.send(new DescribeNatGatewaysCommand({ NextToken: nextToken }), buildCmdOptions(signal)),
     );
-    nextToken = out.NextToken ?? undefined;
+    nextToken = extractNextToken(out.NextToken);
     pageNum++;
     dbg(`    nat DescribeNatGateways page:${pageNum} done — ${Date.now() - t_nat}ms inPage:${out.NatGateways?.length ?? 0} hasMore:${Boolean(nextToken)}`);
 

@@ -170,6 +170,11 @@ export function ChangesCommand({ args: _args, onBack, onAction }: ChangesCommand
     const data = ctx.results.get('changes') as ChangesResult | undefined;
     const events = data?.events ?? [];
 
+    const actions = [
+      { key: 'r', label: 'refresh', action: { type: 'run-again' as const } },
+      { key: 'j', label: `window: ${hoursLabel(hours)}`, action: { type: 'sort-toggle' as const } },
+    ];
+
     if (events.length === 0) {
       return {
         items: [
@@ -180,10 +185,7 @@ export function ChangesCommand({ args: _args, onBack, onAction }: ChangesCommand
             />
           </Box>,
         ],
-        actions: [
-          { key: 'r', label: 'refresh', action: { type: 'run-again' as const } },
-          { key: 'j', label: `window: ${hoursLabel(hours)}`, action: { type: 'sort-toggle' as const } },
-        ],
+        actions,
       };
     }
 
@@ -198,10 +200,7 @@ export function ChangesCommand({ args: _args, onBack, onAction }: ChangesCommand
           {...(ctx.viewportHeight ? { pageSize: ctx.viewportHeight } : {})}
         />,
       ],
-      actions: [
-        { key: 'r', label: 'refresh', action: { type: 'run-again' as const } },
-        { key: 'j', label: `window: ${hoursLabel(hours)}`, action: { type: 'sort-toggle' as const } },
-      ],
+      actions,
     };
   };
 

@@ -12,6 +12,7 @@ import { CloudWatchClient, GetMetricStatisticsCommand } from '@aws-sdk/client-cl
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import type { Resource } from '../types.js';
 import { throttledCall } from '../rate-limiter.js';
+import { buildCmdOptions } from '../utils.js';
 import pLimit from 'p-limit';
 import { tagsToMap } from '../utils.js';
 import { logger } from '../../utils/logger.js';
@@ -33,7 +34,7 @@ async function getBucketLocation(
 
   try {
     const out = await throttledCall('s3', 'GetBucketLocation', region, () =>
-      client.send(new GetBucketLocationCommand({ Bucket: bucket }), { ...(signal ? { abortSignal: signal } : {}) }),
+      client.send(new GetBucketLocationCommand({ Bucket: bucket }), buildCmdOptions(signal)),
     );
     // AWS returns empty string or undefined for us-east-1
     const rawLoc = out.LocationConstraint ?? '';
@@ -85,7 +86,7 @@ async function getBucketTags(
 ): Promise<Record<string, string>> {
   try {
     const out = await throttledCall('s3', 'GetBucketTagging', region, () =>
-      client.send(new GetBucketTaggingCommand({ Bucket: bucket }), { ...(signal ? { abortSignal: signal } : {}) }),
+      client.send(new GetBucketTaggingCommand({ Bucket: bucket }), buildCmdOptions(signal)),
     );
     return tagsToMap(out.TagSet);
   } catch (err) {
@@ -102,7 +103,7 @@ async function getBucketVersioning(
 ): Promise<boolean | Unknown> {
   try {
     const out = await throttledCall('s3', 'GetBucketVersioning', region, () =>
-      client.send(new GetBucketVersioningCommand({ Bucket: bucket }), { ...(signal ? { abortSignal: signal } : {}) }),
+      client.send(new GetBucketVersioningCommand({ Bucket: bucket }), buildCmdOptions(signal)),
     );
     return out.Status === 'Enabled';
   } catch (err) {
@@ -123,7 +124,7 @@ async function getLifecycleRulesCount(
     const out = await throttledCall('s3', 'GetBucketLifecycleConfiguration', region, () =>
       client.send(
         new GetBucketLifecycleConfigurationCommand({ Bucket: bucket }),
-        { ...(signal ? { abortSignal: signal } : {}) },
+        buildCmdOptions(signal),
       ),
     );
     return (out.Rules ?? []).length;
@@ -142,7 +143,7 @@ async function getBucketEncryption(
 ): Promise<boolean | Unknown> {
   try {
     const out = await throttledCall('s3', 'GetBucketEncryption', region, () =>
-      client.send(new GetBucketEncryptionCommand({ Bucket: bucket }), { ...(signal ? { abortSignal: signal } : {}) }),
+      client.send(new GetBucketEncryptionCommand({ Bucket: bucket }), buildCmdOptions(signal)),
     );
     return (out.ServerSideEncryptionConfiguration?.Rules ?? []).length > 0;
   } catch (err) {
@@ -162,7 +163,7 @@ async function getBucketIntelligentTiering(
     const result = await throttledCall('s3', 'ListBucketIntelligentTieringConfigurations', region, () =>
       client.send(
         new ListBucketIntelligentTieringConfigurationsCommand({ Bucket: bucket }),
-        { ...(signal ? { abortSignal: signal } : {}) },
+        buildCmdOptions(signal),
       ),
     );
     return (result?.IntelligentTieringConfigurationList ?? []).length > 0;
@@ -195,7 +196,7 @@ async function getBucketSizeBytes(
         EndTime: endTime,
         Period: 86400,
         Statistics: ['Average'],
-      }), { ...(signal ? { abortSignal: signal } : {}) }),
+      }), buildCmdOptions(signal)),
     );
     const points = (out.Datapoints ?? []).sort(
       (a, b) => (b.Timestamp?.getTime() ?? 0) - (a.Timestamp?.getTime() ?? 0),
@@ -224,7 +225,7 @@ export async function collectS3(
   // ListBucketsCommand (v1 API) returns all buckets in a single response with no pagination.
   // AWS supports a maximum of 1000 S3 buckets per account, all returned in one call.
   const out = await throttledCall('s3', 'ListBuckets', region, () =>
-    client.send(new ListBucketsCommand({}), { ...(signal ? { abortSignal: signal } : {}) }),
+    client.send(new ListBucketsCommand({}), buildCmdOptions(signal)),
   );
 
   const now = new Date().toISOString();

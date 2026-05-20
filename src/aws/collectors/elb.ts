@@ -11,6 +11,7 @@ import {
 import pLimit from 'p-limit';
 import type { Resource } from '../types.js';
 import { throttledCall } from '../rate-limiter.js';
+import { buildCmdOptions, extractNextToken } from '../utils.js';
 import { logger } from '../../utils/logger.js';
 import { dbg } from '../debug.js';
 
@@ -33,14 +34,14 @@ async function getTargetCounts(
       const out = await throttledCall('elb', 'DescribeTargetGroups', region, () =>
         client.send(
           new DescribeTargetGroupsCommand({ LoadBalancerArn: lbArn, Marker: token }),
-          { ...(signal ? { abortSignal: signal } : {}) },
+          buildCmdOptions(signal),
         ),
       );
       pageNum++;
       for (const tg of out.TargetGroups ?? []) {
         if (tg.TargetGroupArn) allTgs.push(tg.TargetGroupArn);
       }
-      token = out.NextMarker ?? undefined;
+      token = extractNextToken(out.NextMarker);
       dbg(`    elb DescribeTargetGroups page:${pageNum} done — ${Date.now() - t_tg}ms inPage:${out.TargetGroups?.length ?? 0} hasMore:${Boolean(token)}`);
     } while (token !== undefined);
 
@@ -52,7 +53,7 @@ async function getTargetCounts(
             const healthOut = await throttledCall('elb', 'DescribeTargetHealth', region, () =>
               client.send(
                 new DescribeTargetHealthCommand({ TargetGroupArn: tgArn }),
-                { ...(signal ? { abortSignal: signal } : {}) },
+                buildCmdOptions(signal),
               ),
             );
             for (const desc of healthOut.TargetHealthDescriptions ?? []) {
@@ -86,11 +87,11 @@ export async function collectELB(
     dbg(`    elb DescribeLoadBalancers page:${pageNum + 1} start — region:${region} soFar:${allLbs.length}`);
     const t_dlb = Date.now();
     const out = await throttledCall('elb', 'DescribeLoadBalancers', region, () =>
-      client.send(new DescribeLoadBalancersCommand({ Marker: token }), { ...(signal ? { abortSignal: signal } : {}) }),
+      client.send(new DescribeLoadBalancersCommand({ Marker: token }), buildCmdOptions(signal)),
     );
     pageNum++;
     allLbs.push(...(out.LoadBalancers ?? []));
-    token = out.NextMarker ?? undefined;
+    token = extractNextToken(out.NextMarker);
     dbg(`    elb DescribeLoadBalancers page:${pageNum} done — ${Date.now() - t_dlb}ms inPage:${out.LoadBalancers?.length ?? 0} hasMore:${Boolean(token)}`);
   } while (token !== undefined);
 
@@ -109,7 +110,7 @@ export async function collectELB(
           const tagsOut = await throttledCall('elb', 'DescribeTags', region, () =>
             client.send(
               new DescribeTagsCommand({ ResourceArns: batch }),
-              { ...(signal ? { abortSignal: signal } : {}) },
+              buildCmdOptions(signal),
             ),
           );
           for (const desc of tagsOut.TagDescriptions ?? []) {

@@ -7,7 +7,7 @@ import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { strConfig, numConfig, daysSince, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
+import { strConfig, numConfig, daysSince, getMonthlyCost, confidenceFromUtilization, CONF_LIKELY, CONF_PROBABLE, CONF_ESTIMATE } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { FARGATE_LINUX_VCPU_HOURLY, FARGATE_LINUX_MEMORY_HOURLY, HOURS_PER_MONTH } from '../../pricing/resources.js';
 
@@ -34,7 +34,7 @@ export function checkECS001(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(monthlyCost),
     suggestedAction: 'set_desired_count_zero',
-    confidence: clampConfidence(0.85),
+    confidence: clampConfidence(CONF_PROBABLE),
     filePath,
     currentConfig: { desired_count: desiredCount, running_count: 0 },
     suggestedConfig: { desired_count: 0 },
@@ -95,7 +95,7 @@ export function checkECS002(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_to_fargate',
-    confidence: clampConfidence(0.7),
+    confidence: clampConfidence(CONF_ESTIMATE),
     filePath,
     currentConfig: { launch_type: 'EC2' },
     suggestedConfig: { launch_type: 'FARGATE' },
@@ -189,7 +189,7 @@ export function checkECS004(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0, // operational issue — savings depends on root cause resolution
     suggestedAction: 'investigate_task_failures',
-    confidence: clampConfidence(0.9),
+    confidence: clampConfidence(CONF_LIKELY),
     filePath,
     currentConfig: { desired_count: desiredCount, running_count: runningCount, pending_count: 0 },
     suggestedConfig: { desired_count: desiredCount }, // desired stays same — fix task failures

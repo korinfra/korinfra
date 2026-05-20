@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-base-to-string, eqeqeq */
 import type { Driver } from '../drivers/node.js';
+import { safeParse } from '../helpers.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,11 +31,6 @@ export interface ResourceFilters {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function safeParse(raw: unknown): Record<string, unknown> | null {
-  if (!raw) return null;
-  try { return JSON.parse(raw as string) as Record<string, unknown>; } catch { return null; }
-}
 
 function rowToResource(row: Record<string, unknown>): Resource {
   const id = row['id'] != null ? String(row['id']) : undefined;

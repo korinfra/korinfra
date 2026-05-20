@@ -97,72 +97,64 @@ function tryDetectGithubToken(): void {
 
 // ─── Headless: command-specific guidance for unsupported commands (CLI-2) ──────
 
+const COMMAND_GUIDANCE: Record<string, string> = {
+  fix: [
+    `korinfra fix: apply an AI-generated fix for a recommendation.`,
+    ``,
+    `Usage:`,
+    `  korinfra fix <rec-id> --no-tui`,
+    `  korinfra fix <rec-id> --dry-run --no-tui`,
+    `  korinfra fix <rec-id> --json`,
+    ``,
+    `Next: run \`korinfra recommend --no-tui\` to list pending recommendation IDs.`,
+  ].join('\n'),
+  recommend: [
+    `korinfra recommend --refresh: non-interactive AI refresh is not available yet.`,
+    `Next: run \`korinfra recommend --json\` for cached recommendations in JSON format, or use the TUI for AI refresh.`,
+  ].join('\n'),
+  security: [
+    `korinfra security --refresh: non-interactive AI refresh is not available yet.`,
+    `Next: run \`korinfra security --json --dir ./terraform\` for security findings in JSON format, or use the TUI for interactive scanning.`,
+  ].join('\n'),
+  changes: [
+    `korinfra changes: view recent AWS API activity from CloudTrail.`,
+    `Next: run \`korinfra\` in a terminal and select changes, or use the MCP tool get_changes.`,
+  ].join('\n'),
+  tags: [
+    `korinfra tags: tag audit and AI suggestion require the interactive TUI.`,
+    `Next: run \`korinfra\` in a terminal and select tags.`,
+  ].join('\n'),
+  init: [
+    `korinfra init: use --non-interactive or --config for headless setup, or run \`korinfra\` in a terminal for the guided wizard.`,
+    `Examples:`,
+    `  korinfra init --non-interactive --profile default --ai-provider anthropic --ai-key sk-ant-api...`,
+    `  korinfra init --non-interactive --profile my-profile --ai-provider none`,
+    `  korinfra init --config ./korinfra-setup.yaml`,
+    `Config file keys: profile, ai_provider, ai_key`,
+  ].join('\n'),
+  doctor: [
+    `korinfra doctor: environment diagnostics require the interactive TUI.`,
+    `Next: run \`korinfra\` in a terminal and select doctor.`,
+  ].join('\n'),
+  config: [
+    `korinfra config: configuration management requires the interactive TUI.`,
+    `Next: run \`korinfra\` in a terminal and select config, or use \`korinfra config set <key> <value>\`.`,
+  ].join('\n'),
+  mcp: [
+    `korinfra mcp: use --non-interactive or --config for headless install, or run \`korinfra\` in a terminal for the guided wizard.`,
+    `Examples:`,
+    `  korinfra mcp install --non-interactive --ide claude-code,cursor`,
+    `  korinfra mcp install --non-interactive --ide claude-code`,
+    `  korinfra mcp uninstall --non-interactive`,
+    `  korinfra mcp install --config ./mcp-setup.yaml`,
+    `Supported IDEs: claude-code, cursor, vscode, jetbrains`,
+    `Config file keys: ide (comma-separated)`,
+  ].join('\n'),
+};
+
 function getUnsupportedCommandGuidance(command: string): string {
-  switch (command) {
-    case 'fix':
-      return [
-        `korinfra fix: apply an AI-generated fix for a recommendation.`,
-        ``,
-        `Usage:`,
-        `  korinfra fix <rec-id> --no-tui`,
-        `  korinfra fix <rec-id> --dry-run --no-tui`,
-        `  korinfra fix <rec-id> --json`,
-        ``,
-        `Next: run \`korinfra recommend --no-tui\` to list pending recommendation IDs.`,
-      ].join('\n');
-    case 'recommend':
-      return [
-        `korinfra recommend --refresh: non-interactive AI refresh is not available yet.`,
-        `Next: run \`korinfra recommend --json\` for cached recommendations in JSON format, or use the TUI for AI refresh.`,
-      ].join('\n');
-    case 'security':
-      return [
-        `korinfra security --refresh: non-interactive AI refresh is not available yet.`,
-        `Next: run \`korinfra security --json --dir ./terraform\` for security findings in JSON format, or use the TUI for interactive scanning.`,
-      ].join('\n');
-    case 'changes':
-      return [
-        `korinfra changes: view recent AWS API activity from CloudTrail.`,
-        `Next: run \`korinfra\` in a terminal and select changes, or use the MCP tool get_changes.`,
-      ].join('\n');
-    case 'tags':
-      return [
-        `korinfra tags: tag audit and AI suggestion require the interactive TUI.`,
-        `Next: run \`korinfra\` in a terminal and select tags.`,
-      ].join('\n');
-    case 'init':
-      return [
-        `korinfra init: use --non-interactive or --config for headless setup, or run \`korinfra\` in a terminal for the guided wizard.`,
-        `Examples:`,
-        `  korinfra init --non-interactive --profile default --ai-provider anthropic --ai-key sk-ant-api...`,
-        `  korinfra init --non-interactive --profile my-profile --ai-provider none`,
-        `  korinfra init --config ./korinfra-setup.yaml`,
-        `Config file keys: profile, ai_provider, ai_key`,
-      ].join('\n');
-    case 'doctor':
-      return [
-        `korinfra doctor: environment diagnostics require the interactive TUI.`,
-        `Next: run \`korinfra\` in a terminal and select doctor.`,
-      ].join('\n');
-    case 'config':
-      return [
-        `korinfra config: configuration management requires the interactive TUI.`,
-        `Next: run \`korinfra\` in a terminal and select config, or use \`korinfra config set <key> <value>\`.`,
-      ].join('\n');
-    case 'mcp':
-      return [
-        `korinfra mcp: use --non-interactive or --config for headless install, or run \`korinfra\` in a terminal for the guided wizard.`,
-        `Examples:`,
-        `  korinfra mcp install --non-interactive --ide claude-code,cursor`,
-        `  korinfra mcp install --non-interactive --ide claude-code`,
-        `  korinfra mcp uninstall --non-interactive`,
-        `  korinfra mcp install --config ./mcp-setup.yaml`,
-        `Supported IDEs: claude-code, cursor, vscode, jetbrains`,
-        `Config file keys: ide (comma-separated)`,
-      ].join('\n');
-    default:
-      return `korinfra ${command}: non-interactive output is not available for this command. Run \`korinfra\` in an interactive terminal or use \`korinfra --help\`.`;
-  }
+  return COMMAND_GUIDANCE[command] ??
+    `korinfra ${command}: non-interactive output is not available for this command. Run \`korinfra\` in an interactive terminal or use \`korinfra --help\`.`;
 }
 
 async function runHeadlessCommand(command: string, commandArgs: string[]): Promise<boolean> {
@@ -271,8 +263,16 @@ async function main(): Promise<void> {
   const outputEnv = process.env['KORINFRA_OUTPUT']; // 'json' | 'text' | undefined
   const isJson = args.includes('--json') || outputEnv === 'json';
   const isMcpTokenCmd = command === 'mcp' && args[1] === 'token';
-  const headless = args.includes('--no-tui') || isJson || !isTTY || isCI || isDumbTerm || forceHeadless
-    || outputEnv === 'text' || isMcpTokenCmd;
+  const headless = [
+    args.includes('--no-tui'),
+    isJson,
+    !isTTY,
+    isCI,
+    isDumbTerm,
+    forceHeadless,
+    outputEnv === 'text',
+    isMcpTokenCmd,
+  ].some(Boolean);
 
   if (headless) {
     const explicitCommand = command !== undefined && command !== '' && !command.startsWith('-');

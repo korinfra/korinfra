@@ -142,6 +142,21 @@ describe('EC2-SEC-001 — EC2 instance without IMDSv2', () => {
   });
 });
 
+describe('EC2-SEC-003 — EC2 instance with public IP auto-assigned', () => {
+  const rule = ec2Rules.find((r) => r.id === 'EC2-SEC-003')!;
+
+  it('fires when associate_public_ip_address is true', () => {
+    expect(rule.evaluate(makeTf('aws_instance', { associate_public_ip_address: true }))).toBe(true);
+  });
+
+  it('does not fire when associate_public_ip_address is false, absent, or a non-boolean', () => {
+    expect(rule.evaluate(makeTf('aws_instance', { associate_public_ip_address: false }))).toBe(false);
+    expect(rule.evaluate(makeTf('aws_instance', { instance_type: 't3.micro' }))).toBe(false);
+    expect(rule.evaluate(makeTf('aws_instance', { associate_public_ip_address: 'true' }))).toBe(false);
+    expect(rule.evaluate(makeTf('aws_instance', { associate_public_ip_address: 1 }))).toBe(false);
+  });
+});
+
 describe('SG-SEC-004 — Security group allows all egress', () => {
   const rule = ec2Rules.find((r) => r.id === 'SG-SEC-004')!;
 
@@ -249,7 +264,7 @@ describe('containsCredentialPatterns — ASIA regex path', () => {
 });
 
 describe('EC2-SEC-004 — EC2 instance uses deprecated instance type', () => {
-  const rule = miscRules.find((r) => r.id === 'EC2-SEC-004')!;
+  const rule = ec2Rules.find((r) => r.id === 'EC2-SEC-004')!;
 
   it('fires for t2/m1/c4/r4 instance types, does not fire for t3/m5 or absent type', () => {
     for (const type of ['t2.micro', 'm1.small', 'c4.large', 'r4.xlarge']) {
@@ -355,15 +370,15 @@ describe('Lambda security rules — VPC, DLQ, hardcoded credentials, SG', () => 
     expect(rule.evaluate(makeTf('aws_lambda_function', { vpc_config: { subnet_ids: ['subnet-abc'], security_group_ids: ['sg-12345678'] } }))).toBe(false);
   });
 
-  it('LAMBDA-SEC-001 fires when DLQ absent, does not fire when present', () => {
-    const rule = lambdaRules.find((r) => r.id === 'LAMBDA-SEC-001')!;
+  it('LAM-SEC-003 fires when DLQ absent, does not fire when present', () => {
+    const rule = lambdaRules.find((r) => r.id === 'LAM-SEC-003')!;
     expect(rule.evaluate(makeTf('aws_lambda_function', { function_name: 'my-func', runtime: 'nodejs20.x' }))).toBe(true);
     expect(rule.evaluate(makeTf('aws_lambda_function', { dead_letter_config: {} }))).toBe(false);
     expect(rule.evaluate(makeTf('aws_lambda_function', { dead_letter_config: { target_arn: 'arn:aws:sqs:us-east-1:123456789012:my-dlq' } }))).toBe(false);
   });
 
-  it('LAMBDA-SEC-002 fires when VPC but no security group, does not fire when SGs present or no VPC', () => {
-    const rule = lambdaRules.find((r) => r.id === 'LAMBDA-SEC-002')!;
+  it('LAM-SEC-004 fires when VPC but no security group, does not fire when SGs present or no VPC', () => {
+    const rule = lambdaRules.find((r) => r.id === 'LAM-SEC-004')!;
     expect(rule.evaluate(makeTf('aws_lambda_function', { vpc_config: { subnet_ids: ['subnet-abc'], security_group_ids: [] } }))).toBe(true);
     expect(rule.evaluate(makeTf('aws_lambda_function', { vpc_config: { subnet_ids: ['subnet-abc'], security_group_ids: ['sg-12345678'] } }))).toBe(false);
     expect(rule.evaluate(makeTf('aws_lambda_function', { function_name: 'no-vpc' }))).toBe(false);

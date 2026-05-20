@@ -1,4 +1,5 @@
 import type { Driver } from '../drivers/node.js';
+import { safeParse } from '../helpers.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,11 +25,6 @@ export interface CostByService {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function safeParse(raw: unknown): Record<string, unknown> | null {
-  if (!raw) return null;
-  try { return JSON.parse(raw as string) as Record<string, unknown>; } catch { return null; }
-}
 
 /* eslint-disable @typescript-eslint/no-base-to-string, eqeqeq */
 function rowToCost(row: Record<string, unknown>): CostEntry {

@@ -5,6 +5,14 @@ import { join } from 'node:path';
 
 import { checkNoSymlink, safeWriteFile, safeReadFile, safeOpenAppend } from '../../src/utils/safe-fs.js';
 
+function trySymlink(target: string, link: string): boolean {
+  try { symlinkSync(target, link); return true; }
+  catch (e) {
+    if (process.platform === 'win32' && (e as NodeJS.ErrnoException).code === 'EPERM') return false;
+    throw e;
+  }
+}
+
 let tmp: string;
 
 beforeEach(() => {
@@ -30,13 +38,13 @@ describe('checkNoSymlink', () => {
     const target = join(tmp, 'target.txt');
     const link = join(tmp, 'link.txt');
     writeFileSync(target, 'real');
-    symlinkSync(target, link);
+    if (!trySymlink(target, link)) return;
     expect(() => checkNoSymlink(link)).toThrow(/symlink/i);
   });
 
   it('throws when the path is a dangling symlink', () => {
     const link = join(tmp, 'dangling.txt');
-    symlinkSync(join(tmp, 'does-not-exist'), link);
+    if (!trySymlink(join(tmp, 'does-not-exist'), link)) return;
     expect(() => checkNoSymlink(link)).toThrow(/symlink/i);
   });
 });
@@ -63,7 +71,7 @@ describe('safeWriteFile', () => {
     const target = join(tmp, 'attacker-controlled.txt');
     const link = join(tmp, 'cache.json');
     writeFileSync(target, 'original');
-    symlinkSync(target, link);
+    if (!trySymlink(target, link)) return;
     expect(() => safeWriteFile(link, 'malicious', { mode: 0o600 })).toThrow(/symlink/i);
     expect(readFileSync(target, 'utf8')).toBe('original');
   });
@@ -111,7 +119,7 @@ describe('safeReadFile', () => {
     const target = join(tmp, 'sneak.txt');
     const link = join(tmp, 'thresholds.yaml');
     writeFileSync(target, 'attacker-content');
-    symlinkSync(target, link);
+    if (!trySymlink(target, link)) return;
     expect(() => safeReadFile(link)).toThrow(/symlink/i);
   });
 
@@ -153,7 +161,7 @@ describe('safeOpenAppend', () => {
     const target = join(tmp, 'evil.txt');
     const link = join(tmp, 'log.txt');
     writeFileSync(target, '');
-    symlinkSync(target, link);
+    if (!trySymlink(target, link)) return;
     expect(() => safeOpenAppend(link, { mode: 0o600 })).toThrow(/symlink/i);
   });
 

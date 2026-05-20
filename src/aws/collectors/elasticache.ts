@@ -2,6 +2,7 @@ import type { ElastiCacheClient, CacheCluster } from '@aws-sdk/client-elasticach
 import { DescribeCacheClustersCommand, ListTagsForResourceCommand } from '@aws-sdk/client-elasticache';
 import type { Resource } from '../types.js';
 import { throttledCall } from '../rate-limiter.js';
+import { buildCmdOptions, extractNextToken } from '../utils.js';
 import pLimit from 'p-limit';
 import { logger } from '../../utils/logger.js';
 import { dbg } from '../debug.js';
@@ -14,7 +15,7 @@ async function fetchTags(
 ): Promise<Record<string, string>> {
   try {
     const tagsOut = await throttledCall('elasticache', 'ListTagsForResource', region, () =>
-      client.send(new ListTagsForResourceCommand({ ResourceName: arn }), { ...(signal ? { abortSignal: signal } : {}) }),
+      client.send(new ListTagsForResourceCommand({ ResourceName: arn }), buildCmdOptions(signal)),
     );
     return Object.fromEntries((tagsOut.TagList ?? []).map((t) => [t.Key ?? '', t.Value ?? '']));
   } catch (err) {
@@ -39,12 +40,12 @@ export async function collectElastiCache(
     const out = await throttledCall('elasticache', 'DescribeCacheClusters', region, () =>
       client.send(
         new DescribeCacheClustersCommand({ ShowCacheNodeInfo: true, Marker: token }),
-        { ...(signal ? { abortSignal: signal } : {}) },
+        buildCmdOptions(signal),
       ),
     );
     pageNum++;
     clusters.push(...(out.CacheClusters ?? []));
-    token = out.Marker ?? undefined;
+    token = extractNextToken(out.Marker);
     dbg(`    elasticache DescribeCacheClusters page:${pageNum} done — ${Date.now() - t_cc}ms inPage:${out.CacheClusters?.length ?? 0} hasMore:${Boolean(token)}`);
   } while (token !== undefined);
 

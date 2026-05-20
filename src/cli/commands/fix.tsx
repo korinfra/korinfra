@@ -35,7 +35,7 @@ import { ErrorBox } from '../components/ErrorBox.js';
 import { InteractionHints, IH_QUIT, IH_BACK, IH_COMMAND, IH_HELP } from '../components/InteractionHints.js';
 import { ActionBar } from '../components/ActionBar.js';
 import { EmptyState } from '../components/EmptyState.js';
-import { colors, semanticColors, borders } from '../theme.js';
+import { colors, semanticColors, borders, getSeverityColor } from '../theme.js';
 import { GAP_BETWEEN_SECTIONS, GAP_SECTION_WIDE, GAP_AFTER_HEADER, PADDING_X } from '../ui/spacing.js';
 import { SEVERITY_LABELS, DOT_SEP } from '../ui/text.js';
 import { formatMoneyPerMonth } from '../ui/format.js';
@@ -168,12 +168,7 @@ function PickList({
           {group.rows.map(({ row, flatIdx }) => {
             const isSelected = flatIdx === selectedIdx;
             const isManual = row.scenario === 'C';
-            const sev = row.severity.toLowerCase();
-            const sevColor = sev === 'critical' ? semanticColors.severity.critical
-              : sev === 'high' ? semanticColors.severity.high
-              : sev === 'medium' ? semanticColors.severity.medium
-              : sev === 'low' ? semanticColors.severity.low
-              : undefined;
+            const sevColor = getSeverityColor(row.severity);
             return (
               <Box key={row.id} gap={1}>
                 <Text color={colors.brand}>{isSelected ? '›' : ' '}</Text>

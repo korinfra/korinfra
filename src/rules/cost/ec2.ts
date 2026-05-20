@@ -5,8 +5,7 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
-import type { ThresholdsOverride } from '../config.js';
-import type { THRESHOLDS } from '../config.js';
+import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
 import { FALLBACK_EC2_PRICES, EBS_GP3_PER_GB, estimateEC2CostSync } from '../../pricing/resources.js';
 import {
   splitInstanceType,
@@ -23,6 +22,11 @@ import {
   normalizeToMonth,
   getMonthlyCost,
   confidenceFromUtilization,
+  CONF_HIGH,
+  CONF_LIKELY,
+  CONF_PROBABLE,
+  CONF_COST_OPT,
+  CONF_ESTIMATE,
 } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
@@ -98,7 +102,7 @@ export function checkEC2002(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'terminate_and_delete_volumes',
-    confidence: clampConfidence(0.95),
+    confidence: clampConfidence(CONF_HIGH),
     filePath,
     currentConfig: { state: r.state, stopped_age: `${stoppedDays} days` },
     suggestedConfig: { action: 'terminate_and_delete_volumes' },
@@ -144,7 +148,7 @@ export function checkEC2003(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: `upgrade_to_${suggestedType}`,
-    confidence: clampConfidence(0.85),
+    confidence: clampConfidence(CONF_PROBABLE),
     filePath,
     currentConfig: { instance_type: r.instanceType },
     suggestedConfig: { instance_type: suggestedType },
@@ -265,7 +269,7 @@ export function checkEC2005(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'purchase_reserved_instance',
-    confidence: clampConfidence(0.8),
+    confidence: clampConfidence(CONF_COST_OPT),
     currentConfig: { pricing: 'on_demand', instance_type: r.instanceType, running_days: runningDays },
     suggestedConfig: { pricing: 'reserved_1yr_no_upfront' },
     patchContent: `# Purchase 1-year No-Upfront RI for ${sanitizeResourceName(r.instanceType)} ${sanitizeResourceName(r.region)}\n# aws ec2 purchase-reserved-instances-offering ...`,
@@ -353,7 +357,7 @@ export function checkEC2007(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: `upgrade_to_${suggestedType}`,
-    confidence: clampConfidence(0.9),
+    confidence: clampConfidence(CONF_LIKELY),
     filePath,
     currentConfig: { instance_type: r.instanceType },
     suggestedConfig: { instance_type: suggestedType },
@@ -399,7 +403,7 @@ export function checkEC2008(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: `upgrade_to_${suggestedType}`,
-    confidence: clampConfidence(0.85),
+    confidence: clampConfidence(CONF_PROBABLE),
     filePath,
     currentConfig: { instance_type: r.instanceType },
     suggestedConfig: { instance_type: suggestedType },
@@ -444,7 +448,7 @@ export function checkEC2009(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'terminate_after_snapshot',
-    confidence: clampConfidence(0.90),
+    confidence: clampConfidence(CONF_LIKELY),
     filePath,
     currentConfig: { state: 'stopped', ebs_volumes_total_gb: ebsGB },
     suggestedConfig: { action: 'terminate_after_snapshot' },
@@ -478,7 +482,7 @@ export function checkEC2010(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'add_cloudfront_or_vpc_endpoints',
-    confidence: clampConfidence(0.7),
+    confidence: clampConfidence(CONF_ESTIMATE),
     filePath,
     currentConfig: { network_out_mb_avg_hourly: r.utilization.networkOutMB, network_out_gb_mo_estimated: networkOutGB },
     suggestedConfig: { action: 'add_cloudfront_or_vpc_endpoints' },
@@ -493,8 +497,7 @@ export function checkEC2010(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EC2-011: No EBS optimization (non-burstable instance). */
-export function checkEC2011(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkEC2011(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'ec2_instance') return null;
   if (!('ebs_optimized' in r.configuration)) return null;
   if (boolConfig(r, 'ebs_optimized')) return null;
@@ -512,7 +515,7 @@ export function checkEC2011(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enable_ebs_optimization',
-    confidence: clampConfidence(0.8),
+    confidence: clampConfidence(CONF_COST_OPT),
     filePath,
     currentConfig: { instance_type: r.instanceType, ebs_optimized: false },
     suggestedConfig: { ebs_optimized: true },
@@ -527,8 +530,7 @@ export function checkEC2011(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EC2-012: IMDSv2 not enforced. */
-export function checkEC2012(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkEC2012(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'ec2_instance') return null;
   if (!('metadata_options_http_tokens' in r.configuration)) return null;
   if (strConfig(r, 'metadata_options_http_tokens') === 'required') return null;
@@ -544,7 +546,7 @@ export function checkEC2012(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enforce_imdsv2',
-    confidence: clampConfidence(0.95),
+    confidence: clampConfidence(CONF_HIGH),
     filePath,
     currentConfig: { metadata_options_http_tokens: 'optional' },
     suggestedConfig: { metadata_options_http_tokens: 'required' },
@@ -578,7 +580,7 @@ export function checkEC2013(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'review_and_consider_ri',
-    confidence: clampConfidence(0.7),
+    confidence: clampConfidence(CONF_ESTIMATE),
     filePath,
     currentConfig: { instance_type: r.instanceType, age_days: age, state: 'running' },
     suggestedConfig: { action: 'review_and_consider_ri' },
