@@ -37,6 +37,18 @@ function makeUtil(cpuAverage: number, period: '7d' | '14d' | '30d' = '14d') {
   };
 }
 
+function makeCtx() {
+  const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+  return {
+    warnings,
+    ctx: {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    },
+  };
+}
+
 // ─── ECS-001: Idle service ─────────────────────────────────────────────────────
 
 describe('checkECS001 — idle ECS service', () => {
@@ -65,6 +77,14 @@ describe('checkECS001 — idle ECS service', () => {
     expect(checkECS001(makeECSService({ launchTime: new Date(Date.now() - 1 * 86_400_000).toISOString(), configuration: { launch_type: 'FARGATE', desired_count: 2, running_count: 0, monthlyCost: 100 } }), cfg)).toBeNull();
     expect(checkECS001(makeECSService({ type: 'ec2_instance', configuration: { desired_count: 2, running_count: 0, monthlyCost: 100 } }), cfg)).toBeNull();
   });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const { ctx, warnings } = makeCtx();
+    const r = makeECSService({ configuration: { launch_type: 'FARGATE', desired_count: 1, running_count: 0 } });
+    expect(checkECS001(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'ECS-001', resourceId: r.id });
+  });
 });
 
 // ─── ECS-002: EC2 launch type ────────────────────────────────────────────────
@@ -84,14 +104,27 @@ describe('checkECS002 — EC2 launch type', () => {
     expect(rec!.suggestedConfig).toMatchObject({ launch_type: 'FARGATE' });
     expect(rec!.implementationSteps.some((s) => s.includes('FARGATE'))).toBe(true);
 
-    // $0 cost still fires
-    expect(checkECS002(makeECSService({ configuration: { launch_type: 'EC2', desired_count: 2, running_count: 2, monthlyCost: 0 } }), cfg)!.estimatedSavings).toBe(0);
+  });
+
+  it('skips and warns when monthly_cost is zero (#75 strict gating)', () => {
+    const { ctx, warnings } = makeCtx();
+    expect(checkECS002(makeECSService({ configuration: { launch_type: 'EC2', desired_count: 2, running_count: 2, monthlyCost: 0 } }), cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'ECS-002' });
   });
 
   it('does not fire for FARGATE, EXTERNAL, or wrong type', () => {
     expect(checkECS002(makeECSService({ configuration: { launch_type: 'FARGATE', desired_count: 2, running_count: 2, monthlyCost: 300 } }), cfg)).toBeNull();
     expect(checkECS002(makeECSService({ configuration: { launch_type: 'EXTERNAL', desired_count: 2, running_count: 2, monthlyCost: 200 } }), cfg)).toBeNull();
     expect(checkECS002(makeECSService({ type: 'rds_instance', configuration: { launch_type: 'EC2', monthlyCost: 300 } }), cfg)).toBeNull();
+  });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const { ctx, warnings } = makeCtx();
+    const r = makeECSService({ configuration: { launch_type: 'EC2', desired_count: 2, running_count: 2 } });
+    expect(checkECS002(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'ECS-002', resourceId: r.id });
   });
 });
 
@@ -124,6 +157,17 @@ describe('checkECS003 — over-provisioned ECS service', () => {
     expect(checkECS003(makeECSService({ utilization: makeUtil(5.0), configuration: { launch_type: 'FARGATE', desired_count: 2, running_count: 2, monthlyCost: 200 } }), cfg)).toBeNull();
     expect(checkECS003(makeECSService({ configuration: { launch_type: 'FARGATE', desired_count: 5, running_count: 5, monthlyCost: 400 } }), cfg)).toBeNull();
     expect(checkECS003(makeECSService({ type: 'lambda_function', utilization: makeUtil(5.0), configuration: { desired_count: 5, monthlyCost: 400 } }), cfg)).toBeNull();
+  });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const { ctx, warnings } = makeCtx();
+    const r = makeECSService({
+      utilization: makeUtil(5.0),
+      configuration: { launch_type: 'FARGATE', desired_count: 4, running_count: 4 },
+    });
+    expect(checkECS003(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'ECS-003', resourceId: r.id });
   });
 });
 

@@ -8,7 +8,7 @@ import type { Recommendation, RuleContext } from '../types.js';
 import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { strConfig, boolConfig, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
+import { strConfig, boolConfig, costOrWarn, confidenceFromUtilization } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { logger } from '../../utils/logger.js';
 
@@ -52,7 +52,8 @@ export function checkDDB001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
     if (readUtilPct >= cfg.dynamoDBProvisionedUtilThreshold && writeUtilPct >= cfg.dynamoDBProvisionedUtilThreshold) return null;
   }
 
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'DDB-001', ctx);
+  if (monthlyCost === null) return null;
   const savings = monthlyCost * cfg.dynamoDBOnDemandSavingsMultiplier;
   const filePath = strConfig(r, 'file_path');
 
@@ -91,14 +92,15 @@ export function checkDDB001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
 }
 
 /** DDB-002: DynamoDB provisioned table without auto-scaling. */
-export function checkDDB002(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkDDB002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'dynamodb_table') return null;
   const billingMode = strConfig(r, 'billing_mode');
   if (billingMode !== 'PROVISIONED') return null;
 
   if (boolConfig(r, 'auto_scaling_enabled')) return null;
 
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'DDB-002', ctx);
+  if (monthlyCost === null) return null;
   const savings = monthlyCost * cfg.dynamoDBAutoScalingSavingsMultiplier;
   const filePath = strConfig(r, 'file_path');
   return {

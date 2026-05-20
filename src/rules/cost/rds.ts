@@ -7,7 +7,7 @@ import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
 import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
-import { suggestRDSRightsize, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization, costOrWarn, calculateSavingsWithPricingFallback, CONF_CERTAIN, CONF_HIGH, CONF_LIKELY, CONF_PROBABLE, CONF_COST_OPT, CONF_ESTIMATE } from './helpers.js';
+import { suggestRDSRightsize, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization, costOrWarn, CONF_CERTAIN, CONF_HIGH, CONF_LIKELY, CONF_PROBABLE, CONF_COST_OPT, CONF_ESTIMATE } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { RDS_GP2_STORAGE_PER_GB, RDS_GP3_STORAGE_PER_GB, RDS_IO1_STORAGE_PER_GB, RDS_IO2_STORAGE_PER_GB, estimateRDSCostSync } from '../../pricing/resources.js';
 
@@ -218,10 +218,11 @@ export function checkRDS005(r: Resource, _cfg: Cfg): Recommendation | null {
 }
 
 /** RDS-006: gp2 → gp3 storage migration. */
-export function checkRDS006(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkRDS006(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'rds_instance') return null;
   if (strConfig(r, 'storage_type') !== 'gp2') return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'RDS-006', ctx);
+  if (monthlyCost === null) return null;
   const savings = guardSavings(monthlyCost * cfg.rdsGP2GP3Multiplier);
   const filePath = strConfig(r, 'file_path');
   return {
@@ -249,13 +250,14 @@ export function checkRDS006(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** RDS-007: Multi-AZ enabled in non-production environment. */
-export function checkRDS007(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkRDS007(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'rds_instance') return null;
   if (!boolConfig(r, 'multi_az')) return null;
   const env = (r.tags?.['Environment'] ?? '').toLowerCase();
   const nonProdEnvs = new Set(['dev', 'development', 'staging', 'test']);
   if (!nonProdEnvs.has(env)) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'RDS-007', ctx);
+  if (monthlyCost === null) return null;
   const savings = guardSavings(monthlyCost * cfg.rdsMultiAZMultiplier);
   const filePath = strConfig(r, 'file_path');
   return {
@@ -311,7 +313,7 @@ function buildRDSGravitonType(instanceClass: string): string | null {
 }
 
 /** RDS-008: RDS instance eligible for Graviton migration. */
-export function checkRDS008(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkRDS008(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'rds_instance') return null;
   const cls = r.instanceType;
   if (!cls.startsWith('db.')) return null;
@@ -319,16 +321,23 @@ export function checkRDS008(r: Resource, cfg: Cfg): Recommendation | null {
   const suggestedClass = buildRDSGravitonType(cls);
   if (!suggestedClass) return null;
 
-  const monthlyCost = getMonthlyCost(r);
   const currentMonthly = estimateRDSCostSync(cls, r.region);
   const gravitonMonthly = estimateRDSCostSync(suggestedClass, r.region);
 
-  const { savings, confidence } = calculateSavingsWithPricingFallback(
-    currentMonthly,
-    gravitonMonthly,
-    monthlyCost,
-    cfg.rdsGravitonMultiplier,
-  );
+  let savings: number;
+  let confidence: number;
+  if (currentMonthly > 0 && gravitonMonthly > 0) {
+    savings = guardSavings(currentMonthly - gravitonMonthly);
+    confidence = 0.85;
+  } else {
+    const mc = getMonthlyCostStrict(r);
+    if (mc === null) {
+      ctx?.warn('RDS-008', r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
+      return null;
+    }
+    savings = guardSavings(mc * cfg.rdsGravitonMultiplier);
+    confidence = 0.65;
+  }
 
   const filePath = strConfig(r, 'file_path');
   return {
@@ -410,6 +419,8 @@ export function checkRDS010(r: Resource, cfg: Cfg): Recommendation | null {
   // Require at least 100 data points (~30 days at ~3-4 hour granularity) before flagging idle instances; avoids false positives from recently-launched instances.
   if (r.utilization.dataPoints < 100) return null;
   const monthlyCost = getMonthlyCost(r);
+  // Implicit strict gating: getMonthlyCost returns 0 for missing cost, which is always < rdsMinCostForRI,
+  // so this rule already skips when monthly_cost is unavailable.
   if (monthlyCost < cfg.rdsMinCostForRI) return null;
   const savings = guardSavings(monthlyCost * cfg.rdsRIDiscountMultiplier);
   return {

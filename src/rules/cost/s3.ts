@@ -7,7 +7,7 @@ import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
 import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
-import { strConfig, boolConfig, numConfig, getMonthlyCost, triStateConfig, CONF_HIGH, CONF_COST_OPT, CONF_ESTIMATE, CONF_REVIEW_ONLY } from './helpers.js';
+import { strConfig, boolConfig, numConfig, triStateConfig, costOrWarn, CONF_HIGH, CONF_COST_OPT, CONF_ESTIMATE, CONF_REVIEW_ONLY } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
@@ -26,7 +26,8 @@ export function checkS3001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommenda
   }
   if (numConfig(r, 'lifecycle_rules_count') > 0) return null;
   if (boolConfig(r, 'has_lifecycle')) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'S3-001', ctx);
+  if (monthlyCost === null) return null;
   const savings = guardSavings(monthlyCost * cfg.s3LifecycleSavingsMultiplier);
   const filePath = strConfig(r, 'file_path');
   return {
@@ -74,7 +75,8 @@ export function checkS3002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommenda
   const hasLifecycle = boolConfig(r, 'has_lifecycle');
   if (lifecycleCount === 0 && !hasLifecycle) return null; // S3-001 covers this
   if (boolConfig(r, 'has_intelligent_tiering')) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'S3-002', ctx);
+  if (monthlyCost === null) return null;
   const filePath = strConfig(r, 'file_path');
 
   // Intelligent-Tiering monitoring fee: $0.0025 per 1,000 objects/month

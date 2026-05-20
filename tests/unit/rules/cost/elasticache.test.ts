@@ -39,6 +39,18 @@ function makeUtil(cpuAverage: number, memoryAverage: number, period: '7d' | '14d
   };
 }
 
+function makeCtx() {
+  const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+  return {
+    warnings,
+    ctx: {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    },
+  };
+}
+
 // ─── ELC-001: Overprovisioned cluster ─────────────────────────────────────────
 
 describe('checkELC001 — overprovisioned ElastiCache', () => {
@@ -94,6 +106,14 @@ describe('checkELC002 — previous-gen ElastiCache node type', () => {
     expect(checkELC002(makeElastiCache({ instanceType: 'cache.t4g.micro', configuration: { monthlyCost: 10.51 } }), cfg)).toBeNull();
     expect(checkELC002(makeElastiCache({ instanceType: '', configuration: { monthlyCost: 100 } }), cfg)).toBeNull();
     expect(checkELC002(makeElastiCache({ type: 'ec2_instance', instanceType: 'cache.m5.large', configuration: { monthlyCost: 130 } }), cfg)).toBeNull();
+  });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const { ctx, warnings } = makeCtx();
+    const r = makeElastiCache({ instanceType: 'cache.r5.large', configuration: { engine: 'redis' } });
+    expect(checkELC002(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'ELC-002', resourceId: r.id });
   });
 });
 

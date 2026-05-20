@@ -183,7 +183,7 @@ export function buildScanPipelineSteps(opts: ScanPipelineOptions = {}): Pipeline
           errors?: CollectError[];
         } | undefined;
         const costsResult = ctx.results.get('costs') as { costs?: unknown[] } | undefined;
-        const rulesResult = ctx.results.get('rules') as { recommendations?: unknown[]; warnings?: ScanWarning[] } | undefined;
+        const rulesResult = ctx.results.get('rules') as { recommendations?: unknown[]; warnings?: RuleWarning[] } | undefined;
 
         const classifyResult = ctx.results.get('classify') as {
           recommendations?: unknown[];
@@ -284,7 +284,7 @@ export function buildScanPipelineSteps(opts: ScanPipelineOptions = {}): Pipeline
           resources,
           costs,
           recommendations,
-          warnings: (rulesResult?.warnings ?? []) as unknown as Record<string, unknown>[],
+          warnings: rulesResult?.warnings ?? [],
           started_at: pipelineStartedAt,
           ...(isPartial ? {
             metadata: {
