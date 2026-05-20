@@ -193,6 +193,19 @@ describe('checkRDS007 — Multi-AZ in non-production environment', () => {
     // case-insensitive
     expect(checkRDS007(makeRDS({ configuration: { multi_az: true, monthlyCost: 100 }, tags: { Environment: 'STAGING' } }), cfg)).not.toBeNull();
   });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeRDS({ configuration: { multi_az: true }, tags: { Environment: 'staging' } });
+    expect(checkRDS007(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'RDS-007', resourceId: r.id });
+  });
 });
 
 // ─── RDS-004: Unencrypted RDS storage ──────────────────────────────────────────
@@ -254,6 +267,19 @@ describe('checkRDS006 — gp2 to gp3 migration', () => {
     expect(checkRDS006(makeRDS({ configuration: { storage_type: 'io1' } }), cfg)).toBeNull();
     expect(checkRDS006(makeRDS({ configuration: {} }), cfg)).toBeNull();
   });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeRDS({ configuration: { storage_type: 'gp2' } });
+    expect(checkRDS006(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'RDS-006', resourceId: r.id });
+  });
 });
 
 // ─── RDS-008: Graviton migration ───────────────────────────────────────────────
@@ -275,6 +301,21 @@ describe('checkRDS008 — Graviton migration', () => {
     expect(checkRDS008(makeRDS({ instanceType: 'db.m7g.xlarge' }), cfg)).toBeNull();
     // unmapped family
     expect(checkRDS008(makeRDS({ instanceType: 'db.x1.xlarge' }), cfg)).toBeNull();
+  });
+
+  it('skips and warns when pricing-table misses AND monthly_cost is missing (#75 strict gating)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    // 'db.c5.large' maps to 'db.c7g.large' but neither is in FALLBACK_RDS_PRICES → both return 0;
+    // no monthlyCost forces the strict fallback to skip + warn.
+    const r = makeRDS({ instanceType: 'db.c5.large', configuration: { monthlyCost: NaN } });
+    expect(checkRDS008(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'RDS-008', resourceId: r.id });
   });
 });
 

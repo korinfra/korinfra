@@ -4,24 +4,25 @@
  */
 
 import type { Resource } from '../../aws/types.js';
-import type { Recommendation } from '../types.js';
+import type { Recommendation, RuleContext } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { strConfig, numConfig, daysSince, getMonthlyCost, confidenceFromUtilization, CONF_LIKELY, CONF_PROBABLE, CONF_ESTIMATE } from './helpers.js';
+import { strConfig, numConfig, daysSince, costOrWarn, confidenceFromUtilization, CONF_LIKELY, CONF_PROBABLE, CONF_ESTIMATE } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { FARGATE_LINUX_VCPU_HOURLY, FARGATE_LINUX_MEMORY_HOURLY, HOURS_PER_MONTH } from '../../pricing/resources.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
 /** ECS-001: ECS service with 0 running tasks. */
-export function checkECS001(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkECS001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ecs_service') return null;
   const runningCount = numConfig(r, 'running_count');
   const desiredCount = numConfig(r, 'desired_count');
   if (desiredCount <= 0 || runningCount > 0) return null;
   const ageDays = daysSince(r.launchTime);
   if (ageDays === null || ageDays < cfg.ecsIdleDays) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'ECS-001', ctx);
+  if (monthlyCost === null) return null;
   const filePath = strConfig(r, 'file_path');
   return {
     ruleId: 'ECS-001',
@@ -48,11 +49,12 @@ export function checkECS001(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** ECS-002: ECS service on EC2 launch type — consider Fargate. */
-export function checkECS002(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkECS002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ecs_service') return null;
   const launchType = strConfig(r, 'launch_type');
   if (launchType !== 'EC2') return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'ECS-002', ctx);
+  if (monthlyCost === null) return null;
   const filePath = strConfig(r, 'file_path');
 
   // Estimate Fargate cost using task CPU/memory from config.
@@ -112,12 +114,13 @@ export function checkECS002(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** ECS-003: ECS service over-provisioned with too many tasks. */
-export function checkECS003(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkECS003(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ecs_service' || !r.utilization) return null;
   if (r.utilization.cpuAverage >= cfg.ecsMinCPUThreshold) return null;
   const desiredCount = numConfig(r, 'desired_count') || numConfig(r, 'running_count') || 2;
   if (desiredCount < cfg.ecsMinDesiredCount) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'ECS-003', ctx);
+  if (monthlyCost === null) return null;
   const suggestedCount = Math.max(1, Math.floor(desiredCount / 2));
   const reductionRatio = (desiredCount - suggestedCount) / desiredCount;
   // Use actual reduction ratio but cap at cfg multiplier (conservative upper bound)

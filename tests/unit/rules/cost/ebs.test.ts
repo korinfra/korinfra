@@ -65,6 +65,19 @@ describe('checkEBS003 — gp2 to gp3 migration', () => {
     expect(checkEBS003(makeEBSVolume({ configuration: { volume_type: 'sc1', monthlyCost: 2 } }), cfg)).toBeNull();
     expect(checkEBS003(makeEBSVolume({ type: 'ec2_instance', configuration: { volume_type: 'gp2' } }), cfg)).toBeNull();
   });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeEBSVolume({ configuration: { volume_type: 'gp2' } });
+    expect(checkEBS003(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'EBS-003', resourceId: r.id });
+  });
 });
 
 // ─── EBS-002: Old snapshot > 90 days ─────────────────────────────────────────

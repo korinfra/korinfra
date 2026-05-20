@@ -8,7 +8,7 @@ import type { Recommendation, RuleContext } from '../types.js';
 import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { strConfig, boolConfig, numConfig, daysSince, sanitizeResourceName, normalizeToMonth, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization, CONF_LIKELY, CONF_PROBABLE } from './helpers.js';
+import { strConfig, boolConfig, numConfig, daysSince, sanitizeResourceName, normalizeToMonth, getMonthlyCostStrict, costOrWarn, confidenceFromUtilization, CONF_LIKELY, CONF_PROBABLE } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { HOURS_PER_MONTH, ALB_BASE_HOURLY } from '../../pricing/resources.js';
 
@@ -100,9 +100,10 @@ export function checkLB002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommenda
 }
 
 /** ELB-002: Classic Load Balancer in use. */
-export function checkELB002(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkELB002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'classic_load_balancer') return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'ELB-002', ctx);
+  if (monthlyCost === null) return null;
   const savings = monthlyCost * cfg.elbClassicToALBMultiplier;
   const filePath = strConfig(r, 'file_path');
   return {

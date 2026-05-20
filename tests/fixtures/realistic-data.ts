@@ -229,6 +229,7 @@ export const s3DataLake: Resource = {
   launchTime: twoYearsAgo,
   collectedAt: now,
   configuration: {
+    monthlyCost: 60,
     versioning_enabled: true,
     lifecycle_rules_count: 3,
     has_lifecycle: true,
@@ -249,6 +250,7 @@ export const s3Unencrypted: Resource = {
   launchTime: tenDaysAgo,
   collectedAt: now,
   configuration: {
+    monthlyCost: 25,
     versioning_enabled: false,
     lifecycle_rules_count: 0,
     has_lifecycle: false,

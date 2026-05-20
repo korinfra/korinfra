@@ -150,4 +150,17 @@ describe('checkELB002 — Classic Load Balancer migration', () => {
     expect(checkELB002(makeALB({ type: 'nlb', configuration: { monthlyCost: 25 } }), cfg)).toBeNull();
     expect(checkELB002(makeALB({ type: 'load_balancer', configuration: { monthlyCost: 25 } }), cfg)).toBeNull();
   });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeALB({ type: 'classic_load_balancer', configuration: {} });
+    expect(checkELB002(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'ELB-002', resourceId: r.id });
+  });
 });

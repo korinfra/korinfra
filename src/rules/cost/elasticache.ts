@@ -8,7 +8,7 @@ import type { Recommendation, RuleContext } from '../types.js';
 import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { strConfig, suggestCacheRightsize, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization, CONF_COST_OPT } from './helpers.js';
+import { strConfig, suggestCacheRightsize, sanitizeResourceName, getMonthlyCostStrict, costOrWarn, confidenceFromUtilization, CONF_COST_OPT } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
@@ -62,7 +62,7 @@ export function checkELC001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
 }
 
 /** ELC-002: Previous-generation ElastiCache node type (Graviton upgrade). */
-export function checkELC002(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkELC002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'elasticache_cluster') return null;
   const nodeType = r.instanceType || strConfig(r, 'node_type');
   if (!nodeType) return null;
@@ -87,7 +87,8 @@ export function checkELC002(r: Resource, cfg: Cfg): Recommendation | null {
   if (!newPrefix) return null;
 
   const suggestedType = newPrefix + nodeType.slice(oldPrefix.length);
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'ELC-002', ctx);
+  if (monthlyCost === null) return null;
   const savings = monthlyCost * cfg.elastiCacheGravitonMultiplier;
   const filePath = strConfig(r, 'file_path');
   return {
