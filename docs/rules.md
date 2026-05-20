@@ -4,7 +4,7 @@ korinfra uses two deterministic rule systems to analyze your AWS infrastructure.
 
 ## Two Rule Systems
 
-### Cost Optimization Rules (66 rules)
+### Cost Optimization Rules (67 rules)
 
 Cost rules evaluate live AWS resources and produce **recommendations** with estimated monthly savings.
 

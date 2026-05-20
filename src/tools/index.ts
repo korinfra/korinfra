@@ -56,6 +56,7 @@ export const allTools: ToolDefinition[] = [
   findOrphanEbsTool,
   findIdleRdsTool,
   getRiCoverageTool,
+  getComputeOptimizerRecommendationsTool,
   analyzePlanTool,
 ];
 

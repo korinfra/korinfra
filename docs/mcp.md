@@ -156,15 +156,15 @@ Or if you have korinfra installed globally:
 
 ---
 
-## Tools (21)
+## Tools (22)
 
-21 tools are shared between agent mode (in-process) and MCP server mode (external clients). Two additional tools are restricted: `git_commit_push` (exclusively for `fix` command agent, not exposed via MCP) and `apply_tags_real` (only callable via TUI confirmation gate, not exposed via MCP).
+22 tools are shared between agent mode (in-process) and MCP server mode (external clients). Two additional tools are restricted: `git_commit_push` (exclusively for `fix` command agent, not exposed via MCP) and `apply_tags_real` (only callable via TUI confirmation gate, not exposed via MCP).
 
 | Tool | Description |
 |---|---|
 | `collect_aws_resources` | Collect live AWS inventory with utilization metrics. Data is redacted at `moderate` level before being returned. |
 | `get_costs` | Cost breakdown (daily/monthly, by service/region) from Cost Explorer. |
-| `list_rules` | List all 67 cost rules + 46 security rules with metadata. |
+| `list_rules` | List all 67 cost rules + 47 security rules with metadata. |
 | `evaluate_rules` | Run deterministic rules against collected resource data. Returns findings with estimated monthly savings. |
 | `save_scan` | Persist scan results (resources, costs, findings, recommendations) to SQLite. |
 | `get_history` | Retrieve past scans from the local DB. |
@@ -172,6 +172,7 @@ Or if you have korinfra installed globally:
 | `scan_terraform` | Parse Terraform HCL files or directories. Returns structured resource definitions. |
 | `terraform_validate` | Run `terraform validate -json` and return parsed results. Does not require AWS credentials or backend access. |
 | `scan_security` | Evaluate security rules against Terraform resources. |
+| `analyze_plan` | Analyze a Terraform plan JSON (`terraform show -json plan.tfplan`) for monthly cost delta and post-apply rule findings. Returns per-change before/after costs, a net delta, and cost + security findings against the post-apply state. No AWS API calls. |
 | `classify_resources` | Classify AWS and Terraform resources into scenarios A/B/C, generate recommendations, and deduplicate findings. |
 | `detect_cost_anomalies` | Z-score anomaly detection on Cost Explorer time-series data. |
 | `create_github_pr` | Create a GitHub PR with fix details and savings estimate. Requires `GITHUB_TOKEN`. |
