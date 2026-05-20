@@ -19,6 +19,10 @@ export { defaults } from './defaults.js';
 export { defaultConfigDir, defaultConfigPath, defaultThresholdsPath, KORINFRA_DIR, defaultStoragePath, expandPath, resolveConfigPath, projectkorinfraDir, projectConfigPath, projectThresholdsPath, projectStoragePath } from './paths.js';
 export { validate } from './validate.js';
 
+const FORBIDDEN_LOADER = (fp: string): never => {
+  throw new Error(`JS/TS config files are not supported for security reasons: ${fp}. Use .korinfra/config.yaml instead.`);
+};
+
 const SEARCH_PLACES = [
   '.korinfra/config.yaml',
   '.korinfra/config.yml',
@@ -81,18 +85,15 @@ async function searchConfigFile(
 }
 
 export async function findConfigPath(configPath?: string): Promise<string | null> {
-  const forbiddenLoader = (fp: string) => {
-    throw new Error(`JS/TS config files are not supported for security reasons: ${fp}. Use .korinfra/config.yaml instead.`);
-  };
   const explorer = cosmiconfig('korinfra', {
     searchPlaces: [...SEARCH_PLACES],
     loaders: {
       '.yaml': (_fp: string, content: string) => yaml.load(content, { schema: yaml.JSON_SCHEMA }),
       '.yml': (_fp: string, content: string) => yaml.load(content, { schema: yaml.JSON_SCHEMA }),
-      '.js': forbiddenLoader,
-      '.mjs': forbiddenLoader,
-      '.cjs': forbiddenLoader,
-      '.ts': forbiddenLoader,
+      '.js': FORBIDDEN_LOADER,
+      '.mjs': FORBIDDEN_LOADER,
+      '.cjs': FORBIDDEN_LOADER,
+      '.ts': FORBIDDEN_LOADER,
     },
   });
 
@@ -246,18 +247,15 @@ export async function loadConfig(configPath?: string): Promise<Config> {
   const base = defaults() as unknown as Record<string, unknown>;
 
   // Build cosmiconfig explorer
-  const forbiddenLoader = (fp: string) => {
-    throw new Error(`JS/TS config files are not supported for security reasons: ${fp}. Use .korinfra/config.yaml instead.`);
-  };
   const explorer = cosmiconfig('korinfra', {
     searchPlaces: [...SEARCH_PLACES],
     loaders: {
       '.yaml': (_fp: string, content: string) => yaml.load(content, { schema: yaml.JSON_SCHEMA }),
       '.yml': (_fp: string, content: string) => yaml.load(content, { schema: yaml.JSON_SCHEMA }),
-      '.js': forbiddenLoader,
-      '.mjs': forbiddenLoader,
-      '.cjs': forbiddenLoader,
-      '.ts': forbiddenLoader,
+      '.js': FORBIDDEN_LOADER,
+      '.mjs': FORBIDDEN_LOADER,
+      '.cjs': FORBIDDEN_LOADER,
+      '.ts': FORBIDDEN_LOADER,
     },
   });
 

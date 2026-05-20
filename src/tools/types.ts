@@ -3,6 +3,7 @@
  */
 
 import { sep } from 'node:path';
+import { loadConfig } from '../config/index.js';
 import { redact } from '../redaction/redactor.js';
 import type { TerraformResource } from '../terraform/types.js';
 
@@ -102,3 +103,48 @@ export function errorResult(err: unknown): ToolResult {
     isError: true,
   };
 }
+
+/**
+ * Wraps a tool handler function in a standard try/catch → errorResult pattern.
+ * Eliminates per-tool boilerplate.
+ */
+export function createToolHandler<T>(
+  fn: (args: T) => Promise<ToolResult>,
+): (args: T) => Promise<ToolResult> {
+  return async (args) => {
+    try {
+      return await fn(args);
+    } catch (err) {
+      return errorResult(err instanceof Error ? err.message : String(err));
+    }
+  };
+}
+
+/** Extract a string arg from an untyped args record. */
+export function getStringArg(args: Record<string, unknown>, key: string, fallback = ''): string {
+  return typeof args[key] === 'string' ? args[key] : fallback;
+}
+
+/** Extract a typed array arg from an untyped args record. */
+export function getArrayArg<T>(args: Record<string, unknown>, key: string): T[] {
+  return Array.isArray(args[key]) ? (args[key] as T[]) : [];
+}
+
+/**
+ * Load the default AWS region from korinfra config.
+ * Returns undefined if config is unavailable or the field is not set.
+ */
+export async function getDefaultRegion(): Promise<string | undefined> {
+  try {
+    const config = await loadConfig();
+    return config.aws?.default_region;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Shared JSON Schema fragment for the AWS CLI profile parameter. */
+export const PROFILE_SCHEMA = { type: 'string', description: 'AWS CLI profile name.' } as const;
+
+/** Shared JSON Schema fragment for the regions array parameter. */
+export const REGIONS_SCHEMA = { type: 'array', items: { type: 'string' }, description: 'AWS regions to scan.', maxItems: 20 } as const;

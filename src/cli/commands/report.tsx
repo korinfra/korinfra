@@ -121,9 +121,6 @@ export function ReportCommand({
   const [selectedFormat, setSelectedFormat] = useState<ReportFormat>(
     hasDirectArgs ? (argFormat) : 'html',
   );
-  const [formatIdx, setFormatIdx] = useState(
-    hasDirectArgs ? ['html', 'csv', 'json'].indexOf(argFormat as string) : 0,
-  );
   const [outputPath, setOutputPath] = useState(
     argOutput ?? `~/korinfra-report.${hasDirectArgs ? argFormat : 'html'}`,
   );
@@ -138,6 +135,7 @@ export function ReportCommand({
     { label: 'CSV', value: 'csv', description: 'spreadsheet / data export' },
     { label: 'JSON', value: 'json', description: 'raw data, programmatic use' },
   ];
+  const formatIdx = formats.findIndex((f) => f.value === selectedFormat);
 
   // Resolve output path
   const resolvedOutputPath = useMemo(() => {
@@ -170,21 +168,13 @@ export function ReportCommand({
         return;
       }
       if (key.upArrow) {
-        const newIdx = Math.max(0, formatIdx - 1);
-        setFormatIdx(newIdx);
-        const newFmt = formats[newIdx];
-        if (newFmt) {
-          setSelectedFormat(newFmt.value);
-        }
+        const newFmt = formats[Math.max(0, formatIdx - 1)];
+        if (newFmt) setSelectedFormat(newFmt.value);
         return;
       }
       if (key.downArrow) {
-        const newIdx = Math.min(formats.length - 1, formatIdx + 1);
-        setFormatIdx(newIdx);
-        const newFmt = formats[newIdx];
-        if (newFmt) {
-          setSelectedFormat(newFmt.value);
-        }
+        const newFmt = formats[Math.min(formats.length - 1, formatIdx + 1)];
+        if (newFmt) setSelectedFormat(newFmt.value);
         return;
       }
       if (key.return) {

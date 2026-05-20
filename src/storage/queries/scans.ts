@@ -1,4 +1,5 @@
 import type { Driver } from '../drivers/node.js';
+import { safeParse } from '../helpers.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,22 +24,18 @@ export interface Scan {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function safeParse(raw: unknown): Record<string, unknown> | null {
-  if (!raw) return null;
-  try { return JSON.parse(raw as string) as Record<string, unknown>; } catch { return null; }
-}
-
+/* eslint-disable eqeqeq */
 function rowToScan(row: Record<string, unknown>): Scan {
   const r = row as Record<string, string | number | null | undefined>;
-  const created_at = r['created_at'] !== null && r['created_at'] !== undefined ? String(r['created_at']) : undefined;
+  const created_at = r['created_at'] != null ? String(r['created_at']) : undefined;
   const result: Record<string, unknown> = {
     id: String(r['id'] ?? ''),
     started_at: String(r['started_at'] ?? ''),
-    completed_at: r['completed_at'] !== null && r['completed_at'] !== undefined ? String(r['completed_at']) : null,
+    completed_at: r['completed_at'] != null ? String(r['completed_at']) : null,
     status: String(r['status'] ?? ''),
-    terraform_path: r['terraform_path'] !== null && r['terraform_path'] !== undefined ? String(r['terraform_path']) : null,
-    aws_profile: r['aws_profile'] !== null && r['aws_profile'] !== undefined ? String(r['aws_profile']) : null,
-    aws_region: r['aws_region'] !== null && r['aws_region'] !== undefined ? String(r['aws_region']) : null,
+    terraform_path: r['terraform_path'] != null ? String(r['terraform_path']) : null,
+    aws_profile: r['aws_profile'] != null ? String(r['aws_profile']) : null,
+    aws_region: r['aws_region'] != null ? String(r['aws_region']) : null,
     total_resources: Number(row['total_resources'] ?? 0),
     total_cost: Number(row['total_cost'] ?? 0),
     total_recommendations: Number(row['total_recommendations'] ?? 0),
@@ -52,6 +49,7 @@ function rowToScan(row: Record<string, unknown>): Scan {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return result as any as Scan;
 }
+/* eslint-enable eqeqeq */
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 

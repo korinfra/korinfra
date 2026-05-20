@@ -117,10 +117,6 @@ function extractConfigString(config: Record<string, unknown> | undefined, key: s
   return '[object]';
 }
 
-function normalizeComparableValue(value: string): string {
-  return value.trim().toLowerCase();
-}
-
 function buildComparableValueMap(
   config: Record<string, unknown> | undefined,
   fields: string[],
@@ -129,7 +125,7 @@ function buildComparableValueMap(
   for (const field of fields) {
     const raw = extractConfigString(config, field);
     if (!raw) continue;
-    const normalized = normalizeComparableValue(raw);
+    const normalized = raw.trim().toLowerCase();
     if (normalized) values.set(field, normalized);
   }
   return values;

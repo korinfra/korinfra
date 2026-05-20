@@ -5,9 +5,8 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
-import type { ThresholdsOverride } from '../config.js';
-import type { THRESHOLDS } from '../config.js';
-import { suggestRDSRightsize, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization } from './helpers.js';
+import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
+import { suggestRDSRightsize, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, confidenceFromUtilization, costOrWarn, calculateSavingsWithPricingFallback, CONF_CERTAIN, CONF_HIGH, CONF_LIKELY, CONF_PROBABLE, CONF_COST_OPT, CONF_ESTIMATE } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { RDS_GP2_STORAGE_PER_GB, RDS_GP3_STORAGE_PER_GB, RDS_IO1_STORAGE_PER_GB, RDS_IO2_STORAGE_PER_GB, estimateRDSCostSync } from '../../pricing/resources.js';
 
@@ -18,11 +17,8 @@ export function checkRDS001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
   if (r.type !== 'rds_instance' || !r.utilization) return null;
   if (r.utilization.cpuAverage >= cfg.rdsIdleCPUThreshold) return null;
   if (r.utilization.dataPoints <= 0) return null;
-  const monthlyCost = getMonthlyCostStrict(r);
-  if (monthlyCost === null) {
-    ctx?.warn('RDS-001', r.id, r.type, 'monthly_cost missing or invalid');
-    return null;
-  }
+  const monthlyCost = costOrWarn(r, 'RDS-001', ctx);
+  if (monthlyCost === null) return null;
   const filePath = strConfig(r, 'file_path');
   const confidence = confidenceFromUtilization(0.85, r.utilization);
   return {
@@ -51,8 +47,7 @@ export function checkRDS001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
 }
 
 /** RDS-002: Production RDS without Multi-AZ. */
-export function checkRDS002(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkRDS002(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'rds_instance') return null;
   if (boolConfig(r, 'multi_az')) return null;
   // Normalize tag value to lowercase for case-insensitive comparison
@@ -71,7 +66,7 @@ export function checkRDS002(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enable_multi_az',
-    confidence: clampConfidence(0.9),
+    confidence: clampConfidence(CONF_LIKELY),
     filePath,
     currentConfig: { multi_az: false },
     suggestedConfig: { multi_az: true },
@@ -152,8 +147,7 @@ export function checkRDS003(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** RDS-004: Unencrypted RDS storage. */
-export function checkRDS004(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkRDS004(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'rds_instance') return null;
   if (boolConfig(r, 'storage_encrypted')) return null;
   const filePath = strConfig(r, 'file_path');
@@ -168,7 +162,7 @@ export function checkRDS004(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'high',
     estimatedSavings: 0,
     suggestedAction: 'enable_storage_encryption',
-    confidence: clampConfidence(0.99),
+    confidence: clampConfidence(CONF_CERTAIN),
     filePath,
     currentConfig: { storage_encrypted: false },
     suggestedConfig: { storage_encrypted: true },
@@ -183,8 +177,7 @@ export function checkRDS004(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** RDS-005: Publicly accessible RDS instance. */
-export function checkRDS005(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkRDS005(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'rds_instance') return null;
   if (!boolConfig(r, 'publicly_accessible')) return null;
   const filePath = strConfig(r, 'file_path');
@@ -199,7 +192,7 @@ export function checkRDS005(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'disable_public_access',
-    confidence: clampConfidence(0.99),
+    confidence: clampConfidence(CONF_CERTAIN),
     filePath,
     currentConfig: { publicly_accessible: true },
     suggestedConfig: { publicly_accessible: false },
@@ -215,7 +208,6 @@ export function checkRDS005(r: Resource, cfg: Cfg): Recommendation | null {
 
 /** RDS-006: gp2 → gp3 storage migration. */
 export function checkRDS006(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
   if (r.type !== 'rds_instance') return null;
   if (strConfig(r, 'storage_type') !== 'gp2') return null;
   const monthlyCost = getMonthlyCost(r);
@@ -232,7 +224,7 @@ export function checkRDS006(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_storage_to_gp3',
-    confidence: clampConfidence(0.95),
+    confidence: clampConfidence(CONF_HIGH),
     filePath,
     currentConfig: { storage_type: 'gp2' },
     suggestedConfig: { storage_type: 'gp3' },
@@ -247,7 +239,6 @@ export function checkRDS006(r: Resource, cfg: Cfg): Recommendation | null {
 
 /** RDS-007: Multi-AZ enabled in non-production environment. */
 export function checkRDS007(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
   if (r.type !== 'rds_instance') return null;
   if (!boolConfig(r, 'multi_az')) return null;
   const env = (r.tags?.['Environment'] ?? '').toLowerCase();
@@ -267,7 +258,7 @@ export function checkRDS007(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'disable_multi_az_non_prod',
-    confidence: clampConfidence(0.85),
+    confidence: clampConfidence(CONF_PROBABLE),
     filePath,
     currentConfig: { multi_az: true, environment: env },
     suggestedConfig: { multi_az: false },
@@ -310,7 +301,6 @@ function buildRDSGravitonType(instanceClass: string): string | null {
 
 /** RDS-008: RDS instance eligible for Graviton migration. */
 export function checkRDS008(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
   if (r.type !== 'rds_instance') return null;
   const cls = r.instanceType;
   if (!cls.startsWith('db.')) return null;
@@ -322,17 +312,12 @@ export function checkRDS008(r: Resource, cfg: Cfg): Recommendation | null {
   const currentMonthly = estimateRDSCostSync(cls, r.region);
   const gravitonMonthly = estimateRDSCostSync(suggestedClass, r.region);
 
-  let savings: number;
-  let confidence: number;
-  if (currentMonthly > 0 && gravitonMonthly > 0) {
-    savings = Math.max(0, currentMonthly - gravitonMonthly);
-    confidence = 0.80;
-  } else {
-    savings = monthlyCost * cfg.rdsGravitonMultiplier;
-    confidence = 0.65;
-  }
-  savings = guardSavings(savings);
-  confidence = clampConfidence(confidence);
+  const { savings, confidence } = calculateSavingsWithPricingFallback(
+    currentMonthly,
+    gravitonMonthly,
+    monthlyCost,
+    cfg.rdsGravitonMultiplier,
+  );
 
   const filePath = strConfig(r, 'file_path');
   return {
@@ -344,9 +329,9 @@ export function checkRDS008(r: Resource, cfg: Cfg): Recommendation | null {
     reasoning: `AWS Graviton RDS instances offer better price/performance. ${cls} → ${suggestedClass} saves ~15%/mo.`,
     impact: 'medium',
     risk: 'low',
-    estimatedSavings: guardSavings(savings),
+    estimatedSavings: savings,
     suggestedAction: `migrate_to_graviton_${suggestedClass}`,
-    confidence: clampConfidence(confidence),
+    confidence,
     filePath,
     currentConfig: { instance_class: cls },
     suggestedConfig: { instance_class: suggestedClass },
@@ -368,11 +353,8 @@ export function checkRDS009(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
   const connections = r.utilization.connectionCount ?? 0;
   if (connections >= cfg.rdsConnectionIdleThreshold) return null;
   if (r.utilization.dataPoints <= 0) return null;
-  const monthlyCost = getMonthlyCostStrict(r);
-  if (monthlyCost === null) {
-    ctx?.warn('RDS-009', r.id, r.type, 'monthly_cost missing or invalid');
-    return null;
-  }
+  const monthlyCost = costOrWarn(r, 'RDS-009', ctx);
+  if (monthlyCost === null) return null;
   const filePath = strConfig(r, 'file_path');
   const savings = guardSavings(monthlyCost * cfg.rdsIdleMultiplier);
 
@@ -430,7 +412,7 @@ export function checkRDS010(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'purchase_rds_reserved_instance',
-    confidence: clampConfidence(0.70),
+    confidence: clampConfidence(CONF_ESTIMATE),
     currentConfig: { pricing: 'on_demand', instance_class: r.instanceType, cpu_avg_pct: r.utilization.cpuAverage, running_days: 30 },
     suggestedConfig: { pricing: 'reserved_1yr_no_upfront' },
     patchContent: `# Purchase 1-year No-Upfront RDS Reserved Instance for ${sanitizeResourceName(r.instanceType)} ${sanitizeResourceName(r.region)}\n# Check AWS Cost Explorer > RI recommendations first to avoid duplicates`,
@@ -445,8 +427,7 @@ export function checkRDS010(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** RDS-011: RDS without automated backups. */
-export function checkRDS011(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkRDS011(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'rds_instance') return null;
   if (!('backup_retention_period' in r.configuration)) return null;
   if (numConfig(r, 'backup_retention_period') !== 0) return null;
@@ -462,7 +443,7 @@ export function checkRDS011(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enable_automated_backups',
-    confidence: clampConfidence(0.95),
+    confidence: clampConfidence(CONF_HIGH),
     filePath,
     currentConfig: { backup_retention_period: 0 },
     suggestedConfig: { backup_retention_period: 7 },
@@ -579,7 +560,7 @@ export function checkRDS012(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: guardSavings(savings),
     suggestedAction: `upgrade_engine_to_${suggestedVersion}`,
-    confidence: clampConfidence(0.85),
+    confidence: clampConfidence(CONF_PROBABLE),
     filePath,
     currentConfig: { engine, engine_version: engineVersion, vCPU: vcpus },
     suggestedConfig: { engine_version: suggestedVersion },
@@ -633,7 +614,7 @@ export function checkRDS013(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'reduce_allocated_storage',
-    confidence: clampConfidence(0.8),
+    confidence: clampConfidence(CONF_COST_OPT),
     filePath,
     currentConfig: { allocated_storage_gb: allocatedGB, free_storage_gb: freeGB },
     suggestedConfig: { allocated_storage_gb: suggestedGB },
@@ -693,7 +674,7 @@ export function checkRDS014(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: guardSavings(monthlySurcharge),
     suggestedAction: 'upgrade_before_extended_support',
-    confidence: clampConfidence(0.9),
+    confidence: clampConfidence(CONF_LIKELY),
     filePath,
     currentConfig: { engine, engine_version: engineVersion, days_until_eol: daysUntilEol },
     suggestedConfig: { engine_version: 'latest' },

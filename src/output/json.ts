@@ -1,4 +1,5 @@
 import type { Formatter, ScanReport, CostEntry, ResourceEntry, RecommendationEntry } from './formatter.js';
+import { groupBySum, aggregateDailyCosts } from '../utils/aggregate.js';
 
 function safeNum(n: number, decimals = 4): number {
   const factor = Math.pow(10, decimals);
@@ -92,8 +93,7 @@ interface JSONReport extends ScanReport {
 }
 
 function buildCostByService(costs: CostEntry[]): ServiceTotal[] {
-  const m = new Map<string, number>();
-  for (const c of costs) m.set(c.serviceName, (m.get(c.serviceName) ?? 0) + c.monthlyCost);
+  const m = groupBySum(costs, c => c.serviceName, c => c.monthlyCost);
   const total = [...m.values()].reduce((s, v) => s + v, 0);
   return [...m.entries()]
     .sort((a, b) => b[1] - a[1])
@@ -105,11 +105,8 @@ function buildCostByService(costs: CostEntry[]): ServiceTotal[] {
 }
 
 function buildCostByRegion(resources: ResourceEntry[], costs: CostEntry[]): RegionTotal[] {
-  const costMap = new Map<string, number>();
-  for (const c of costs) costMap.set(c.region, (costMap.get(c.region) ?? 0) + c.monthlyCost);
-
-  const resMap = new Map<string, number>();
-  for (const r of resources) resMap.set(r.region, (resMap.get(r.region) ?? 0) + 1);
+  const costMap = groupBySum(costs, c => c.region, c => c.monthlyCost);
+  const resMap = groupBySum(resources, r => r.region, () => 1);
 
   const regions = new Set([...costMap.keys(), ...resMap.keys()]);
   return [...regions]
@@ -121,12 +118,18 @@ function buildCostByRegion(resources: ResourceEntry[], costs: CostEntry[]): Regi
     .sort((a, b) => b.monthlyCost - a.monthlyCost);
 }
 
+function getHealthLabel(score: number): string {
+  if (score >= 90) return 'Excellent';
+  if (score >= 70) return 'Good';
+  if (score >= 50) return 'Fair';
+  return 'Needs attention';
+}
+
 function buildHealthScore(totalResources: number, recommendationCount: number): { score: number; label: string } {
   if (totalResources === 0) return { score: 100, label: 'No data' };
   const ratio = recommendationCount / totalResources;
   const score = Math.max(0, Math.round(100 - ratio * 100));
-  const label = score >= 90 ? 'Excellent' : score >= 70 ? 'Good' : score >= 50 ? 'Fair' : 'Needs attention';
-  return { score, label };
+  return { score, label: getHealthLabel(score) };
 }
 
 function buildTagCoverage(resources: ResourceEntry[]): TagCoverage {
@@ -142,14 +145,10 @@ function buildTagCoverage(resources: ResourceEntry[]): TagCoverage {
 function buildCostTrend(costs: CostEntry[]): CostTrendResult | null {
   if (costs.length === 0) return null;
 
-  const dailyMap = new Map<string, number>();
-  for (const c of costs) {
-    const d = c.costDate.slice(0, 10);
-    dailyMap.set(d, (dailyMap.get(d) ?? 0) + c.dailyCost);
-  }
+  const dailyMap = aggregateDailyCosts(costs);
 
   const days = [...dailyMap.keys()].sort();
-  const vals = days.map(d => dailyMap.get(d) as number);
+  const vals = days.map(d => dailyMap.get(d) ?? 0);
 
   const firstWeekVals = vals.slice(0, 7);
   const lastWeekVals = vals.slice(-7);

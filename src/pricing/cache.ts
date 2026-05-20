@@ -27,8 +27,7 @@ export class PricingCache {
    * Retrieves a cached hourly price. Returns null if not found or expired.
    */
   getCachedPrice(serviceCode: string, resourceKey: string, region: string): number | null {
-    const entry = getPrice(this.db, serviceCode, resourceKey, region);
-    return entry ? entry.hourly_price : null;
+    return getPrice(this.db, serviceCode, resourceKey, region)?.hourly_price ?? null;
   }
 
   /**

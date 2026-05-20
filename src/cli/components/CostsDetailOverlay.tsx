@@ -11,8 +11,8 @@
  */
 
 import React from 'react';
-import { Box, Text, useApp, useInput, useStdout } from 'ink';
-import { useGlobalOverlay } from '../hooks/useGlobalOverlay.js';
+import { Box, Text, useApp, useStdout } from 'ink';
+import { useOverlayAwareInput } from '../hooks/useOverlayAwareInput.js';
 
 import { colors, borders, semanticColors, supportsUnicode } from '../theme.js';
 import { GAP_BETWEEN_SECTIONS, GAP_ROW, PADDING_X } from '../ui/spacing.js';
@@ -85,18 +85,17 @@ export function CostsDetailOverlay({
 }: CostsDetailOverlayProps): React.JSX.Element {
   const { exit } = useApp();
   const { stdout } = useStdout();
-  const { helpOpen, paletteOpen } = useGlobalOverlay();
   const termWidth = stdout?.columns ?? 80;
 
   // Width: 50% of terminal, capped 55–100
   const overlayWidth = Math.max(55, Math.min(Math.floor(termWidth * 0.5), 100));
 
-  useInput((input, key) => {
+  useOverlayAwareInput((input, key) => {
     if (input === 'q') exit();
     if (key.escape || input === 'b') { onClose(); return; }
     if (key.rightArrow && hasNext) { onNext?.(); return; }
     if (key.leftArrow && hasPrev) { onPrev?.(); return; }
-  }, { isActive: !helpOpen && !paletteOpen });
+  });
 
   const LABEL_W = 'Monthly projection:  '.length;
   const lbl = (s: string): string => s.padEnd(LABEL_W);

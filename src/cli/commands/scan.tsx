@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
 import { homedir } from 'node:os';
 
@@ -14,7 +14,7 @@ import { EmptyState } from '../components/EmptyState.js';
 import { StatusLine } from '../components/StatusLine.js';
 import { ScanDetailOverlay } from '../components/ScanDetailOverlay.js';
 import type { ScanDetailRec } from '../components/ScanDetailOverlay.js';
-import { colors, icons, semanticColors } from '../theme.js';
+import { colors, icons, semanticColors, getSeverityColor } from '../theme.js';
 import { GAP_BETWEEN_SECTIONS, MARGIN_LEFT_CONTENT, MARGIN_LEFT_RESULT } from '../ui/spacing.js';
 import { DBG_DIR } from '../../aws/debug.js';
 import { DOT_SEP, SEVERITY_LABELS } from '../ui/text.js';
@@ -75,12 +75,7 @@ export const SCAN_RECOMMEND_COLUMNS: ColumnDef<ScanRecommendationRow>[] = [
     width: 10,
     priority: 1,
     renderCell: (value, _row) => {
-      const v = String(value).toLowerCase();
-      const color = v === 'critical' ? semanticColors.severity.critical
-        : v === 'high' ? semanticColors.severity.high
-        : v === 'medium' ? semanticColors.severity.medium
-        : v === 'low' ? semanticColors.severity.low
-        : undefined;
+      const color = getSeverityColor(String(value));
       return <Text color={color}>{String(value)}</Text>;
     },
   },
@@ -221,7 +216,7 @@ function SelectableRecsResponsive({ recs, maxVisible, maxRows, onAction, onOpenD
 
   const selectedRec = flatRecs[selectedIndex];
 
-  useInput((input, key) => {
+  const handleInput = useCallback((input: string, key: Parameters<Parameters<typeof useInput>[0]>[1]) => {
     if (key.upArrow) { setSelectedIndex((i) => Math.max(0, i - 1)); return; }
     if (key.downArrow) { setSelectedIndex((i) => Math.min(flatRecs.length - 1, i + 1)); return; }
     if (key.return && selectedRec !== undefined) {
@@ -237,7 +232,8 @@ function SelectableRecsResponsive({ recs, maxVisible, maxRows, onAction, onOpenD
       onAction?.({ type: 'navigate' as const, command: 'recommend', args: ['--refresh', '--select', selectedRec.id] });
       return;
     }
-  }, { isActive: !overlayActive });
+  }, [flatRecs.length, selectedRec, onOpenDetail, onAction]);
+  useInput(handleInput, { isActive: !overlayActive });
 
   let flatIdx = 0;
 
@@ -289,6 +285,60 @@ function ScanStatsSummary({ summary, criticalCount, totalSavings, recCount }: {
   );
 }
 
+function StaleBanner({ ageHours }: { ageHours: number }): React.JSX.Element {
+  const ageLabel = ageHours >= 2 ? `${ageHours}h` : '1h';
+  const isNarrow = (process.stdout.columns ?? 80) <= TERMINAL_WIDTHS.narrow;
+  return (
+    <Box flexDirection="column" marginBottom={GAP_BETWEEN_SECTIONS}>
+      {isNarrow ? (
+        <>
+          <Text color={semanticColors.badge.stale}>
+            {icons.warning} Scan {ageLabel} old
+          </Text>
+          <Text color={semanticColors.badge.stale}>
+            Press <Text color={colors.warning}>(r)</Text> to refresh
+          </Text>
+        </>
+      ) : (
+        <Text color={semanticColors.badge.stale}>
+          {icons.warning}{'  '}Scan results are {ageLabel} old. Press <Text color={colors.warning}>(r)</Text> to refresh.
+        </Text>
+      )}
+    </Box>
+  );
+}
+
+function PartialResultsBanner({
+  failedRegions,
+  errorCount,
+}: {
+  failedRegions: string[];
+  errorCount: number;
+}): React.JSX.Element {
+  const isNarrow = (process.stdout.columns ?? 80) <= TERMINAL_WIDTHS.narrow;
+  const regionLabel = failedRegions.length > 0 ? failedRegions.join(', ') : null;
+  const shortMsg = failedRegions.length > 0
+    ? `Partial results — ${failedRegions.length} region${failedRegions.length !== 1 ? 's' : ''} skipped`
+    : `Partial results — ${errorCount} collection error${errorCount !== 1 ? 's' : ''}`;
+  return (
+    <Box flexDirection="column" marginBottom={GAP_BETWEEN_SECTIONS}>
+      {isNarrow ? (
+        <>
+          <Text color={colors.warning}>{icons.warning} {shortMsg}</Text>
+          {regionLabel !== null && <Text color={colors.warning}>Skipped: {regionLabel}</Text>}
+        </>
+      ) : (
+        <Text color={colors.warning}>
+          {icons.warning}{'  '}
+          {regionLabel !== null
+            ? `${shortMsg}: ${regionLabel}`
+            : `${shortMsg} — run with --debug for details`}
+        </Text>
+      )}
+    </Box>
+  );
+}
+
 function makeRenderScanResult(
   onAction?: (action: TuiAction) => void,
   onOpenDetail?: (rec: ScanDetailRec) => void,
@@ -314,51 +364,17 @@ function makeRenderScanResult(
     // Stale data banner — shown if last scan age > 1 hour
     if (staleBannerAge !== undefined && staleBannerAge !== null && staleBannerAge > 0) {
       const ageHours = Math.round(staleBannerAge / 3600);
-      const ageLabel = ageHours >= 2 ? `${ageHours}h` : '1h';
-      const isNarrow = (process.stdout.columns ?? 80) <= TERMINAL_WIDTHS.narrow;
-      items.push(
-        <Box key="stale-banner" flexDirection="column" marginBottom={GAP_BETWEEN_SECTIONS}>
-          {isNarrow ? (
-            <>
-              <Text color={semanticColors.badge.stale}>
-                {icons.warning} Scan {ageLabel} old
-              </Text>
-              <Text color={semanticColors.badge.stale}>
-                Press <Text color={colors.warning}>(r)</Text> to refresh
-              </Text>
-            </>
-          ) : (
-            <Text color={semanticColors.badge.stale}>
-              {icons.warning}{'  '}Scan results are {ageLabel} old. Press <Text color={colors.warning}>(r)</Text> to refresh.
-            </Text>
-          )}
-        </Box>,
-      );
+      items.push(<StaleBanner key="stale-banner" ageHours={ageHours} />);
     }
 
     // Partial results banner — shown when one or more regions returned IAM/permission errors
     if (summary.partial) {
-      const isNarrow = (process.stdout.columns ?? 80) <= TERMINAL_WIDTHS.narrow;
-      const regionLabel = summary.failedRegions.length > 0 ? summary.failedRegions.join(', ') : null;
-      const shortMsg = summary.failedRegions.length > 0
-        ? `Partial results — ${summary.failedRegions.length} region${summary.failedRegions.length !== 1 ? 's' : ''} skipped`
-        : `Partial results — ${summary.errorCount} collection error${summary.errorCount !== 1 ? 's' : ''}`;
       items.push(
-        <Box key="partial-banner" flexDirection="column" marginBottom={GAP_BETWEEN_SECTIONS}>
-          {isNarrow ? (
-            <>
-              <Text color={colors.warning}>{icons.warning} {shortMsg}</Text>
-              {regionLabel !== null && <Text color={colors.warning}>Skipped: {regionLabel}</Text>}
-            </>
-          ) : (
-            <Text color={colors.warning}>
-              {icons.warning}{'  '}
-              {regionLabel !== null
-                ? `${shortMsg}: ${regionLabel}`
-                : `${shortMsg} — run with --debug for details`}
-            </Text>
-          )}
-        </Box>,
+        <PartialResultsBanner
+          key="partial-banner"
+          failedRegions={summary.failedRegions}
+          errorCount={summary.errorCount}
+        />,
       );
     }
 
@@ -462,12 +478,12 @@ export function ScanCommand({
   const { helpOpen, paletteOpen } = useGlobalOverlay();
   const overlayActive = overlayRec !== null || helpOpen || paletteOpen;
 
-  const handleOpenDetail = useMemo(
-    () => (rec: ScanDetailRec) => { setOverlayRec(rec); },
+  const handleOpenDetail = useCallback(
+    (rec: ScanDetailRec) => { setOverlayRec(rec); },
     [],
   );
-  const handleCloseDetail = useMemo(
-    () => () => { setOverlayRec(null); },
+  const handleCloseDetail = useCallback(
+    () => { setOverlayRec(null); },
     [],
   );
 

@@ -3,6 +3,7 @@ import { redactObject } from '../redaction/index.js';
 import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition } from './types.js';
 import type { Granularity, GroupBy } from '../aws/cost-explorer.js';
+import { formatDateISO } from '../utils/date.js';
 
 export const getCostsTool: ToolDefinition = {
   name: 'get_costs',
@@ -53,8 +54,8 @@ export const getCostsTool: ToolDefinition = {
         const now = new Date();
         const start = new Date(now);
         start.setDate(start.getDate() - days);
-        startDate = start.toISOString().slice(0, 10);
-        endDate = now.toISOString().slice(0, 10);
+        startDate = formatDateISO(start);
+        endDate = formatDateISO(now);
       } else {
         startDate = typeof args['startDate'] === 'string' ? args['startDate'] : undefined;
         endDate = typeof args['endDate'] === 'string' ? args['endDate'] : undefined;

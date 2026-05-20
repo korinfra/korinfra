@@ -5,9 +5,8 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
-import type { ThresholdsOverride } from '../config.js';
-import type { THRESHOLDS } from '../config.js';
-import { strConfig, boolConfig, numConfig, getMonthlyCost, triStateConfig } from './helpers.js';
+import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
+import { strConfig, boolConfig, numConfig, getMonthlyCost, triStateConfig, CONF_HIGH, CONF_COST_OPT, CONF_ESTIMATE, CONF_REVIEW_ONLY } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
@@ -37,7 +36,7 @@ export function checkS3001(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: savings,
     suggestedAction: 'add_lifecycle_policy',
-    confidence: clampConfidence(0.7),
+    confidence: clampConfidence(CONF_ESTIMATE),
     filePath,
     currentConfig: { lifecycle_rules_count: 0 },
     suggestedConfig: { lifecycle_rule: 'transition_to_ia_30d_glacier_90d' },
@@ -88,7 +87,7 @@ export function checkS3002(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: savings,
     suggestedAction: 'add_intelligent_tiering',
-    confidence: clampConfidence(0.6),
+    confidence: clampConfidence(CONF_REVIEW_ONLY),
     filePath,
     currentConfig: { lifecycle_rules_count: lifecycleCount, has_intelligent_tiering: false },
     suggestedConfig: { storage_class: 'INTELLIGENT_TIERING' },
@@ -102,8 +101,7 @@ export function checkS3002(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** S3-003: Bucket without versioning. */
-export function checkS3003(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkS3003(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 's3_bucket') return null;
   // Skip when versioning state could not be determined (transient API failure).
   if (triStateConfig(r, 'versioning_enabled') === 'unknown') return null;
@@ -120,7 +118,7 @@ export function checkS3003(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enable_versioning',
-    confidence: clampConfidence(0.8),
+    confidence: clampConfidence(CONF_COST_OPT),
     filePath,
     currentConfig: { versioning_enabled: false },
     suggestedConfig: { versioning_enabled: true },
@@ -135,8 +133,7 @@ export function checkS3003(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** S3-004: Bucket without server-side encryption. */
-export function checkS3004(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkS3004(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 's3_bucket') return null;
   if (!('encryption_enabled' in r.configuration)) return null;
   // Skip when encryption state could not be determined (transient API failure)
@@ -155,7 +152,7 @@ export function checkS3004(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enable_default_encryption',
-    confidence: clampConfidence(0.95),
+    confidence: clampConfidence(CONF_HIGH),
     filePath,
     currentConfig: { encryption_enabled: false },
     suggestedConfig: { encryption_enabled: true, encryption_algorithm: 'AES256' },

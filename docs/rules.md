@@ -28,7 +28,7 @@ The runner (`evaluateRules()` in `src/rules/index.ts`) iterates all resources ×
 
 Recommendations with `confidence < 0.40` are suppressed entirely.
 
-### Security Rules (46 rules)
+### Security Rules (47 rules)
 
 Security rules evaluate **parsed Terraform resources** (HCL files) and produce **findings** with severity levels.
 
@@ -290,7 +290,7 @@ The highest-quality recommendation (by `qualityScore`) per `(ruleId, resourceId)
 
 ---
 
-## Complete Security Rule Reference (46 rules)
+## Complete Security Rule Reference (47 rules)
 
 ### S3 Security (6 rules)
 
@@ -312,12 +312,13 @@ The highest-quality recommendation (by `qualityScore`) per `(ruleId, resourceId)
 | IAM-SEC-003 | IAM role with wildcard Principal in trust policy | critical | Trust policy allows any principal (`*`) to assume the role |
 | IAM-SEC-004 | IAM policy uses NotAction (implicit allow-all) | critical | `NotAction` implicitly allows every action except those listed — overly permissive |
 
-### EC2 & Security Groups (8 rules)
+### EC2 & Security Groups (9 rules)
 
 | ID | Title | Severity | Description |
 |----|-------|----------|-------------|
 | EC2-SEC-001 | EC2 instance without IMDSv2 | high | IMDSv1 remains enabled, increasing metadata-exfiltration risk |
 | EC2-SEC-002 | EC2 instance with hardcoded credentials | critical | Credential-like values detected in user data or launch template content |
+| EC2-SEC-003 | EC2 instance with public IP auto-assigned | medium | Instance directly reachable from the internet via associate_public_ip_address |
 | EC2-SEC-004 | EC2 instance uses deprecated instance type | medium | Legacy instance families increase operational and security risk |
 | SG-SEC-001 | Security group allows ingress from 0.0.0.0/0 | critical | Unrestricted inbound traffic from the internet |
 | SG-SEC-002 | Security group allows SSH from 0.0.0.0/0 | critical | SSH (port 22) is open to the entire internet |
@@ -352,10 +353,10 @@ The highest-quality recommendation (by `qualityScore`) per `(ruleId, resourceId)
 
 | ID | Title | Severity | Description |
 |----|-------|----------|-------------|
-| LAMBDA-SEC-001 | Lambda function without dead letter queue | medium | No DLQ configured for failed invocations |
-| LAMBDA-SEC-002 | Lambda function in VPC without security group | medium | Running in VPC but no security group attached |
 | LAM-SEC-001 | Lambda function without VPC configuration | medium | Function not configured to run inside a VPC |
 | LAM-SEC-002 | Lambda function with hardcoded credentials in environment variables | critical | Credential-like values detected in environment variables |
+| LAM-SEC-003 | Lambda function without dead letter queue | medium | No DLQ configured for failed invocations |
+| LAM-SEC-004 | Lambda function in VPC without security group | medium | Running in VPC but no security group attached |
 
 ### Network Security (2 rules)
 

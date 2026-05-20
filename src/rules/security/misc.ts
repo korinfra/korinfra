@@ -103,26 +103,6 @@ export const miscRules: SecurityRule[] = [
     recommendation: 'Set readonlyRootFilesystem = true in container definitions',
   },
   {
-    id: 'EC2-SEC-004',
-    title: 'EC2 instance uses deprecated instance type',
-    description:
-      'Instance uses a previous generation type (t1, m1, m2, c1, t2, m3, c3, r3, m4, c4, r4)',
-    severity: 'medium',
-    resourceTypes: ['aws_instance'],
-    evaluate: (res) => {
-      const it = res.configuration['instance_type'];
-      if (typeof it !== 'string' || !it) return false;
-      const prefixes = [
-        't1.', 'm1.', 'm2.', 'c1.', 'cc1.', 'cc2.', 'cg1.', 'cr1.', 'hi1.', 'hs1.',
-        't2.', 'm3.', 'c3.', 'r3.', 'i2.', 'd2.', 'g2.',
-        'm4.', 'c4.', 'r4.',
-      ];
-      return prefixes.some((p) => it.startsWith(p));
-    },
-    recommendation:
-      'Upgrade to current generation instance type for better price/performance',
-  },
-  {
     id: 'TAG-SEC-001',
     title: 'Resource missing required tags',
     description: 'Resource is missing required tags (Environment, Team, Project)',

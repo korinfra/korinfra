@@ -24,6 +24,7 @@ export const COMMAND_REGISTRY: CommandDef[] = [
   { id: 'costs',     label: 'costs',     description: 'Cost breakdown and anomaly detection',          group: 'analyze', requiresConfig: true,  requiresAws: true,  requiresAi: false },
   { id: 'resources', label: 'resources', description: 'Browse AWS resources',                         group: 'analyze', requiresConfig: true,  requiresAws: true,  requiresAi: false },
   { id: 'security',  label: 'security',  description: 'Terraform security checks',                    group: 'analyze', requiresConfig: false, requiresAws: false, requiresAi: false },
+  { id: 'cost-impact', label: 'cost-impact', description: 'Cost impact of a Terraform plan',           group: 'analyze', requiresConfig: false, requiresAws: false, requiresAi: false },
   { id: 'history',   label: 'history',   description: 'View scan history',                            group: 'analyze', requiresConfig: true,  requiresAws: false, requiresAi: false },
   { id: 'changes',   label: 'changes',   description: 'Audit recent AWS API activity',                  group: 'analyze', requiresConfig: true,  requiresAws: true,  requiresAi: false },
   { id: 'recommend', label: 'recommend', description: 'Cost and security recommendations',            group: 'action',  requiresConfig: true,  requiresAws: false, requiresAi: false },

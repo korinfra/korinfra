@@ -22,8 +22,9 @@ import { buildResourcesPipelineSteps, extractResourceRows } from './pipelines/re
 import { buildReportPipelineSteps, extractReportResult, type ReportFormat } from './pipelines/report.js';
 import { buildHistoryPipelineSteps, extractScanDetail, extractScanDiff, extractScanList, type HistorySubcommand } from './pipelines/history.js';
 import { asStr } from '../utils/coerce.js';
-import { stripAnsi } from './ui/text.js';
+import { stripAnsi, SEVERITY_LABELS } from './ui/text.js';
 import { buildSecurityPipelineSteps, extractSecurityFindings } from './pipelines/security.js';
+import { buildCostImpactPipelineSteps, extractCostImpact } from './pipelines/cost-impact.js';
 import { buildTagsPipelineSteps, extractTagCompliance } from './pipelines/tags.js';
 import { buildRecommendAnalysisPrompt, buildSecurityAnalysisPrompt } from './pipelines/analysis.js';
 import { getAnalysisPrompt, getPrompt } from '../agent/prompts.js';
@@ -37,6 +38,63 @@ import { fixTools } from '../tools/index.js';
 import type { PipelineContext, PipelineStep } from './components/DirectPipeline.js';
 import { parseArg, hasFlag } from './utils/parseArgs.js';
 import { validateRegions } from './utils/validateRegions.js';
+
+// ─── Headless config-file loader ─────────────────────────────────────────────
+
+// Hard cap on headless --config files. These hold a handful of string keys
+// (profile, ai_provider, ide, ...); anything larger is almost certainly an
+// attempt to feed us an unrelated file.
+const HEADLESS_CONFIG_MAX_BYTES = 64 * 1024;
+const HEADLESS_CONFIG_EXTENSIONS = ['.json', '.yaml', '.yml'] as const;
+
+/**
+ * Read and parse a user-supplied --config file for headless commands.
+ *
+ * Sanitizes the path before handing it to fs: rejects null bytes, enforces a
+ * known extension, resolves symlinks via realpathSync, and requires a regular
+ * file under a size cap. Without these checks the raw CLI argument flows
+ * directly into fs.readFileSync (CWE-23).
+ */
+function loadHeadlessConfigFile(configFile: string): Record<string, string> {
+  if (typeof configFile !== 'string' || configFile === '') {
+    throw new Error('--config: expected a non-empty file path');
+  }
+  if (configFile.includes('\0')) {
+    throw new Error('--config: path contains a null byte');
+  }
+  const ext = path.extname(configFile).toLowerCase();
+  if (!(HEADLESS_CONFIG_EXTENSIONS as readonly string[]).includes(ext)) {
+    throw new Error(
+      `--config: unsupported file extension "${ext || '(none)'}". Use one of: ${HEADLESS_CONFIG_EXTENSIONS.join(', ')}`
+    );
+  }
+  const absConfig = path.resolve(process.cwd(), configFile);
+  // Dereference symlinks so we read (and stat) the actual target, not a link
+  // that could be swapped between checks.
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync(absConfig);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') throw new Error(`--config: file does not exist: ${absConfig}`, { cause: err });
+    throw new Error(`--config: cannot resolve path: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+  const stat = fs.statSync(realPath);
+  if (!stat.isFile()) {
+    throw new Error(`--config: not a regular file: ${realPath}`);
+  }
+  if (stat.size > HEADLESS_CONFIG_MAX_BYTES) {
+    throw new Error(`--config: file exceeds ${HEADLESS_CONFIG_MAX_BYTES} bytes: ${realPath}`);
+  }
+  const raw = fs.readFileSync(realPath, 'utf8');
+  const parsed: unknown = ext === '.json'
+    ? JSON.parse(raw)
+    : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {};
+  }
+  return parsed as Record<string, string>;
+}
 
 // ─── Headless AI provider factory ────────────────────────────────────────────
 
@@ -467,6 +525,113 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     return true;
   }
 
+  if (command === 'cost-impact') {
+    const planFile = parseArg(commandArgs, '--plan-file', '-f');
+    if (planFile === null) {
+      process.stderr.write('Error: --plan-file <path> is required.\n');
+      process.stderr.write('Hint: terraform show -json plan.tfplan > plan.json\n');
+      process.exit(2);
+    }
+    // `--tfdir` is accepted for forward-compat with the documented invocation
+    // in issue #40, but the cross-reference to .tf source files is not yet
+    // wired up. Warn so users know the flag is currently a no-op.
+    if (parseArg(commandArgs, '--tfdir') !== null) {
+      process.stderr.write('[korinfra] note: --tfdir is accepted but not yet used; plan parsing reads only --plan-file.\n');
+    }
+    const absPlan = path.resolve(process.cwd(), planFile);
+    const cwd = process.cwd();
+    if (!absPlan.startsWith(cwd + path.sep) && absPlan !== cwd) {
+      process.stderr.write(`Error: --plan-file must stay within ${cwd}\n`);
+      process.exit(2);
+    }
+    if (!absPlan.toLowerCase().endsWith('.json')) {
+      process.stderr.write(`Error: --plan-file must be a .json file (terraform show -json output): ${absPlan}\n`);
+      process.exit(2);
+    }
+    if (!fs.existsSync(absPlan)) {
+      process.stderr.write(`Error: plan file not found: ${absPlan}\n`);
+      process.exit(2);
+    }
+    let currency = 'USD';
+    try {
+      const cfg = await loadConfig();
+      currency = cfg.output.currency;
+    } catch {
+      // No config — fall back to USD.
+    }
+    let context;
+    try {
+      context = await runSteps(buildCostImpactPipelineSteps({ planFile: absPlan, currency }));
+    } catch (e) {
+      process.stderr.write(`Error: ${e instanceof Error ? e.message : String(e)}\n`);
+      process.exit(1);
+    }
+    const impact = extractCostImpact(context);
+    const failOn = parseArg(commandArgs, '--fail-on');
+    const criticalCount = impact.findings.filter((f) => f.severity === 'critical').length;
+    const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
+
+    const netLabel = impact.summary.netDeltaMonthlyUsd >= 0
+      ? `+${formatMoney(impact.summary.netDeltaMonthlyUsd)}/mo`
+      : `-${formatMoney(Math.abs(impact.summary.netDeltaMonthlyUsd))}/mo`;
+    const annualLabel = impact.summary.netDeltaAnnualUsd >= 0
+      ? `+${formatMoney(impact.summary.netDeltaAnnualUsd)}/yr`
+      : `-${formatMoney(Math.abs(impact.summary.netDeltaAnnualUsd))}/yr`;
+
+    const lines: string[] = [
+      `korinfra cost-impact`,
+      `Plan: ${absPlan}`,
+      `Net delta: ${netLabel}  (annualized ${annualLabel})`,
+      `Changes: ${impact.summary.counts.create} created, ${impact.summary.counts.update} updated, ${impact.summary.counts.destroy} destroyed, ${impact.summary.counts.replace} replaced`,
+    ];
+    if (
+      impact.summary.unknownCount > 0 ||
+      impact.summary.unpricedCount > 0 ||
+      impact.summary.variableCount > 0
+    ) {
+      lines.push(
+        `Caveats: ${impact.summary.unknownCount} unknown, ${impact.summary.unpricedCount} unpriced, ${impact.summary.variableCount} variable`,
+      );
+    }
+    lines.push('');
+    if (impact.changes.length === 0) {
+      lines.push('No cost-impacting changes.');
+    } else {
+      for (const row of impact.changes.slice(0, 50)) {
+        const sign = row.deltaUsd > 0 ? '+' : row.deltaUsd < 0 ? '-' : ' ';
+        const deltaStr = row.costStatus === 'unknown' || row.costStatus === 'unpriced' || row.costStatus === 'partial-unknown'
+          ? '—'
+          : `${sign}${formatMoney(Math.abs(row.deltaUsd))}`;
+        lines.push(`  ${row.action.padEnd(8)} ${stripAnsi(row.address).padEnd(40)} ${deltaStr.padStart(10)} (${row.costStatus})`);
+      }
+      if (impact.changes.length > 50) {
+        lines.push(`  ... ${impact.changes.length - 50} more (run with --json for the full list)`);
+      }
+    }
+    if (impact.findings.length > 0) {
+      lines.push('');
+      lines.push(`Findings (${impact.findings.length} would trigger after apply):`);
+      const severityOrder = ['critical', 'high', 'medium', 'low'] as const;
+      const sortedFindings = [...impact.findings].sort(
+        (a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity),
+      );
+      for (const f of sortedFindings.slice(0, 10)) {
+        lines.push(`  [${SEVERITY_LABELS[f.severity] ?? f.severity.toUpperCase()}] ${f.ruleId} @ ${stripAnsi(f.address)} — ${stripAnsi(f.title)}`);
+      }
+      if (sortedFindings.length > 10) {
+        lines.push(`  ... ${sortedFindings.length - 10} more (run with --json for the full list)`);
+      }
+    }
+    lines.push('');
+    lines.push('Next:');
+    lines.push('- korinfra cost-impact --plan-file plan.json --json     (machine-readable)');
+    lines.push('- korinfra security --dir ./terraform                   (post-apply security review)');
+    writeLines(lines);
+
+    if (shouldFailOnCritical) process.exit(1);
+    return true;
+  }
+
   if (command === 'config') {
     const subcommand = commandArgs[0] ?? 'show';
     if (subcommand === 'show') {
@@ -893,11 +1058,11 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     // Load config file params (YAML or JSON)
     let fileParams: Record<string, string> = {};
     if (configFile) {
-      const absConfig = path.resolve(process.cwd(), configFile);
-      const raw = fs.readFileSync(absConfig, 'utf8');
-      const parsed: unknown = absConfig.endsWith('.json') ? JSON.parse(raw) : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
-      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        fileParams = parsed as Record<string, string>;
+      try {
+        fileParams = loadHeadlessConfigFile(configFile);
+      } catch (err) {
+        process.stderr.write(`korinfra init: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exit(2);
       }
     }
 
@@ -1014,11 +1179,11 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     // Load config file params
     let fileParams: Record<string, string> = {};
     if (configFile) {
-      const absConfig = path.resolve(process.cwd(), configFile);
-      const raw = fs.readFileSync(absConfig, 'utf8');
-      const parsed: unknown = absConfig.endsWith('.json') ? JSON.parse(raw) : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
-      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        fileParams = parsed as Record<string, string>;
+      try {
+        fileParams = loadHeadlessConfigFile(configFile);
+      } catch (err) {
+        process.stderr.write(`korinfra mcp: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exit(2);
       }
     }
 
@@ -1793,6 +1958,87 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     return shouldFailOnCritical ? 1 : 0;
   }
 
+  if (command === 'cost-impact') {
+    const planFile = parseArg(commandArgs, '--plan-file', '-f');
+    if (planFile === null) {
+      process.stdout.write(JSON.stringify({
+        command: 'cost-impact',
+        status: 'error',
+        error: '--plan-file <path> is required',
+        hint: 'terraform show -json plan.tfplan > plan.json',
+      }, null, 2) + '\n');
+      return 2;
+    }
+    const absPlan = path.resolve(process.cwd(), planFile);
+    const cwd = process.cwd();
+    if (!absPlan.startsWith(cwd + path.sep) && absPlan !== cwd) {
+      process.stdout.write(JSON.stringify({
+        command: 'cost-impact',
+        status: 'error',
+        error: `--plan-file must stay within ${cwd}`,
+      }, null, 2) + '\n');
+      return 2;
+    }
+    if (!absPlan.toLowerCase().endsWith('.json')) {
+      process.stdout.write(JSON.stringify({
+        command: 'cost-impact',
+        status: 'error',
+        error: `--plan-file must be a .json file (terraform show -json output): ${absPlan}`,
+      }, null, 2) + '\n');
+      return 2;
+    }
+    if (!fs.existsSync(absPlan)) {
+      process.stdout.write(JSON.stringify({
+        command: 'cost-impact',
+        status: 'error',
+        error: `plan file not found: ${absPlan}`,
+      }, null, 2) + '\n');
+      return 2;
+    }
+    // `--tfdir` is accepted for forward-compat with the documented invocation
+    // in issue #40, but the cross-reference to .tf source files is not yet
+    // wired up. The flag is parsed and ignored.
+    const tfdirIgnored = parseArg(commandArgs, '--tfdir') !== null;
+    let currency = 'USD';
+    try {
+      const cfg = await loadConfig();
+      currency = cfg.output.currency;
+    } catch {
+      // No config — fall back to USD.
+    }
+    let context;
+    try {
+      context = await runSteps(buildCostImpactPipelineSteps({ planFile: absPlan, currency }));
+    } catch (e) {
+      process.stdout.write(JSON.stringify({
+        command: 'cost-impact',
+        status: 'error',
+        error: e instanceof Error ? e.message : String(e),
+      }, null, 2) + '\n');
+      return 1;
+    }
+    const impact = extractCostImpact(context);
+    const failOn = parseArg(commandArgs, '--fail-on');
+    const criticalCount = impact.findings.filter((f) => f.severity === 'critical').length;
+    const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
+    const out = {
+      command: 'cost-impact',
+      status: 'completed',
+      summary: impact.summary,
+      changes: impact.changes,
+      findings: impact.findings,
+      warnings: tfdirIgnored
+        ? [...impact.warnings, '--tfdir is accepted but not yet used; cross-referencing to .tf source files is planned for a future release']
+        : impact.warnings,
+      next: [
+        { label: 'generate report', command: 'korinfra report --format html --output reports/cost-impact.html' },
+        { label: 'review post-apply security rules', command: 'korinfra security --dir ./terraform' },
+      ],
+    };
+    process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+    return shouldFailOnCritical ? 1 : 0;
+  }
+
   if (command === 'doctor') {
     const storagePath = defaultStoragePath();
     const results = await runAllChecks(storagePath);
@@ -1833,11 +2079,15 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
 
     let fileParams: Record<string, string> = {};
     if (configFile) {
-      const absConfig = path.resolve(process.cwd(), configFile);
-      const raw = fs.readFileSync(absConfig, 'utf8');
-      const parsed: unknown = absConfig.endsWith('.json') ? JSON.parse(raw) : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
-      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        fileParams = parsed as Record<string, string>;
+      try {
+        fileParams = loadHeadlessConfigFile(configFile);
+      } catch (err) {
+        process.stdout.write(JSON.stringify({
+          command: 'init',
+          status: 'error',
+          error: err instanceof Error ? err.message : String(err),
+        }) + '\n');
+        return 2;
       }
     }
 
@@ -1951,11 +2201,15 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
 
     let fileParams: Record<string, string> = {};
     if (configFile) {
-      const absConfig = path.resolve(process.cwd(), configFile);
-      const raw = fs.readFileSync(absConfig, 'utf8');
-      const parsed: unknown = absConfig.endsWith('.json') ? JSON.parse(raw) : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
-      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        fileParams = parsed as Record<string, string>;
+      try {
+        fileParams = loadHeadlessConfigFile(configFile);
+      } catch (err) {
+        process.stdout.write(JSON.stringify({
+          command: `mcp ${subcommand}`,
+          status: 'error',
+          error: err instanceof Error ? err.message : String(err),
+        }) + '\n');
+        return 2;
       }
     }
 

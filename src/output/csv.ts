@@ -1,4 +1,5 @@
 import type { Formatter, ScanReport } from './formatter.js';
+import { calcSavingsPct } from '../utils/aggregate.js';
 
 /**
  * Renders the ScanReport as multi-section CSV for Excel/Sheets import.
@@ -22,7 +23,7 @@ export class CSVFormatter implements Formatter {
     sections.push(row(['potential_savings', data.summary.potentialSavings.toFixed(2)]));
     sections.push(row(['savings_pct',
       data.summary.totalMonthlyCost > 0
-        ? `${(data.summary.potentialSavings / data.summary.totalMonthlyCost * 100).toFixed(1)}%`
+        ? `${calcSavingsPct(data.summary.potentialSavings, data.summary.totalMonthlyCost)}%`
         : '0%',
     ]));
     sections.push(row(['recommendation_count', String(data.summary.recommendationCount)]));

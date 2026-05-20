@@ -7,7 +7,7 @@ import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { strConfig, missingRequiredTags } from './helpers.js';
+import { strConfig, missingRequiredTags, CONF_CERTAIN } from './helpers.js';
 import { clampConfidence } from '../../utils/numeric-guards.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
@@ -33,7 +33,7 @@ export function checkTAG001(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'add_required_tags',
-    confidence: clampConfidence(0.99),
+    confidence: clampConfidence(CONF_CERTAIN),
     filePath,
     currentConfig: { missing_tags: missing },
     suggestedConfig: {

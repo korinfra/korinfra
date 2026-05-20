@@ -2,7 +2,7 @@ import { DescribeDBInstancesCommand } from '@aws-sdk/client-rds';
 import type { RDSClient} from '@aws-sdk/client-rds';
 import type { Resource } from '../types.js';
 import { throttledCall } from '../rate-limiter.js';
-import { tagsToMap } from '../utils.js';
+import { tagsToMap, buildCmdOptions, extractNextToken } from '../utils.js';
 import { dbg } from '../debug.js';
 
 export async function collectRDS(
@@ -19,9 +19,9 @@ export async function collectRDS(
     dbg(`    rds DescribeDBInstances page:${pageNum + 1} start — region:${region} soFar:${resources.length}`);
     const t_rds = Date.now();
     const out = await throttledCall('rds', 'DescribeDBInstances', region, () =>
-      client.send(new DescribeDBInstancesCommand({ Marker: marker }), { ...(signal ? { abortSignal: signal } : {}) }),
+      client.send(new DescribeDBInstancesCommand({ Marker: marker }), buildCmdOptions(signal)),
     );
-    marker = out.Marker ?? undefined;
+    marker = extractNextToken(out.Marker);
     pageNum++;
     dbg(`    rds DescribeDBInstances page:${pageNum} done — ${Date.now() - t_rds}ms inPage:${out.DBInstances?.length ?? 0} hasMore:${Boolean(marker)}`);
 

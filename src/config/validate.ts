@@ -1,5 +1,21 @@
 import type { Config } from './types.js';
 
+function assertOrdering(
+  valA: number,
+  nameA: string,
+  op: '<=' | '<',
+  valB: number,
+  nameB: string,
+  errs: string[],
+): void {
+  const passes = op === '<=' ? valA <= valB : valA < valB;
+  if (!passes) {
+    errs.push(
+      `${nameA} (${valA}) must be ${op === '<=' ? 'less than or equal to' : 'less than'} ${nameB} (${valB})`,
+    );
+  }
+}
+
 export class ConfigValidationError extends Error {
   constructor(public readonly issues: string[]) {
     super(`config validation failed:\n  ${issues.join('\n  ')}`);
@@ -43,32 +59,12 @@ export function validate(cfg: Config): string[] {
   }
 
   // ── Scan: CPU threshold ordering ───────────────────────────────────────────
-  if (cfg.scan.rightsize_cpu_threshold <= cfg.scan.idle_cpu_threshold) {
-    errs.push(
-      `scan.rightsize_cpu_threshold (${cfg.scan.rightsize_cpu_threshold}) must be greater than` +
-      ` scan.idle_cpu_threshold (${cfg.scan.idle_cpu_threshold})`
-    );
-  }
-  if (cfg.scan.rds_rightsize_cpu_threshold <= cfg.scan.rds_idle_cpu_threshold) {
-    errs.push(
-      `scan.rds_rightsize_cpu_threshold (${cfg.scan.rds_rightsize_cpu_threshold}) must be greater than` +
-      ` scan.rds_idle_cpu_threshold (${cfg.scan.rds_idle_cpu_threshold})`
-    );
-  }
+  assertOrdering(cfg.scan.idle_cpu_threshold, 'scan.idle_cpu_threshold', '<', cfg.scan.rightsize_cpu_threshold, 'scan.rightsize_cpu_threshold', errs);
+  assertOrdering(cfg.scan.rds_idle_cpu_threshold, 'scan.rds_idle_cpu_threshold', '<', cfg.scan.rds_rightsize_cpu_threshold, 'scan.rds_rightsize_cpu_threshold', errs);
 
   // ── Scan: scenario confidence bounds ───────────────────────────────────────
-  if (cfg.scan.scenario_confidence_base > cfg.scan.scenario_confidence_max) {
-    errs.push(
-      `scan.scenario_confidence_base (${cfg.scan.scenario_confidence_base}) must not exceed` +
-      ` scan.scenario_confidence_max (${cfg.scan.scenario_confidence_max})`
-    );
-  }
-  if (cfg.scan.scenario_confidence_state_base > cfg.scan.scenario_confidence_max) {
-    errs.push(
-      `scan.scenario_confidence_state_base (${cfg.scan.scenario_confidence_state_base}) must not exceed` +
-      ` scan.scenario_confidence_max (${cfg.scan.scenario_confidence_max})`
-    );
-  }
+  assertOrdering(cfg.scan.scenario_confidence_base, 'scan.scenario_confidence_base', '<=', cfg.scan.scenario_confidence_max, 'scan.scenario_confidence_max', errs);
+  assertOrdering(cfg.scan.scenario_confidence_state_base, 'scan.scenario_confidence_state_base', '<=', cfg.scan.scenario_confidence_max, 'scan.scenario_confidence_max', errs);
 
   // ── AI: api_key_env must not be empty ──────────────────────────────────────
   if (!cfg.ai.api_key_env || cfg.ai.api_key_env.trim() === '') {
@@ -96,20 +92,11 @@ export function validate(cfg: Config): string[] {
   }
 
   // ── Quality: savings percentage tiers must be ordered ─────────────────────
-  if (cfg.quality.savings_pct_high <= cfg.quality.savings_pct_medium) {
-    errs.push(
-      `quality.savings_pct_high (${cfg.quality.savings_pct_high}) must be greater than` +
-      ` quality.savings_pct_medium (${cfg.quality.savings_pct_medium})`
-    );
-  }
+  assertOrdering(cfg.quality.savings_pct_medium, 'quality.savings_pct_medium', '<', cfg.quality.savings_pct_high, 'quality.savings_pct_high', errs);
 
   // ── Quality: description and title length windows ──────────────────────────
-  if (cfg.quality.title_min_length >= cfg.quality.title_max_length) {
-    errs.push('quality.title_min_length must be less than quality.title_max_length');
-  }
-  if (cfg.quality.description_partial_length >= cfg.quality.description_full_length) {
-    errs.push('quality.description_partial_length must be less than quality.description_full_length');
-  }
+  assertOrdering(cfg.quality.title_min_length, 'quality.title_min_length', '<', cfg.quality.title_max_length, 'quality.title_max_length', errs);
+  assertOrdering(cfg.quality.description_partial_length, 'quality.description_partial_length', '<', cfg.quality.description_full_length, 'quality.description_full_length', errs);
 
   // ── Warnings (non-fatal) ───────────────────────────────────────────────────
   const warnings: string[] = [];

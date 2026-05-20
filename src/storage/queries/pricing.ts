@@ -1,4 +1,5 @@
 import type { Driver } from '../drivers/node.js';
+import { safeParse } from '../helpers.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -20,13 +21,6 @@ export interface CacheStats {
   total_size_bytes: number;
   oldest_entry?: string | null;
   newest_entry?: string | null;
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function safeParse(raw: unknown): Record<string, unknown> | null {
-  if (!raw) return null;
-  try { return JSON.parse(raw as string) as Record<string, unknown>; } catch { return null; }
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────

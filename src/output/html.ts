@@ -5,6 +5,7 @@ import { REPO_URL } from '../config/types.js';
 import { REPORT_CSS } from './report-styles.js';
 import { buildReportClientJS } from './report-client.js';
 import { formatMoneyExact } from '../cli/ui/format.js';
+import { groupBySum, aggregateDailyCosts, calcSavingsPct } from '../utils/aggregate.js';
 
 /**
  * Renders a fully interactive, self-contained HTML report.
@@ -42,9 +43,7 @@ function chartColor(i: number): string { return CHART_PALETTE[i % CHART_PALETTE.
 // ── Aggregation helpers ───────────────────────────────────────────────────────
 
 function buildServiceMap(costs: CostEntry[]): Map<string, number> {
-  const m = new Map<string, number>();
-  for (const c of costs) m.set(c.serviceName, (m.get(c.serviceName) ?? 0) + c.monthlyCost);
-  return m;
+  return groupBySum(costs, c => c.serviceName, c => c.monthlyCost);
 }
 
 function uniqueRegions(data: ScanReport): string[] {
@@ -75,11 +74,7 @@ function buildPieChartSVG(serviceMap: Map<string, number>): string {
 function buildSparklineSVG(costs: CostEntry[]): string {
   if (costs.length < 2) return '';
 
-  const dailyMap = new Map<string, number>();
-  for (const c of costs) {
-    const d = c.costDate.slice(0, 10);
-    dailyMap.set(d, (dailyMap.get(d) ?? 0) + c.dailyCost);
-  }
+  const dailyMap = aggregateDailyCosts(costs);
   const dates = [...dailyMap.keys()].sort().slice(-30);
   const pts   = dates.map(d => dailyMap.get(d) ?? 0);
   if (pts.length < 2) return '';
@@ -150,7 +145,7 @@ function renderKPIGrid(data: ScanReport, aggregates: ReportAggregates): string {
   const { summary } = data;
 
   const savingsPct = summary.totalMonthlyCost > 0
-    ? `<span class="stat-sub">${(summary.potentialSavings / summary.totalMonthlyCost * 100).toFixed(1)}% of spend</span>`
+    ? `<span class="stat-sub">${calcSavingsPct(summary.potentialSavings, summary.totalMonthlyCost)}% of spend</span>`
     : '';
 
   const regions = aggregates.regions;

@@ -243,16 +243,24 @@ describe('collectElastiCacheMetricsBatched', () => {
     const timestamps = [new Date(Date.now() - 3600_000), new Date()];
     const client = makeCloudWatchClient([
       { Id: 'c0_cpuavg', Timestamps: timestamps, Values: [12, 18] },
+      { Id: 'c0_cpumax', Timestamps: timestamps, Values: [28, 35] },
       { Id: 'c0_cpup95', Timestamps: timestamps, Values: [25, 30] },
       { Id: 'c0_memused', Timestamps: timestamps, Values: [55, 60] },
       { Id: 'c0_conns', Timestamps: timestamps, Values: [45, 50] },
+      { Id: 'c0_cmax', Timestamps: timestamps, Values: [60, 65] },
+      { Id: 'c0_netin', Timestamps: timestamps, Values: [10_485_760, 20_971_520] },
+      { Id: 'c0_netout', Timestamps: timestamps, Values: [5_242_880, 10_485_760] },
     ]);
     await collectElastiCacheMetricsBatched(client, 'us-east-1', resources, '7d');
 
     const util = resources[0]!.utilization!;
     expect(util.cpuAverage).toBeCloseTo(15, 1);
+    expect(util.cpuMax).toBeCloseTo(35, 1);
     expect(util.memoryAverage).toBeCloseTo(57.5, 1);
     expect(util.connectionCount).toBeCloseTo(47.5, 1);
+    expect(util.connectionCountMax).toBeCloseTo(65, 1);
+    expect(util.networkInMB).toBeCloseTo(30, 1);
+    expect(util.networkOutMB).toBeCloseTo(15, 1);
 
     // Skips non-elasticache
     const ec2Resources: Resource[] = [makeResource({ id: 'i-not-cache', type: 'ec2_instance', state: 'running' })];

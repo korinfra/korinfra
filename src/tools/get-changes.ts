@@ -1,7 +1,6 @@
 import { lookupCloudTrailEvents } from '../aws/cloudtrail.js';
-import { loadConfig } from '../config/index.js';
 import { redactObject } from '../redaction/index.js';
-import { jsonResult, errorResult } from './types.js';
+import { jsonResult, errorResult, getDefaultRegion } from './types.js';
 import type { ToolDefinition } from './types.js';
 
 interface CloudTrailOpts {
@@ -37,12 +36,7 @@ export const getChangesTool: ToolDefinition = {
 
       let region = typeof args['region'] === 'string' ? args['region'] : '';
       if (!region) {
-        try {
-          const config = await loadConfig();
-          region = config.aws?.default_region ?? 'us-east-1';
-        } catch {
-          region = 'us-east-1';
-        }
+        region = (await getDefaultRegion()) ?? 'us-east-1';
       }
 
       const cloudTrailOpts: CloudTrailOpts = { region, hours };

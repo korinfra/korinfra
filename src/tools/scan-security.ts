@@ -13,13 +13,8 @@ import type { SecurityFinding } from '../rules/security/index.js';
 import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition } from './types.js';
 import { redactObject } from '../redaction/index.js';
-
-const SEVERITY_ORDER: Record<string, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-};
+import { SEVERITY_ORDER } from '../utils/severity.js';
+import { TERRAFORM_EXTENSIONS } from '../constants.js';
 
 type EnrichedFinding = SecurityFinding & {
   filePath: string | null;
@@ -76,7 +71,7 @@ export const scanSecurityTool: ToolDefinition = {
         return errorResult(`dir does not exist: ${resolvedDir}`);
       }
       const dirEntries = await readdir(resolvedDir);
-      if (!dirEntries.some((e) => e.endsWith('.tf') || e.endsWith('.tf.json'))) {
+      if (!dirEntries.some((e) => TERRAFORM_EXTENSIONS.some((ext) => e.endsWith(ext)))) {
         return errorResult(`dir contains no .tf files: ${resolvedDir}`);
       }
 

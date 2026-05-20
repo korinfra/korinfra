@@ -6,6 +6,7 @@ import {
 import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition } from './types.js';
 import { redactObject } from '../redaction/index.js';
+import { STATUS_APPLIED, STATUS_DISMISSED } from '../constants.js';
 
 export const applyRecommendationTool: ToolDefinition = {
   name: 'apply_recommendation',
@@ -40,7 +41,7 @@ export const applyRecommendationTool: ToolDefinition = {
       const id = args['id'];
 
       const status = String((args['status'] as string | null | undefined) ?? '');
-      if (status !== 'applied' && status !== 'dismissed') {
+      if (status !== STATUS_APPLIED && status !== STATUS_DISMISSED) {
         return errorResult('status must be "applied" or "dismissed"');
       }
 

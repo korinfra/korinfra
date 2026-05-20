@@ -9,10 +9,11 @@ import { readdir, realpath } from 'node:fs/promises';
 
 import { parseTerraformDir } from '../terraform/parser.js';
 import { parseStateFile, findStateFile, RemoteBackendError } from '../terraform/state.js';
-import { jsonResult, errorResult, normalizeTerraformResource } from './types.js';
+import { jsonResult, errorResult, normalizeTerraformResource, assertInsideRoot } from './types.js';
 import type { ToolDefinition } from './types.js';
 import { logger } from '../utils/logger.js';
 import { redactObject } from '../redaction/redactor.js';
+import { TERRAFORM_EXTENSIONS } from '../constants.js';
 
 export const scanTerraformTool: ToolDefinition = {
   name: 'scan_terraform',
@@ -54,8 +55,10 @@ export const scanTerraformTool: ToolDefinition = {
       if (canonicalDir === '/' || /^[A-Z]:\\?$/i.test(canonicalDir) || /^\\\\./.test(canonicalDir)) {
         return errorResult(`dir resolves to filesystem root: ${canonicalDir}`);
       }
+      try { assertInsideRoot(canonicalDir, 'dir'); }
+      catch (e) { return errorResult(e instanceof Error ? e.message : String(e)); }
       const dirEntries = await readdir(canonicalDir);
-      if (!dirEntries.some((e) => e.endsWith('.tf') || e.endsWith('.tf.json'))) {
+      if (!dirEntries.some((e) => TERRAFORM_EXTENSIONS.some((ext) => e.endsWith(ext)))) {
         return errorResult(`dir contains no .tf files: ${resolvedDir}`);
       }
 
@@ -72,7 +75,11 @@ export const scanTerraformTool: ToolDefinition = {
           return errorResult(`State file must have a .tfstate extension: ${stateFile}`);
         }
         if (existsSync(resolvedState)) {
-          try { await realpath(resolvedState); } catch { return errorResult(`stateFile could not be resolved: ${stateFile}`); }
+          let canonicalState: string;
+          try { canonicalState = await realpath(resolvedState); }
+          catch { return errorResult(`stateFile could not be resolved: ${stateFile}`); }
+          try { assertInsideRoot(canonicalState, 'stateFile'); }
+          catch (e) { return errorResult(e instanceof Error ? e.message : String(e)); }
         }
       }
 
