@@ -19,6 +19,7 @@ const SERVICE_LIMITS: Record<string, { limit: number; interval: number }> = {
   sts: { limit: 10, interval: 1000 },
   tagging: { limit: 10, interval: 1000 },
   cloudtrail: { limit: 2, interval: 1000 },
+  'compute-optimizer': { limit: 5, interval: 1000 },
 };
 
 const DEFAULT_LIMIT = { limit: 10, interval: 1000 };

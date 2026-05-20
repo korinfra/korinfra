@@ -775,6 +775,99 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
   }
 
   if (command === 'recommend') {
+    const source = parseArg(commandArgs, '--source');
+    if (source !== null && source !== 'compute-optimizer') {
+      writeLines([
+        `korinfra recommend: unknown --source value '${source}'. Valid: 'compute-optimizer'.`,
+      ]);
+      process.exitCode = 1;
+      return true;
+    }
+    if (source === 'compute-optimizer') {
+      if (hasFlag(commandArgs, '--refresh')) {
+        process.stderr.write('[korinfra] note: --refresh is ignored when --source is set\n');
+      }
+      const { getComputeOptimizerRecommendationsTool } = await import('../tools/get-compute-optimizer-recommendations.js');
+      const handlerArgs: Record<string, unknown> = {};
+      try {
+        const cfg = await loadConfig();
+        if (cfg.aws.default_profile) handlerArgs['profile'] = cfg.aws.default_profile;
+        if (cfg.aws.default_region) handlerArgs['regions'] = [cfg.aws.default_region];
+      } catch {
+        // No config file; rely on AWS_* env vars and the SDK default provider chain.
+      }
+      const handlerResult = await getComputeOptimizerRecommendationsTool.handler(handlerArgs);
+      // The tool returns errorResult(err) (plain-text body) for unhandled
+      // failures like credential resolution. Surface those before JSON.parse
+      // so the CLI never throws SyntaxError on an error body.
+      if (handlerResult.isError) {
+        writeLines([
+          '[Source: AWS Compute Optimizer]',
+          `Error: ${handlerResult.content[0]?.text ?? 'unknown error'}`,
+        ]);
+        process.exitCode = 1;
+        return true;
+      }
+      let parsed: {
+        status?: string;
+        message?: string;
+        summary?: { total?: number; estimatedMonthlySavingsUsd?: number; byType?: Record<string, number> };
+        recommendations?: Array<{ resourceType?: string; resourceArn?: string; finding?: string; estimatedMonthlySavingsUsd?: number; performanceRisk?: string }>;
+        warnings?: string[];
+        next?: Array<{ label?: string; command?: string; url?: string }>;
+      };
+      try {
+        parsed = JSON.parse(handlerResult.content[0]?.text ?? '{}') as typeof parsed;
+      } catch {
+        writeLines([
+          '[Source: AWS Compute Optimizer]',
+          `Error: tool returned unparseable output: ${handlerResult.content[0]?.text ?? '(empty)'}`,
+        ]);
+        process.exitCode = 1;
+        return true;
+      }
+      if (parsed.status === 'not_enabled' || parsed.status === 'access_denied' || parsed.status === 'partial_failure') {
+        writeLines([
+          '[Source: AWS Compute Optimizer]',
+          parsed.message ?? `Compute Optimizer call failed (${parsed.status}).`,
+          ...(parsed.warnings && parsed.warnings.length > 0
+            ? ['', 'Warnings:', ...parsed.warnings.map((w) => `- ${w}`)]
+            : []),
+          ...(parsed.next && parsed.next.length > 0
+            ? ['', 'Next:', ...parsed.next.map((n) => {
+                const detail = (n as { command?: string; url?: string; permissions?: string[] });
+                if (detail.command) return `- ${n.label ?? ''}: ${detail.command}`;
+                if (detail.url) return `- ${n.label ?? ''}: ${detail.url}`;
+                if (Array.isArray(detail.permissions)) return `- ${n.label ?? ''}: ${detail.permissions.join(', ')}`;
+                return `- ${n.label ?? ''}`;
+              })]
+            : []),
+        ]);
+        if (parsed.status === 'partial_failure') process.exitCode = 1;
+        return true;
+      }
+      // Recommendations are pre-sorted descending by savings inside the tool.
+      const recs = parsed.recommendations ?? [];
+      const total = parsed.summary?.total ?? recs.length;
+      const totalSavings = parsed.summary?.estimatedMonthlySavingsUsd ?? 0;
+      writeLines([
+        '[Source: AWS Compute Optimizer]',
+        ...(parsed.status === 'partial'
+          ? ['Warning: partial results (some calls failed). Output may underreport savings.']
+          : []),
+        `Recommendations: ${total}`,
+        totalSavings > 0 ? `Estimated savings: ${formatMoney(totalSavings)}/mo` : 'Estimated savings: none',
+        '',
+        ...recs.slice(0, 20).map((r) =>
+          `- [${stripAnsi(r.finding ?? 'Unknown')}] ${r.resourceType ?? '?'} ${stripAnsi(r.resourceArn ?? '')} — ${formatMoney(r.estimatedMonthlySavingsUsd ?? 0)}/mo`,
+        ),
+        ...(recs.length > 20 ? [`... ${recs.length - 20} more`] : []),
+        ...(parsed.warnings && parsed.warnings.length > 0
+          ? ['', 'Warnings:', ...parsed.warnings.map((w) => `- ${w}`)]
+          : []),
+      ]);
+      return true;
+    }
     const isRefresh = hasFlag(commandArgs, '--refresh');
     if (isRefresh) {
       const provider = await createHeadlessProvider();
@@ -1637,6 +1730,93 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
   }
 
   if (command === 'recommend') {
+    const source = parseArg(commandArgs, '--source');
+    if (source !== null && source !== 'compute-optimizer') {
+      process.stdout.write(JSON.stringify({
+        command: 'recommend',
+        status: 'error',
+        error: `unknown --source value '${source}'. Valid: 'compute-optimizer'.`,
+      }, null, 2) + '\n');
+      return 1;
+    }
+    if (source === 'compute-optimizer') {
+      if (hasFlag(commandArgs, '--refresh')) {
+        process.stderr.write('[korinfra] note: --refresh is ignored when --source is set\n');
+      }
+      const { getComputeOptimizerRecommendationsTool } = await import('../tools/get-compute-optimizer-recommendations.js');
+      const handlerArgs: Record<string, unknown> = {};
+      // loadConfig throws if no .korinfra/config.yaml — treat as "use env defaults"
+      try {
+        const cfg = await loadConfig();
+        if (cfg.aws.default_profile) handlerArgs['profile'] = cfg.aws.default_profile;
+        if (cfg.aws.default_region) handlerArgs['regions'] = [cfg.aws.default_region];
+      } catch {
+        // No config file; rely on AWS_* env vars and the SDK default provider chain.
+      }
+      const handlerResult = await getComputeOptimizerRecommendationsTool.handler(handlerArgs);
+      // The tool returns errorResult(err) (plain-text body) for unhandled
+      // failures like credential resolution. Surface those before JSON.parse
+      // so the CLI never throws SyntaxError on an error body.
+      if (handlerResult.isError) {
+        process.stdout.write(JSON.stringify({
+          command: 'recommend',
+          source: 'compute-optimizer',
+          status: 'error',
+          error: handlerResult.content[0]?.text ?? 'unknown error',
+        }, null, 2) + '\n');
+        return 1;
+      }
+      let parsed: {
+        status?: string;
+        message?: string;
+        summary?: { total?: number; estimatedMonthlySavingsUsd?: number; byType?: Record<string, number> };
+        recommendations?: Array<{ estimatedMonthlySavingsUsd?: number; performanceRisk?: string }>;
+        warnings?: string[];
+        next?: unknown[];
+      };
+      try {
+        parsed = JSON.parse(handlerResult.content[0]?.text ?? '{}') as typeof parsed;
+      } catch {
+        process.stdout.write(JSON.stringify({
+          command: 'recommend',
+          source: 'compute-optimizer',
+          status: 'error',
+          error: `tool returned unparseable output: ${handlerResult.content[0]?.text ?? '(empty)'}`,
+        }, null, 2) + '\n');
+        return 1;
+      }
+      // Map CO recommendations to severity buckets by estimated savings.
+      // performanceRisk is the risk of a recommendation being wrong (application risk),
+      // not the severity of the wastage — so savings amount is the correct signal for --fail-on.
+      const recs = parsed.recommendations ?? [];
+      const critical = recs.filter((r) => (r.estimatedMonthlySavingsUsd ?? 0) >= 100).length;
+      const high = recs.filter((r) => { const s = r.estimatedMonthlySavingsUsd ?? 0; return s >= 50 && s < 100; }).length;
+      const medium = recs.filter((r) => { const s = r.estimatedMonthlySavingsUsd ?? 0; return s >= 10 && s < 50; }).length;
+      const low = recs.filter((r) => (r.estimatedMonthlySavingsUsd ?? 0) < 10).length;
+      const out = {
+        command: 'recommend',
+        source: 'compute-optimizer',
+        status: parsed.status ?? 'completed',
+        summary: {
+          total: parsed.summary?.total ?? 0,
+          critical,
+          high,
+          medium,
+          low,
+          estimatedMonthlySavingsUsd: parsed.summary?.estimatedMonthlySavingsUsd ?? 0,
+          byType: parsed.summary?.byType ?? {},
+        },
+        recommendations: recs,
+        ...(parsed.warnings && parsed.warnings.length > 0 ? { warnings: parsed.warnings } : {}),
+        next: parsed.next ?? [],
+      };
+      process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+      // partial_failure → exit 1 (nothing came back). partial → exit 0 (some data
+      // arrived; consumer can branch on the status field).
+      if (parsed.status === 'partial_failure') return 1;
+      const failOn = parseArg(commandArgs, '--fail-on');
+      return failOn === 'critical' && critical > 0 ? 1 : 0;
+    }
     const isRefresh = hasFlag(commandArgs, '--refresh');
     if (isRefresh) {
       const provider = await createHeadlessProvider();

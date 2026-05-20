@@ -13,9 +13,11 @@ import {
   checkEC2011,
   checkEC2012,
   checkEC2013,
+  checkEC2014,
 } from '../../../../src/rules/cost/ec2.js';
 import { suggestRDSRightsize, suggestCacheRightsize } from '../../../../src/rules/cost/helpers.js';
 import { THRESHOLDS } from '../../../../src/rules/config.js';
+import { evaluateRules } from '../../../../src/rules/index.js';
 import type { Resource } from '../../../../src/aws/types.js';
 
 const cfg = THRESHOLDS;
@@ -444,6 +446,172 @@ describe('checkEC2013 — instance running more than 1 year', () => {
     }), cfg)).toBeNull();
     expect(checkEC2013(makeEC2({ state: 'running', launchTime: '' }), cfg)).toBeNull();
     expect(checkEC2013(makeEC2({ type: 'rds_instance', state: 'running', launchTime: new Date(Date.now() - 400 * 86_400_000).toISOString() }), cfg)).toBeNull();
+  });
+});
+
+// ─── EC2-014: Spot opportunity detection ──────────────────────────────────────
+
+describe('checkEC2014 — Spot opportunity detection', () => {
+  // Tag-only branch: non-prod env, no util needed
+  it('fires on tag-only branch (Environment=staging, uptime > 14d)', () => {
+    const r = makeEC2({
+      tags: { Environment: 'staging' },
+      launchTime: new Date(Date.now() - 20 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'on-demand', monthlyCost: 200 },
+    });
+    const rec = checkEC2014(r, cfg);
+    expect(rec).not.toBeNull();
+    expect(rec!.ruleId).toBe('EC2-014');
+    expect(rec!.impact).toBe('high');
+    expect(rec!.risk).toBe('low'); // tag corroboration → lower operational risk
+    expect(rec!.estimatedSavings).toBeCloseTo(200 * 0.70, 2);
+  });
+
+  // Stable-workload branch: no tag, uptime > 30d, CPU non-idle but not maxed/spiky
+  it('fires on stable-workload branch (uptime > 30d, stable CPU)', () => {
+    const r = makeEC2({
+      launchTime: new Date(Date.now() - 35 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'on-demand', monthlyCost: 100 },
+      utilization: makeUtil(25, 30), // avg 25%, P95 30%, P99 33% → ratio 1.1, all under ceilings
+    });
+    const rec = checkEC2014(r, cfg);
+    expect(rec).not.toBeNull();
+    expect(rec!.ruleId).toBe('EC2-014');
+    expect(rec!.risk).toBe('medium'); // no tag corroboration
+    expect(rec!.estimatedSavings).toBeCloseTo(70, 2);
+  });
+
+  // Both branches: high confidence (use 30d util to avoid the 7d 0.9x penalty)
+  it('reaches confidence ≥ 0.80 when both tag and stable-workload branches fire', () => {
+    const r = makeEC2({
+      tags: { Environment: 'dev' },
+      launchTime: new Date(Date.now() - 40 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'on-demand', monthlyCost: 150 },
+      utilization: makeUtil(20, 25, '30d'),
+    });
+    const rec = checkEC2014(r, cfg);
+    expect(rec).not.toBeNull();
+    expect(rec!.confidence ?? 0).toBeGreaterThanOrEqual(0.80);
+  });
+
+  it('skips when lifecycle === "spot"', () => {
+    const r = makeEC2({
+      tags: { Environment: 'dev' },
+      launchTime: new Date(Date.now() - 20 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'spot', monthlyCost: 100 },
+    });
+    expect(checkEC2014(r, cfg)).toBeNull();
+  });
+
+  it('skips when lifecycle === "scheduled"', () => {
+    const r = makeEC2({
+      tags: { Environment: 'dev' },
+      launchTime: new Date(Date.now() - 20 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'scheduled', monthlyCost: 100 },
+    });
+    expect(checkEC2014(r, cfg)).toBeNull();
+  });
+
+  it('skips when uptime ≤ spotMinUptimeDays (7d gate)', () => {
+    const r = makeEC2({
+      tags: { Environment: 'dev' },
+      launchTime: new Date(Date.now() - 5 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'on-demand', monthlyCost: 100 },
+    });
+    expect(checkEC2014(r, cfg)).toBeNull();
+  });
+
+  it('skips when cpuP99 > 80% (workload too hot for Spot interruption rescue)', () => {
+    const r = makeEC2({
+      launchTime: new Date(Date.now() - 40 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'on-demand', monthlyCost: 100 },
+      utilization: makeUtil(50, 70), // avg 50, P95 70, P99 77 — wait, makeUtil sets P99=P95*1.1
+    });
+    // Bump util.cpuP99 above 80 explicitly
+    if (r.utilization) r.utilization.cpuP99 = 85;
+    expect(checkEC2014(r, cfg)).toBeNull();
+  });
+
+  it('skips when spike ratio > spotSpikeRatioMax (1.5)', () => {
+    const r = makeEC2({
+      launchTime: new Date(Date.now() - 40 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'on-demand', monthlyCost: 100 },
+      utilization: makeUtil(20, 30),
+    });
+    // P95 30, P99 60 → ratio = 2.0 (above 1.5)
+    if (r.utilization) r.utilization.cpuP99 = 60;
+    expect(checkEC2014(r, cfg)).toBeNull();
+  });
+
+  it('skips when cpuAverage < idleCPUThreshold (idle → EC2-001 territory)', () => {
+    const r = makeEC2({
+      launchTime: new Date(Date.now() - 40 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'on-demand', monthlyCost: 100 },
+      utilization: makeUtil(2.0, 5), // avg 2% < idleCPUThreshold (5%)
+    });
+    expect(checkEC2014(r, cfg)).toBeNull();
+  });
+
+  it('skips for .metal instance types (poor Spot capacity)', () => {
+    const r = makeEC2({
+      tags: { Environment: 'dev' },
+      launchTime: new Date(Date.now() - 20 * 86_400_000).toISOString(),
+      instanceType: 'm5.metal',
+      configuration: { lifecycle: 'on-demand', monthlyCost: 100 },
+    });
+    expect(checkEC2014(r, cfg)).toBeNull();
+  });
+
+  it('skips when state !== "running"', () => {
+    const r = makeEC2({
+      state: 'stopped',
+      tags: { Environment: 'dev' },
+      launchTime: new Date(Date.now() - 20 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'on-demand', monthlyCost: 100 },
+    });
+    expect(checkEC2014(r, cfg)).toBeNull();
+  });
+
+  it('skips when monthly cost is zero (no savings to report)', () => {
+    const r = makeEC2({
+      tags: { Environment: 'dev' },
+      launchTime: new Date(Date.now() - 20 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'on-demand', monthlyCost: 0 },
+    });
+    expect(checkEC2014(r, cfg)).toBeNull();
+  });
+});
+
+// ─── Conflict-pair regression: EC2-014 suppresses EC2-005 on the same resource ─
+
+describe('CONFLICTING_RULE_PAIRS — EC2-014 suppresses EC2-005', () => {
+  it('returns only EC2-014 when both would fire on the same on-demand instance', () => {
+    // Setup an on-demand instance that triggers BOTH:
+    // - EC2-005 (running > 30 days on-demand)
+    // - EC2-014 (Environment=staging tag + uptime > 14d)
+    const r = makeEC2({
+      tags: { Environment: 'staging' },
+      launchTime: new Date(Date.now() - 40 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'on-demand', monthlyCost: 200 },
+    });
+    const { recommendations } = evaluateRules([r]);
+    const ruleIds = recommendations.map((rec) => rec.ruleId);
+    expect(ruleIds).toContain('EC2-014');
+    expect(ruleIds).not.toContain('EC2-005');
+  });
+
+  it('EC2-005 still fires for production on-demand instances where EC2-014 does not fire', () => {
+    // Production-tagged instance with no stable-workload util data → EC2-014 silent,
+    // EC2-005 should still fire on the 30+ day uptime.
+    const r = makeEC2({
+      tags: { Environment: 'production' },
+      launchTime: new Date(Date.now() - 40 * 86_400_000).toISOString(),
+      configuration: { lifecycle: 'on-demand', monthlyCost: 200 },
+    });
+    const { recommendations } = evaluateRules([r]);
+    const ruleIds = recommendations.map((rec) => rec.ruleId);
+    expect(ruleIds).toContain('EC2-005');
+    expect(ruleIds).not.toContain('EC2-014');
   });
 });
 

@@ -133,6 +133,7 @@ export function evaluateRules(
  */
 const CONFLICTING_RULE_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['EC2-001', 'EC2-004'],
+  ['EC2-014', 'EC2-005'], // Spot opportunity is more specific than generic RI candidate
   ['RDS-001', 'RDS-003'],
 ] as const;
 
