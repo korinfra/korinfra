@@ -14,7 +14,7 @@ vi.mock('node:util', async () => {
 });
 
 vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
+  const actual = await importOriginal();
   return {
     ...actual,
     existsSync: vi.fn(() => true),
