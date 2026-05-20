@@ -14,9 +14,12 @@ import pLimit from 'p-limit';
 import type { TerraformResource } from './types.js';
 import { logger } from '../utils/logger.js';
 
-const walkConcurrencyLimit = pLimit(20);
+const WALK_CONCURRENCY = 20;
 /** Separate limit for CPU-bound WASM parse calls to reduce memory pressure. */
-const parseLimit = pLimit(8);
+const PARSE_CONCURRENCY = 8;
+
+const walkConcurrencyLimit = pLimit(WALK_CONCURRENCY);
+const parseLimit = pLimit(PARSE_CONCURRENCY);
 
 // ---------------------------------------------------------------------------
 // Type normalization map (matches Go awsTypeMap)

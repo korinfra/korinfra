@@ -5,8 +5,7 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
-import type { ThresholdsOverride } from '../config.js';
-import type { THRESHOLDS } from '../config.js';
+import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
 import { FALLBACK_EC2_PRICES, EBS_GP3_PER_GB, estimateEC2CostSync } from '../../pricing/resources.js';
 import {
   splitInstanceType,
@@ -493,8 +492,7 @@ export function checkEC2010(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EC2-011: No EBS optimization (non-burstable instance). */
-export function checkEC2011(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkEC2011(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'ec2_instance') return null;
   if (!('ebs_optimized' in r.configuration)) return null;
   if (boolConfig(r, 'ebs_optimized')) return null;
@@ -527,8 +525,7 @@ export function checkEC2011(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EC2-012: IMDSv2 not enforced. */
-export function checkEC2012(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkEC2012(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'ec2_instance') return null;
   if (!('metadata_options_http_tokens' in r.configuration)) return null;
   if (strConfig(r, 'metadata_options_http_tokens') === 'required') return null;

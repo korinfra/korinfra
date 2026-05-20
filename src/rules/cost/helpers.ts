@@ -4,7 +4,9 @@
  */
 
 import type { Resource } from '../../aws/types.js';
-import { clampConfidence, guardCost } from '../../utils/numeric-guards.js';
+import type { RuleContext } from '../types.js';
+import { clampConfidence, guardCost, guardSavings } from '../../utils/numeric-guards.js';
+import { EBS_SNAPSHOT_PER_GB } from '../../pricing/resources.js';
 
 /** Parse "7d" → 7, "14d" → 14, "30d" → 30. Returns 30 for unrecognized formats. */
 function parsePeriodDays(period: string): number {
@@ -248,4 +250,69 @@ export function missingRequiredTags(r: Resource, required: readonly string[]): s
     if (!(k in r.tags)) missing.push(k);
   }
   return missing;
+}
+
+// ─── Shared warn reason strings ───────────────────────────────────────────────
+
+export const RULE_WARN_REASONS = {
+  MISSING_COST: 'monthly_cost missing or invalid',
+  MISSING_COST_AND_SIZE: 'monthly_cost and size both missing',
+} as const;
+
+// ─── Named confidence constants ───────────────────────────────────────────────
+
+export const CONF_STRONG = 0.98;
+export const CONF_SECURITY = 0.95;
+export const CONF_COST_OPT = 0.80;
+export const CONF_REVIEW_ONLY = 0.60;
+
+// ─── Shared helper functions ──────────────────────────────────────────────────
+
+/**
+ * Returns the monthly cost for a resource, emitting a warning via ctx when
+ * the cost is missing. Callers should return null when this returns null.
+ */
+export function costOrWarn(r: Resource, ruleId: string, ctx?: RuleContext): number | null {
+  const cost = getMonthlyCostStrict(r);
+  if (cost === null) ctx?.warn(ruleId, r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
+  return cost;
+}
+
+/**
+ * Builds an implementation step that optionally prefixes with a file path.
+ * Returns `Update ${filePath}: ${action}` when filePath is set, else `action`.
+ */
+export function filePathStep(action: string, filePath: string | null | undefined): string {
+  return filePath ? `Update ${filePath}: ${action}` : action;
+}
+
+/**
+ * Computes snapshot savings using strict monthly cost, then falls back to
+ * size x EBS_SNAPSHOT_PER_GB. Returns null and warns via ctx when both are
+ * unavailable. Only wire this in when the recommendation should be skipped on null.
+ */
+export function snapshotSavings(r: Resource, ruleId: string, ctx?: RuleContext): number | null {
+  const strict = getMonthlyCostStrict(r);
+  if (strict !== null) return strict;
+  const sizeGB = numConfig(r, 'volume_size') || numConfig(r, 'size_gb');
+  if (sizeGB > 0) return sizeGB * EBS_SNAPSHOT_PER_GB;
+  ctx?.warn(ruleId, r.id, r.type, RULE_WARN_REASONS.MISSING_COST_AND_SIZE);
+  return null;
+}
+
+/**
+ * Computes savings when both real pricing numbers are available, with a
+ * fallback multiplier estimate. Returns `{ savings, confidence }` — both
+ * already guarded/clamped.
+ */
+export function calculateSavingsWithPricingFallback(
+  currentMonthly: number,
+  suggestedMonthly: number,
+  fallbackCost: number,
+  fallbackMultiplier: number,
+): { savings: number; confidence: number } {
+  if (currentMonthly > 0 && suggestedMonthly > 0) {
+    return { savings: guardSavings(currentMonthly - suggestedMonthly), confidence: clampConfidence(CONF_COST_OPT) };
+  }
+  return { savings: guardSavings(fallbackCost * fallbackMultiplier), confidence: clampConfidence(0.65) };
 }

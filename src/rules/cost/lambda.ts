@@ -5,8 +5,7 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
-import type { ThresholdsOverride } from '../config.js';
-import type { THRESHOLDS } from '../config.js';
+import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
 import { strConfig, numConfig, sanitizeResourceName, normalizeToMonth, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
@@ -20,8 +19,7 @@ const LAMBDA_GB_SECOND_PRICE = 0.0000166667;
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
 /** LAM-001: Unused Lambda function (zero invocations). */
-export function checkLAM001(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkLAM001(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'lambda_function' || !r.utilization) return null;
   if ((r.utilization.invocations ?? 0) > 0) return null;
   const filePath = strConfig(r, 'file_path');
@@ -109,8 +107,7 @@ export function checkLAM002(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** LAM-003: Deprecated Lambda runtime. */
-export function checkLAM003(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkLAM003(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'lambda_function') return null;
   const runtime = strConfig(r, 'runtime');
   const deprecatedRuntimes = new Set([
@@ -230,8 +227,7 @@ export function checkLAM004(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** LAM-005: Lambda on x86_64 — consider arm64/Graviton. */
-export function checkLAM005(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkLAM005(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'lambda_function') return null;
   let arch = strConfig(r, 'architectures');
   if (!arch) arch = strConfig(r, 'architecture');
@@ -346,8 +342,7 @@ function checkLAM007(r: Resource, _cfg: Cfg): Recommendation | null {
 }
 
 /** LAM-008: Lambda function with high timeout (≥300s). */
-function checkLAM008(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+function checkLAM008(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'lambda_function') return null;
   const timeoutSec = numConfig(r, 'timeout_sec');
   if (timeoutSec < 300) return null;

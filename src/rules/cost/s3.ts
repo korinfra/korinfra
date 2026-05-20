@@ -5,8 +5,7 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
-import type { ThresholdsOverride } from '../config.js';
-import type { THRESHOLDS } from '../config.js';
+import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
 import { strConfig, boolConfig, numConfig, getMonthlyCost, triStateConfig } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
@@ -102,8 +101,7 @@ export function checkS3002(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** S3-003: Bucket without versioning. */
-export function checkS3003(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkS3003(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 's3_bucket') return null;
   // Skip when versioning state could not be determined (transient API failure).
   if (triStateConfig(r, 'versioning_enabled') === 'unknown') return null;
@@ -135,8 +133,7 @@ export function checkS3003(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** S3-004: Bucket without server-side encryption. */
-export function checkS3004(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkS3004(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 's3_bucket') return null;
   if (!('encryption_enabled' in r.configuration)) return null;
   // Skip when encryption state could not be determined (transient API failure)

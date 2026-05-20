@@ -5,8 +5,7 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
-import type { ThresholdsOverride } from '../config.js';
-import type { THRESHOLDS } from '../config.js';
+import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
 import { strConfig } from './helpers.js';
 import { EIP_HOURLY, HOURS_PER_MONTH } from '../../pricing/resources.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
@@ -17,8 +16,7 @@ type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 const EIP_MONTHLY_USD = EIP_HOURLY * HOURS_PER_MONTH;
 
 /** EIP-001: Unused Elastic IP — release to avoid unnecessary IPv4 charges. */
-export function checkEIP001(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkEIP001(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'elastic_ip' || r.state === 'associated') return null;
   const filePath = strConfig(r, 'file_path');
   const monthlyCostStr = EIP_MONTHLY_USD.toFixed(2);

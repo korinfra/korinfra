@@ -23,8 +23,8 @@ interface RecDiff {
 export function diffResources(before: Resource[], after: Resource[]): ResourceDiff {
   let _nullIdx = 0;
   const beforeMap = new Map(before.map(r => [r.resource_id ?? `__no_id_${_nullIdx++}`, r]));
-  _nullIdx = 0;
-  const afterMap = new Map(after.map(r => [r.resource_id ?? `__no_id_${_nullIdx++}`, r]));
+  let _afterNullIdx = 0;
+  const afterMap = new Map(after.map(r => [r.resource_id ?? `__no_id_${_afterNullIdx++}`, r]));
 
   const added = [...afterMap.entries()].filter(([k]) => !beforeMap.has(k)).map(([, r]) => r);
   const removed = [...beforeMap.entries()].filter(([k]) => !afterMap.has(k)).map(([, r]) => r);

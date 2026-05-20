@@ -13,6 +13,7 @@ import { jsonResult, errorResult, normalizeTerraformResource } from './types.js'
 import type { ToolDefinition } from './types.js';
 import { logger } from '../utils/logger.js';
 import { redactObject } from '../redaction/redactor.js';
+import { TERRAFORM_EXTENSIONS } from '../constants.js';
 
 export const scanTerraformTool: ToolDefinition = {
   name: 'scan_terraform',
@@ -55,7 +56,7 @@ export const scanTerraformTool: ToolDefinition = {
         return errorResult(`dir resolves to filesystem root: ${canonicalDir}`);
       }
       const dirEntries = await readdir(canonicalDir);
-      if (!dirEntries.some((e) => e.endsWith('.tf') || e.endsWith('.tf.json'))) {
+      if (!dirEntries.some((e) => TERRAFORM_EXTENSIONS.some((ext) => e.endsWith(ext)))) {
         return errorResult(`dir contains no .tf files: ${resolvedDir}`);
       }
 

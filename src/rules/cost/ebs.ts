@@ -5,9 +5,8 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
-import type { ThresholdsOverride } from '../config.js';
-import type { THRESHOLDS } from '../config.js';
-import { daysSince, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization } from './helpers.js';
+import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
+import { daysSince, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, confidenceFromUtilization, costOrWarn, CONF_STRONG, CONF_SECURITY, CONF_REVIEW_ONLY } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { asStr } from '../../utils/coerce.js';
 import { EBS_GP3_PER_GB, EBS_GP3_IOPS_PRICE, EBS_IO1_PER_GB, EBS_IO1_IOPS_PRICE, EBS_SNAPSHOT_PER_GB } from '../../pricing/resources.js';
@@ -15,14 +14,10 @@ import { EBS_GP3_PER_GB, EBS_GP3_IOPS_PRICE, EBS_IO1_PER_GB, EBS_IO1_IOPS_PRICE,
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 
 /** EBS-001: Unattached volume (state=available). */
-export function checkEBS001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
-  void cfg;
+export function checkEBS001(r: Resource, _cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ebs_volume' || r.state !== 'available') return null;
-  const monthlyCost = getMonthlyCostStrict(r);
-  if (monthlyCost === null) {
-    ctx?.warn('EBS-001', r.id, r.type, 'monthly_cost missing or invalid');
-    return null;
-  }
+  const monthlyCost = costOrWarn(r, 'EBS-001', ctx);
+  if (monthlyCost === null) return null;
   const filePath = strConfig(r, 'file_path');
   return {
     ruleId: 'EBS-001',
@@ -35,7 +30,7 @@ export function checkEBS001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
     risk: 'low',
     estimatedSavings: guardSavings(monthlyCost),
     suggestedAction: 'delete_volume',
-    confidence: clampConfidence(0.98),
+    confidence: clampConfidence(CONF_STRONG),
     filePath,
     currentConfig: { state: 'available', volume_type: strConfig(r, 'volume_type') },
     suggestedConfig: { action: 'delete' },
@@ -54,11 +49,8 @@ export function checkEBS002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
   if (r.type !== 'ebs_snapshot') return null;
   const age = daysSince(r.launchTime);
   if (age === null || age <= cfg.snapshotRetentionDays) return null;
-  const monthlyCost = getMonthlyCostStrict(r);
-  if (monthlyCost === null) {
-    ctx?.warn('EBS-002', r.id, r.type, 'monthly_cost missing or invalid');
-    return null;
-  }
+  const monthlyCost = costOrWarn(r, 'EBS-002', ctx);
+  if (monthlyCost === null) return null;
   return {
     ruleId: 'EBS-002',
     resourceId: r.id,
@@ -70,7 +62,7 @@ export function checkEBS002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
     risk: 'low',
     estimatedSavings: guardSavings(monthlyCost),
     suggestedAction: 'review_and_delete',
-    confidence: clampConfidence(0.6),
+    confidence: clampConfidence(CONF_REVIEW_ONLY),
     currentConfig: { age_days: age },
     suggestedConfig: { action: 'review_and_delete' },
     patchContent: `# Delete old snapshot ${sanitizeResourceName(r.name)} (>90 days)\n# aws ec2 delete-snapshot --snapshot-id ${sanitizeResourceName(r.id)}`,
@@ -99,7 +91,7 @@ export function checkEBS003(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_to_gp3',
-    confidence: clampConfidence(0.95),
+    confidence: clampConfidence(CONF_SECURITY),
     filePath,
     currentConfig: { volume_type: 'gp2' },
     suggestedConfig: { volume_type: 'gp3' },
@@ -113,8 +105,7 @@ export function checkEBS003(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EBS-004: Unencrypted EBS volume. */
-export function checkEBS004(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkEBS004(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'ebs_volume') return null;
   if (boolConfig(r, 'encrypted')) return null;
   const filePath = strConfig(r, 'file_path');
@@ -151,9 +142,6 @@ export function checkEBS005(r: Resource, cfg: Cfg): Recommendation | null {
   if (volumeType !== 'io1' && volumeType !== 'io2') return null;
   const iops = numConfig(r, 'iops');
   if (iops > cfg.gp3IOPSBaseline) return null; // Only fire if IOPS <= 3000; above that, EBS-006 handles it
-
-  // Pricing constants from pricing module (us-east-1 baseline)
-  // GP3_IOPS_OVERAGE = EBS_GP3_IOPS_PRICE, GP3_GB = EBS_GP3_PER_GB
 
   const sizeGb = (r.configuration['size_gb'] as number | undefined) ?? 0;
   const reportedMonthlyCost = getMonthlyCost(r);
@@ -229,7 +217,6 @@ function checkEBS006(r: Resource, cfg: Cfg): Recommendation | null {
   const sizeGb = (r.configuration['size_gb'] as number | undefined) ?? 0;
   const filePath = strConfig(r, 'file_path');
 
-  // Prefer P95 actual IOPS from CloudWatch when available.
   const actualIOPS = r.utilization
     ? r.utilization.diskReadIOPS + r.utilization.diskWriteIOPS
     : 0;
@@ -332,8 +319,7 @@ export function checkEBS007(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** SNAP-001: Orphaned snapshot (source volume deleted or unknown). */
-export function checkSNAP001(r: Resource, cfg: Cfg): Recommendation | null {
-  void cfg;
+export function checkSNAP001(r: Resource, _cfg: Cfg): Recommendation | null {
   if (r.type !== 'ebs_snapshot') return null;
   if (r.state !== 'available') return null;
   const volumeID = r.configuration?.['volume_id'];

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-base-to-string, eqeqeq */
 import type { Driver } from '../drivers/node.js';
 import { redact, redactObject } from '../../redaction/redactor.js';
+import { safeParse } from '../helpers.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,11 +40,6 @@ export interface RecommendationFilters {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function safeParse(raw: unknown): Record<string, unknown> | null {
-  if (!raw) return null;
-  try { return JSON.parse(raw as string) as Record<string, unknown>; } catch { return null; }
-}
 
 function rowToRec(row: Record<string, unknown>): Recommendation {
   const created_at = row['created_at'] != null ? String(row['created_at']) : undefined;

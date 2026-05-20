@@ -11,6 +11,7 @@ import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition } from './types.js';
 import { redactObject } from '../redaction/index.js';
 import { loadConfig } from '../config/index.js';
+import { SEVERITY_ORDER } from '../utils/severity.js';
 
 export const detectAnomalesTool: ToolDefinition = {
   name: 'detect_cost_anomalies',
@@ -97,9 +98,8 @@ export const detectAnomalesTool: ToolDefinition = {
         direction: trend.direction,
       };
 
-      const severityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
       const cleanAnomalies = anomalies
-        .sort((a, b) => (severityOrder[a.severity] ?? 4) - (severityOrder[b.severity] ?? 4))
+        .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 4) - (SEVERITY_ORDER[b.severity] ?? 4))
         .slice(0, 10)
         .map((a: Anomaly) => ({
           date: a.date,
