@@ -81,21 +81,27 @@ function loadHeadlessConfigFile(configFile: string): Record<string, string> {
     if (code === 'ENOENT') throw new Error(`--config: file does not exist: ${absConfig}`, { cause: err });
     throw new Error(`--config: cannot resolve path: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }
-  const stat = fs.statSync(realPath);
-  if (!stat.isFile()) {
-    throw new Error(`--config: not a regular file: ${realPath}`);
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(realPath, 'r');
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      throw new Error(`--config: not a regular file: ${realPath}`);
+    }
+    if (stat.size > HEADLESS_CONFIG_MAX_BYTES) {
+      throw new Error(`--config: file exceeds ${HEADLESS_CONFIG_MAX_BYTES} bytes: ${realPath}`);
+    }
+    const raw = fs.readFileSync(fd, 'utf8');
+    const parsed: unknown = ext === '.json'
+      ? JSON.parse(raw)
+      : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed as Record<string, string>;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
-  if (stat.size > HEADLESS_CONFIG_MAX_BYTES) {
-    throw new Error(`--config: file exceeds ${HEADLESS_CONFIG_MAX_BYTES} bytes: ${realPath}`);
-  }
-  const raw = fs.readFileSync(realPath, 'utf8');
-  const parsed: unknown = ext === '.json'
-    ? JSON.parse(raw)
-    : yaml.load(raw, { schema: yaml.JSON_SCHEMA });
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return {};
-  }
-  return parsed as Record<string, string>;
 }
 
 // ─── Headless AI provider factory ────────────────────────────────────────────
