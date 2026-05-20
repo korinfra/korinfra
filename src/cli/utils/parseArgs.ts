@@ -8,11 +8,23 @@
  * Rejects values that start with `-` (to prevent flag-value collisions).
  */
 export function parseArg(args: string[], flag: string, short?: string): string | null {
+  // Space form: --flag value (wins if both forms are present)
   const idx = args.findIndex((a) => a === flag || (short !== undefined && a === short));
-  if (idx === -1 || idx + 1 >= args.length) return null;
-  const val = args[idx + 1] ?? '';
-  if (val.startsWith('-')) return null;
-  return val;
+  if (idx !== -1 && idx + 1 < args.length) {
+    const val = args[idx + 1] ?? '';
+    if (!val.startsWith('-')) return val;
+  }
+  // Equals form: --flag=value or -f=value
+  const eqPrefix = `${flag}=`;
+  const eqShortPrefix = short !== undefined ? `${short}=` : null;
+  const eqHit = args.find(
+    (a) => a.startsWith(eqPrefix) || (eqShortPrefix !== null && a.startsWith(eqShortPrefix)),
+  );
+  if (eqHit !== undefined) {
+    const value = eqHit.slice(eqHit.indexOf('=') + 1);
+    return value === '' || value.startsWith('-') ? null : value;
+  }
+  return null;
 }
 
 export function hasFlag(args: string[], flag: string): boolean {
