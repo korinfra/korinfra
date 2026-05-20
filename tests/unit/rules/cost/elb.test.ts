@@ -63,15 +63,31 @@ describe('checkELB001 — load balancer with 0 healthy targets', () => {
 // ─── LB-002: Idle load balancer ──────────────────────────────────────────────
 
 describe('checkLB002 — idle load balancer with negligible traffic', () => {
-  it('fires for near-zero traffic and uses $16 default savings when no monthlyCost', () => {
+  it('fires for near-zero traffic with monthlyCost provided (post-#44: strict cost gating)', () => {
     expect(checkLB002(makeALB({ configuration: { lb_type: 'application', monthlyCost: 18 }, utilization: makeUtil(0.05) }), cfg)).not.toBeNull();
     expect(checkLB002(makeALB({ configuration: { lb_type: 'application', monthlyCost: 18 }, utilization: makeUtil(0) }), cfg)).not.toBeNull();
     // NLB also fires
     expect(checkLB002(makeALB({ type: 'nlb', configuration: { lb_type: 'network', monthlyCost: 16 }, utilization: makeUtil(0) }), cfg)).not.toBeNull();
+  });
 
+  it('skips and warns when monthlyCost is missing (#44 Item 2 — replaces ALB_BASE_HOURLY fallback)', () => {
+    // Pre-#44 the rule fell back to ALB_BASE_HOURLY * HOURS_PER_MONTH = $16.425/mo when monthlyCost
+    // was absent. Post-#44 the rule strict-skips because the fixed rate is misleading for NLBs
+    // ($0.006/hr base) and LCU-heavy ALBs (which exceed the $16/mo base by 3x or more).
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
     const noMonthlyCost = makeALB({ configuration: { lb_type: 'application' }, utilization: makeUtil(0) });
-    // ALB base hourly: $0.0225/hr * 730 hours/month = $16.425/month
-    expect(checkLB002(noMonthlyCost, cfg)!.estimatedSavings).toBeCloseTo(16.425, 2);
+    expect(checkLB002(noMonthlyCost, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      ruleId: 'LB-002',
+      resourceId: noMonthlyCost.id,
+      reason: 'monthly_cost missing or invalid',
+    });
   });
 
   it('does not fire when traffic exceeds threshold, wrong period, zero healthy targets, or classic LB', () => {

@@ -107,3 +107,77 @@ describe('checkDDB002 — DynamoDB provisioned without auto-scaling', () => {
     expect(checkDDB002(makeTable({ configuration: { billing_mode: 'PAY_PER_REQUEST' } }), cfg)).toBeNull();
   });
 });
+
+// ─── DDB-001: data-quality skip warnings (#44 Item 1) ─────────────────────────
+
+describe('DDB-001 — emits warnings on data-quality skips', () => {
+  function makeCtx() {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    return {
+      warnings,
+      ctx: {
+        warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+          warnings.push({ ruleId, resourceId, resourceType, reason });
+        },
+      },
+    };
+  }
+
+  it('warns when consumed capacity is non-finite', () => {
+    const { ctx, warnings } = makeCtx();
+    const broken = makeTable({
+      configuration: {
+        billing_mode: 'PROVISIONED',
+        read_capacity: 100,
+        write_capacity: 100,
+        consumed_read_capacity_units: NaN,
+        consumed_write_capacity_units: 5,
+        monthlyCost: 50,
+      },
+    });
+    expect(checkDDB001(broken, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      ruleId: 'DDB-001',
+      resourceId: broken.id,
+      reason: 'consumed capacity is non-finite',
+    });
+  });
+
+  it('warns when zero provisioned and zero consumed capacity', () => {
+    const { ctx, warnings } = makeCtx();
+    const paused = makeTable({
+      configuration: {
+        billing_mode: 'PROVISIONED',
+        read_capacity: 0,
+        write_capacity: 0,
+        consumed_read_capacity_units: 0,
+        consumed_write_capacity_units: 0,
+        monthlyCost: 0,
+      },
+    });
+    expect(checkDDB001(paused, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({
+      ruleId: 'DDB-001',
+      resourceId: paused.id,
+      reason: 'zero provisioned and zero consumed capacity (paused or new table)',
+    });
+  });
+
+  it('does NOT warn when table is well-utilized (legitimate skip)', () => {
+    const { ctx, warnings } = makeCtx();
+    const wellUtilized = makeTable({
+      configuration: {
+        billing_mode: 'PROVISIONED',
+        read_capacity: 100,
+        write_capacity: 100,
+        consumed_read_capacity_units: 80,
+        consumed_write_capacity_units: 70,
+        monthlyCost: 200,
+      },
+    });
+    expect(checkDDB001(wellUtilized, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(0);
+  });
+});

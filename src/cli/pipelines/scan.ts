@@ -19,6 +19,7 @@ import { scanTerraformTool } from '../../tools/scan-terraform.js';
 import { classifyResourcesTool } from '../../tools/classify-resources.js';
 import { AWS_REGION_RE } from '../utils/validateRegions.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
+import { RULE_WARN_REASONS } from '../../rules/types.js';
 
 /** Parse a ToolResult's JSON text content. Throws on error results. */
 export function parseToolResult(result: ToolResult): unknown {
@@ -358,10 +359,12 @@ export function extractScanSummary(ctx: PipelineContext): {
   // only when at least one strict-gated rule actually skipped it for that
   // reason. Counting raw collect-payload values would over-count, because
   // security-only rules emit recommendations even when monthly_cost is 0.
+  // Exact-match by design — SNAP-001/002 use MISSING_COST_AND_SIZE (separate
+  // semantic: both cost AND size missing, not just cost) and are excluded here.
   const ruleWarnings: ScanWarning[] = rulesResult?.warnings ?? [];
   const unknownCostResources = new Set(
     ruleWarnings
-      .filter((w) => w.reason === 'monthly_cost missing or invalid')
+      .filter((w) => w.reason === RULE_WARN_REASONS.MISSING_COST)
       .map((w) => w.resourceId),
   );
   const unknownCostCount = unknownCostResources.size;
