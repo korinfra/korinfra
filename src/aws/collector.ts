@@ -18,6 +18,7 @@ import type { Driver } from '../storage/drivers/node.js';
 import { getCredentials, resolveRegion } from './credentials.js';
 import { redact } from '../redaction/index.js';
 import { throttledCall, isAuthError, flushApiCallLog } from './rate-limiter.js';
+import { buildCmdOptions } from './utils.js';
 import { collectEC2 } from './collectors/ec2.js';
 import { collectRDS } from './collectors/rds.js';
 import { collectS3 } from './collectors/s3.js';
@@ -179,10 +180,7 @@ export async function collectAll(
       dbg(`STS GetCallerIdentity start — region:${primaryRegion}`);
       const t_sts = Date.now();
       const stsClient = new STSClient({ credentials, region: primaryRegion, requestHandler, maxAttempts: 1 });
-      const cmdOptions: Record<string, unknown> = {};
-      if (signal) {
-        cmdOptions['abortSignal'] = signal;
-      }
+      const cmdOptions = buildCmdOptions(signal);
       const identity = await throttledCall('sts', 'GetCallerIdentity', primaryRegion, () =>
         stsClient.send(new GetCallerIdentityCommand({}), cmdOptions),
       );

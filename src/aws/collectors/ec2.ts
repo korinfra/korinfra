@@ -7,14 +7,9 @@ import {
 import type { EC2Client} from '@aws-sdk/client-ec2';
 import type { Resource } from '../types.js';
 import { throttledCall } from '../rate-limiter.js';
-import { tagsToMap } from '../utils.js';
+import { tagsToMap, buildCmdOptions, extractNextToken, isValidAccountId } from '../utils.js';
 import { logger } from '../../utils/logger.js';
 import { dbg } from '../debug.js';
-
-/** Validate account ID is a non-empty string. */
-function isValidAccountId(accountId: string | undefined): accountId is string {
-  return typeof accountId === 'string' && accountId.length > 0;
-}
 
 /** Extract stop date string from AWS StateTransitionReason field.
  * Handles both:
@@ -65,15 +60,11 @@ async function collectInstances(
   let nextToken: string | undefined;
 
   do {
-    const cmdOptions: Record<string, unknown> = {};
-    if (signal) {
-      cmdOptions['abortSignal'] = signal;
-    }
+    const cmdOptions = buildCmdOptions(signal);
     const out = await throttledCall('ec2', 'DescribeInstances', region, () =>
       client.send(new DescribeInstancesCommand({ NextToken: nextToken }), cmdOptions),
     );
-    nextToken = typeof out.NextToken === 'string' && out.NextToken.trim() !== ''
-      ? out.NextToken : undefined;
+    nextToken = extractNextToken(out.NextToken);
 
     for (const reservation of out.Reservations ?? []) {
       for (const inst of reservation.Instances ?? []) {
@@ -162,15 +153,11 @@ async function collectVolumes(
   let nextToken: string | undefined;
 
   do {
-    const cmdOptions: Record<string, unknown> = {};
-    if (signal) {
-      cmdOptions['abortSignal'] = signal;
-    }
+    const cmdOptions = buildCmdOptions(signal);
     const out = await throttledCall('ec2', 'DescribeVolumes', region, () =>
       client.send(new DescribeVolumesCommand({ NextToken: nextToken }), cmdOptions),
     );
-    nextToken = typeof out.NextToken === 'string' && out.NextToken.trim() !== ''
-      ? out.NextToken : undefined;
+    nextToken = extractNextToken(out.NextToken);
 
     for (const vol of out.Volumes ?? []) {
       let state = vol.State ?? '';
@@ -220,10 +207,7 @@ async function collectAddresses(
   signal?: AbortSignal,
   accountId?: string,
 ): Promise<Resource[]> {
-  const cmdOptions: Record<string, unknown> = {};
-  if (signal) {
-    cmdOptions['abortSignal'] = signal;
-  }
+  const cmdOptions = buildCmdOptions(signal);
   const out = await throttledCall('ec2', 'DescribeAddresses', region, () =>
     client.send(new DescribeAddressesCommand({}), cmdOptions),
   );
@@ -277,10 +261,7 @@ async function collectSnapshots(
   let pageCount = 0;
 
   do {
-    const cmdOptions: Record<string, unknown> = {};
-    if (signal) {
-      cmdOptions['abortSignal'] = signal;
-    }
+    const cmdOptions = buildCmdOptions(signal);
     dbg(`    ec2 snapshots page:${pageCount + 1} start — region:${region} soFar:${resources.length}`);
     const t_snap = Date.now();
     const out = await throttledCall('ec2', 'DescribeSnapshots', region, () =>
@@ -294,8 +275,7 @@ async function collectSnapshots(
         cmdOptions,
       ),
     );
-    nextToken = typeof out.NextToken === 'string' && out.NextToken.trim() !== ''
-      ? out.NextToken : undefined;
+    nextToken = extractNextToken(out.NextToken);
     pageCount++;
     dbg(`    ec2 snapshots page:${pageCount} done — ${Date.now() - t_snap}ms inPage:${out.Snapshots?.length ?? 0} hasMore:${Boolean(nextToken)}`);
 

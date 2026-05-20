@@ -4,6 +4,7 @@ import {
 import type { MetricDataQuery, CloudWatchClient } from '@aws-sdk/client-cloudwatch';
 import type { Resource, Utilization } from './types.js';
 import { throttledCall } from './rate-limiter.js';
+import { buildCmdOptions, extractNextToken } from './utils.js';
 import { logger } from '../utils/logger.js';
 import { redact } from '../redaction/redactor.js';
 
@@ -22,6 +23,17 @@ const DATA_POINTS_PER_PERIOD: Record<MetricPeriodLabel, number> = {
 };
 
 const CW_MAX_DATAPOINTS_PER_CALL = 100_800; // AWS GetMetricData limit per request
+
+function handleBatchError(err: unknown, resourceCount: number, context: string): null {
+  logger.warn({
+    err: {
+      message: redact(err instanceof Error ? err.message : String(err), 'moderate'),
+      code: (err as { name?: string }).name,
+    },
+    resourceCount,
+  }, context);
+  return null;
+}
 
 function batchSize(metricsPerResource: number, periodLabel: MetricPeriodLabel): number {
   const dataPoints = DATA_POINTS_PER_PERIOD[periodLabel];
@@ -92,10 +104,7 @@ async function getMetricData(
   let nextToken: string | undefined;
   do {
     const out = await throttledCall('cloudwatch', 'GetMetricData', region, () => {
-      const cmdOptions: Record<string, unknown> = {};
-      if (signal) {
-        cmdOptions['abortSignal'] = signal;
-      }
+      const cmdOptions = buildCmdOptions(signal);
       return client.send(
         new GetMetricDataCommand({
           MetricDataQueries: queries,
@@ -106,7 +115,7 @@ async function getMetricData(
         cmdOptions,
       );
     });
-    nextToken = out.NextToken ?? undefined;
+    nextToken = extractNextToken(out.NextToken);
 
     for (const r of out.MetricDataResults ?? []) {
       if (!r.Id || !r.Values) continue;
@@ -161,19 +170,7 @@ export async function collectEC2MetricsBatched(
         );
       }
 
-      return getMetricData(client, region, queries, startTime, now, signal).catch((err: unknown) => {
-        logger.warn(
-          {
-            err: {
-              message: redact(err instanceof Error ? err.message : String(err), 'moderate'),
-              code: (err as { name?: string }).name,
-            },
-            resourceCount: batch.length,
-          },
-          'CloudWatch getMetricData batch failed',
-        );
-        return null;
-      }).then((results) => ({ batch, results }));
+      return getMetricData(client, region, queries, startTime, now, signal).catch((err: unknown) => handleBatchError(err, batch.length, 'CloudWatch getMetricData batch failed')).then((results) => ({ batch, results }));
     }),
   );
 
@@ -250,19 +247,7 @@ export async function collectRDSMetricsBatched(
         );
       }
 
-      return getMetricData(client, region, queries, startTime, now, signal).catch((err: unknown) => {
-        logger.warn(
-          {
-            err: {
-              message: redact(err instanceof Error ? err.message : String(err), 'moderate'),
-              code: (err as { name?: string }).name,
-            },
-            resourceCount: batch.length,
-          },
-          'CloudWatch getMetricData batch failed',
-        );
-        return null;
-      }).then((results) => ({ batch, results }));
+      return getMetricData(client, region, queries, startTime, now, signal).catch((err: unknown) => handleBatchError(err, batch.length, 'CloudWatch getMetricData batch failed')).then((results) => ({ batch, results }));
     }),
   );
 
@@ -339,19 +324,7 @@ export async function collectElastiCacheMetricsBatched(
         );
       }
 
-      return getMetricData(client, region, queries, startTime, now, signal).catch((err: unknown) => {
-        logger.warn(
-          {
-            err: {
-              message: redact(err instanceof Error ? err.message : String(err), 'moderate'),
-              code: (err as { name?: string }).name,
-            },
-            resourceCount: batch.length,
-          },
-          'CloudWatch getMetricData batch failed',
-        );
-        return null;
-      }).then((results) => ({ batch, results }));
+      return getMetricData(client, region, queries, startTime, now, signal).catch((err: unknown) => handleBatchError(err, batch.length, 'CloudWatch getMetricData batch failed')).then((results) => ({ batch, results }));
     }),
   );
 
@@ -422,19 +395,7 @@ export async function collectLambdaMetricsBatched(
         );
       }
 
-      return getMetricData(client, region, queries, startTime, now, signal).catch((err: unknown) => {
-        logger.warn(
-          {
-            err: {
-              message: redact(err instanceof Error ? err.message : String(err), 'moderate'),
-              code: (err as { name?: string }).name,
-            },
-            resourceCount: batch.length,
-          },
-          'CloudWatch getMetricData batch failed',
-        );
-        return null;
-      }).then((results) => ({ batch, results }));
+      return getMetricData(client, region, queries, startTime, now, signal).catch((err: unknown) => handleBatchError(err, batch.length, 'CloudWatch getMetricData batch failed')).then((results) => ({ batch, results }));
     }),
   );
 
