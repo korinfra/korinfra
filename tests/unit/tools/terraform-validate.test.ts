@@ -13,10 +13,14 @@ vi.mock('node:util', async () => {
   };
 });
 
-vi.mock('node:fs', () => ({
-  existsSync: vi.fn(() => true),
-  realpathSync: vi.fn((p: string) => p),
-}));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    existsSync: vi.fn(() => true),
+    realpathSync: vi.fn((p: string) => p),
+  };
+});
 
 vi.mock('node:fs/promises', () => ({
   readdir: vi.fn(() => Promise.resolve(['main.tf'])),
