@@ -7,14 +7,17 @@
  * Ensures .korinfra/ is in .gitignore before committing.
  */
 
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, appendFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition } from './types.js';
 
-function run(cmd: string, cwd: string): string {
-  return execSync(cmd, { encoding: 'utf8', cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+function run(args: string[], cwd: string): string {
+  const result = spawnSync('git', args, { encoding: 'utf8', cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(result.stderr || `git ${args[0] ?? ''} failed`);
+  return result.stdout;
 }
 
 /** Ensure .korinfra/ is listed in .gitignore at git repo root. */
@@ -22,7 +25,7 @@ function ensureGitignore(cwd: string): void {
   // Always write to git root, not TF subdirectory — subdirs don't need it.
   let repoRoot: string;
   try {
-    repoRoot = run('git rev-parse --show-toplevel', cwd).trim();
+    repoRoot = run(['rev-parse', '--show-toplevel'], cwd).trim();
   } catch {
     repoRoot = cwd;
   }
@@ -94,7 +97,7 @@ export const gitCommitPushTool: ToolDefinition = {
       // Capture current branch so we can restore it after pushing
       let originalBranch: string | null = null;
       try {
-        originalBranch = run('git rev-parse --abbrev-ref HEAD', cwd).trim();
+        originalBranch = run(['rev-parse', '--abbrev-ref', 'HEAD'], cwd).trim();
         if (originalBranch === 'HEAD') originalBranch = null; // detached HEAD
       } catch { /* ignore */ }
 
@@ -115,16 +118,16 @@ export const gitCommitPushTool: ToolDefinition = {
 
       // Untrack .korinfra/ if it was previously staged/committed (e.g. older git add -A)
       try {
-        const tracked = run('git ls-files .korinfra', cwd).trim();
+        const tracked = run(['ls-files', '.korinfra'], cwd).trim();
         if (tracked) {
-          run('git rm -r --cached .korinfra', cwd);
+          run(['rm', '-r', '--cached', '.korinfra'], cwd);
         }
       } catch { /* not tracked — ignore */ }
 
       // If branch already exists, append a short timestamp to make it unique
       let finalBranch = branch;
       try {
-        run(`git rev-parse --verify ${branch}`, cwd);
+        run(['rev-parse', '--verify', branch], cwd);
         // Branch exists — add timestamp suffix
         finalBranch = `${branch}-${Date.now().toString(36)}`;
       } catch {
@@ -135,41 +138,39 @@ export const gitCommitPushTool: ToolDefinition = {
       let branched = false;
       for (const base of ['origin/main', 'origin/master']) {
         try {
-          run(`git rev-parse --verify ${base}`, cwd);
-          try { run('git fetch origin', cwd); } catch { /* offline — use cached ref */ }
-          run(`git checkout -b ${finalBranch} ${base}`, cwd);
+          run(['rev-parse', '--verify', base], cwd);
+          try { run(['fetch', 'origin'], cwd); } catch { /* offline — use cached ref */ }
+          run(['checkout', '-b', finalBranch, base], cwd);
           branched = true;
           break;
         } catch { /* base not available, try next */ }
       }
-      if (!branched) run(`git checkout -b ${finalBranch}`, cwd);
+      if (!branched) run(['checkout', '-b', finalBranch], cwd);
 
       // Stage only Terraform files + .gitignore — never secrets or tool internals.
       // Stage patterns separately so a missing *.tf.json doesn't abort the whole add.
-      try { run('git add -- "*.tf"', cwd); } catch { /* no .tf files changed */ }
-      try { run('git add -- "*.tf.json"', cwd); } catch { /* no .tf.json files — expected */ }
+      try { run(['add', '--', '*.tf'], cwd); } catch { /* no .tf files changed */ }
+      try { run(['add', '--', '*.tf.json'], cwd); } catch { /* no .tf.json files — expected */ }
       try {
-        const gitignoreStatus = run('git status --porcelain .gitignore', cwd).trim();
-        if (gitignoreStatus) run('git add .gitignore', cwd);
+        const gitignoreStatus = run(['status', '--porcelain', '.gitignore'], cwd).trim();
+        if (gitignoreStatus) run(['add', '.gitignore'], cwd);
       } catch { /* ignore */ }
 
       // Check if there's anything to commit
-      const status = run('git status --porcelain', cwd);
+      const status = run(['status', '--porcelain'], cwd);
       if (!status.trim()) {
         return jsonResult({ branch: finalBranch, committed: false, note: 'No Terraform file changes to commit' });
       }
 
-      // Strip control characters (incl. newlines) before shell-escaping to prevent multi-message injection.
-      const safeMsg = message
-        // eslint-disable-next-line no-control-regex -- intentionally strips control chars before shell injection
-        .replace(/[\x00-\x1f\x7f]/g, ' ')
-        .replace(/'/g, "'\\''");
-      run(`git commit -m '${safeMsg}'`, cwd);
-      run(`git push -u origin ${finalBranch}`, cwd);
+      // Strip control characters before passing to git (spawnSync — no shell, no escaping needed).
+      // eslint-disable-next-line no-control-regex -- strip control chars from commit message
+      const safeMsg = message.replace(/[\x00-\x1f\x7f]/g, ' ');
+      run(['commit', '-m', safeMsg], cwd);
+      run(['push', '-u', 'origin', finalBranch], cwd);
 
       // Restore original branch so repo isn't left on the fix branch
       if (originalBranch && originalBranch !== finalBranch) {
-        try { run(`git checkout ${originalBranch}`, cwd); } catch { /* ignore — non-fatal */ }
+        try { run(['checkout', originalBranch], cwd); } catch { /* ignore — non-fatal */ }
       }
 
       return jsonResult({ branch: finalBranch, committed: true, pushed: true });
