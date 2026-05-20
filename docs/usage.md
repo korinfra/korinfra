@@ -192,6 +192,15 @@ korinfra history diff <id1> <id2>       # delta between two scans (resource + co
 
 Scan IDs come from `korinfra scan --no-tui` output or from `history list`.
 
+#### Scan warnings in history
+
+Each scan persists the `warnings[]` array emitted by `evaluateRules()` — the list of resources that were silently skipped because cost data or AWS API state was ambiguous at scan time. You can retrieve them with the `get_history` MCP tool:
+
+- **Single scan** (`get_history` with `id`): returns the full `warnings` array for that scan.
+- **List** (`get_history` without `id`): returns a `warning_count` per scan for quick triage.
+
+**Important for operators — warnings go stale.** A persisted warning reflects the AWS API state at the moment the scan ran. If the underlying IAM gap or transient API failure is resolved without triggering a new scan, the stored warning remains but is no longer accurate. KorInfra does not automatically invalidate stale warnings. Detecting and acting on stale warnings (e.g. alerting when a scan older than N days still has `warning_count > 0`) is the operator's responsibility.
+
 ---
 
 ### `security`
