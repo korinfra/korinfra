@@ -1,7 +1,6 @@
 /**
  * MCP tool registration — converts ToolDefinition[] to low-level Server request handlers.
  * Uses raw setRequestHandler on the underlying Server to support plain JSON Schema inputSchema.
- * Thin adapter: no business logic here.
  */
 
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
