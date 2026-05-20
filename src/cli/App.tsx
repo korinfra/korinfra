@@ -23,6 +23,7 @@ import { ConfigCommand } from './commands/config.js';
 import { PricingCommand } from './commands/pricing.js';
 import { McpCommand } from './commands/mcp.js';
 import { ChangesCommand } from './commands/changes.js';
+import { RulesCommand } from './commands/rules.js';
 import { CommandPaletteOverlay } from './components/CommandPaletteOverlay.js';
 import { ErrorBox } from './components/ErrorBox.js';
 import { ThinkingSpinner } from './components/ThinkingSpinner.js';
@@ -78,6 +79,7 @@ type View =
   | { kind: 'pricing'; args: string[] }
   | { kind: 'mcp'; args: string[] }
   | { kind: 'changes'; args: string[] }
+  | { kind: 'rules'; args: string[] }
   | { kind: 'unknown'; name: string }
   | { kind: 'prompt'; text: string };
 
@@ -107,6 +109,7 @@ function resolveInitialView(args: string[]): View {
     case 'pricing':     return commandView('pricing', rest);
     case 'mcp':         return commandView('mcp', rest);
     case 'changes':     return commandView('changes', rest);
+    case 'rules':       return commandView('rules', rest);
     case undefined:
       return { kind: 'menu' };
     default:
@@ -746,7 +749,8 @@ export function App({ args, provider = null }: AppProps): React.JSX.Element {
             case 'doctor':    navigate(commandView('doctor', []));    break;
             case 'config':    navigate(commandView('config', []));    break;
             case 'pricing':   navigate(commandView('pricing', []));   break;
-            case 'mcp':       navigate(commandView('mcp', [])); break;
+            case 'mcp':       navigate(commandView('mcp', []));     break;
+            case 'rules':     navigate(commandView('rules', []));    break;
             default:          setView({ kind: 'unknown', name: cmd }); break;
           }
         }}
@@ -921,6 +925,10 @@ export function App({ args, provider = null }: AppProps): React.JSX.Element {
 
   if (view.kind === 'changes') {
     return withStatus(<ChangesCommand args={view.args} onBack={goBack} onAction={handleAction} />);
+  }
+
+  if (view.kind === 'rules') {
+    return withStatus(<RulesCommand args={view.args} onBack={goBack} onAction={handleAction} />);
   }
 
   if (view.kind === 'prompt') {
