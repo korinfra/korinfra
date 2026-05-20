@@ -21,11 +21,18 @@ describe('token rotation — live disk integration', () => {
     originalHome = process.env['HOME'];
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'korinfra-token-test-'));
     process.env['HOME'] = tmpHome;
+    // Windows: os.homedir() reads USERPROFILE, not HOME
+    if (process.platform === 'win32') process.env['USERPROFILE'] = tmpHome;
   });
 
   afterEach(() => {
-    if (originalHome !== undefined) process.env['HOME'] = originalHome;
-    else delete process.env['HOME'];
+    if (originalHome !== undefined) {
+      process.env['HOME'] = originalHome;
+      if (process.platform === 'win32') process.env['USERPROFILE'] = originalHome;
+    } else {
+      delete process.env['HOME'];
+      if (process.platform === 'win32') delete process.env['USERPROFILE'];
+    }
     try { fs.rmSync(tmpHome, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 

@@ -83,9 +83,10 @@ async function fetchTableTags(
   client: DynamoDBClient,
   region: string,
   arn: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, string>> {
   try {
-    const cmdOptions = buildCmdOptions();
+    const cmdOptions = buildCmdOptions(signal);
     const tagsOut = await throttledCall('dynamodb', 'ListTagsOfResource', region, () =>
       client.send(new ListTagsOfResourceCommand({ ResourceArn: arn }), cmdOptions),
     );
@@ -117,7 +118,7 @@ export async function collectDynamoDB(
 
   // Pass 2: fetch tags for all described tables
   const tagsSettled = await Promise.allSettled(
-    described.map((t) => limit(() => (t.arn ? fetchTableTags(client, region, t.arn) : Promise.resolve({} as Record<string, string>)))),
+    described.map((t) => limit(() => (t.arn ? fetchTableTags(client, region, t.arn, signal) : Promise.resolve({} as Record<string, string>)))),
   );
 
   const resources: Resource[] = [];

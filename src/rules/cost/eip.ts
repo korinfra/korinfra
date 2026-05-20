@@ -6,7 +6,7 @@
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
 import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
-import { strConfig } from './helpers.js';
+import { strConfig, CONF_CERTAIN } from './helpers.js';
 import { EIP_HOURLY, HOURS_PER_MONTH } from '../../pricing/resources.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
@@ -31,7 +31,7 @@ export function checkEIP001(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(EIP_MONTHLY_USD),
     suggestedAction: 'release_eip',
-    confidence: clampConfidence(0.99),
+    confidence: clampConfidence(CONF_CERTAIN),
     filePath,
     currentConfig: { state: 'unassociated' },
     suggestedConfig: { action: 'release' },

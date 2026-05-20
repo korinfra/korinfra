@@ -7,7 +7,7 @@ import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
 import type { ThresholdsOverride } from '../config.js';
 import type { THRESHOLDS } from '../config.js';
-import { strConfig, suggestCacheRightsize, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization } from './helpers.js';
+import { strConfig, suggestCacheRightsize, sanitizeResourceName, getMonthlyCost, getMonthlyCostStrict, confidenceFromUtilization, CONF_COST_OPT } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
 type Cfg = typeof THRESHOLDS & ThresholdsOverride;
@@ -100,7 +100,7 @@ export function checkELC002(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: `upgrade_to_${suggestedType}`,
-    confidence: clampConfidence(0.8),
+    confidence: clampConfidence(CONF_COST_OPT),
     filePath,
     currentConfig: { node_type: nodeType },
     suggestedConfig: { node_type: suggestedType },

@@ -306,7 +306,7 @@ export async function collectElastiCacheMetricsBatched(
     (r) => r.type === 'elasticache_cluster' && r.region === region,
   );
 
-  const ecBatch = batchSize(4, periodLabel);
+  const ecBatch = batchSize(8, periodLabel);
   const ecBatchResults = await Promise.all(
     Array.from({ length: Math.ceil(eligible.length / ecBatch) }, (_, i) => {
       const batch = eligible.slice(i * ecBatch, (i + 1) * ecBatch);
@@ -318,9 +318,13 @@ export async function collectElastiCacheMetricsBatched(
         const p = `c${slot}`;
         queries.push(
           metricQuery(`${p}_cpuavg`, 'AWS/ElastiCache', 'CPUUtilization', 'Average', 'CacheClusterId', id),
+          metricQuery(`${p}_cpumax`, 'AWS/ElastiCache', 'CPUUtilization', 'Maximum', 'CacheClusterId', id),
           metricQuery(`${p}_cpup95`, 'AWS/ElastiCache', 'CPUUtilization', 'p95', 'CacheClusterId', id),
           metricQuery(`${p}_memused`, 'AWS/ElastiCache', 'DatabaseMemoryUsagePercentage', 'Average', 'CacheClusterId', id),
           metricQuery(`${p}_conns`, 'AWS/ElastiCache', 'CurrConnections', 'Average', 'CacheClusterId', id),
+          metricQuery(`${p}_cmax`, 'AWS/ElastiCache', 'CurrConnections', 'Maximum', 'CacheClusterId', id),
+          metricQuery(`${p}_netin`, 'AWS/ElastiCache', 'NetworkBytesIn', 'Sum', 'CacheClusterId', id),
+          metricQuery(`${p}_netout`, 'AWS/ElastiCache', 'NetworkBytesOut', 'Sum', 'CacheClusterId', id),
         );
       }
 
@@ -341,19 +345,18 @@ export async function collectElastiCacheMetricsBatched(
       const util: Utilization = {
         period: periodLabel,
         cpuAverage: average(cpuAvg),
-        // Maximum CPU stat not collected for ElastiCache — would require additional CloudWatch query. Using 0 as placeholder.
-        cpuMax: 0,
+        cpuMax: maxVal(results.get(`${p}_cpumax`) ?? []),
         cpuP95: maxVal(results.get(`${p}_cpup95`) ?? []),
         cpuP99: percentile(cpuAvg, 99),
         memoryAverage: average(memUsed),
         memoryMax: maxVal(memUsed),
         memoryP95: percentile(memUsed, 95),
-        networkInMB: 0,
-        networkOutMB: 0,
+        networkInMB: sumVal(results.get(`${p}_netin`) ?? []) / (1024 * 1024),
+        networkOutMB: sumVal(results.get(`${p}_netout`) ?? []) / (1024 * 1024),
         diskReadIOPS: 0,
         diskWriteIOPS: 0,
         connectionCount: average(results.get(`${p}_conns`) ?? []),
-        connectionCountMax: 0,
+        connectionCountMax: maxVal(results.get(`${p}_cmax`) ?? []),
         dataPoints: cpuAvg.length,
         dataGaps: cpuAvg.length > 0 ? Math.max(0, ecExpectedPoints - cpuAvg.length) : 0,
         freshnessHrs: 0,

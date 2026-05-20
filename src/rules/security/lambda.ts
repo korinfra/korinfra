@@ -16,34 +16,6 @@ const credentialKeys = [
 
 export const lambdaRules: SecurityRule[] = [
   {
-    id: 'LAMBDA-SEC-001',
-    title: 'Lambda function without dead letter queue',
-    description: 'Lambda function does not have a dead letter queue configured',
-    severity: 'medium',
-    resourceTypes: ['aws_lambda_function'],
-    evaluate: (res) => !('dead_letter_config' in res.configuration),
-    recommendation: 'Configure dead_letter_config to capture failed invocations',
-  },
-  {
-    id: 'LAMBDA-SEC-002',
-    title: 'Lambda function in VPC without security group',
-    description:
-      'Lambda function configured with VPC but may have open network access',
-    severity: 'medium',
-    resourceTypes: ['aws_lambda_function'],
-    evaluate: (res) => {
-      const vpc = res.configuration['vpc_config'];
-      if (vpc === undefined) return false;
-      const vpcObj: unknown = Array.isArray(vpc) ? vpc[0] : vpc;
-      if (vpcObj !== null && typeof vpcObj === 'object') {
-        const sgs = (vpcObj as Record<string, unknown>)['security_group_ids'];
-        return Array.isArray(sgs) && sgs.length === 0;
-      }
-      return false;
-    },
-    recommendation: 'Specify security_group_ids in vpc_config',
-  },
-  {
     id: 'LAM-SEC-001',
     title: 'Lambda function without VPC configuration',
     description: 'Lambda function is not configured to run inside a VPC',
@@ -79,5 +51,33 @@ export const lambdaRules: SecurityRule[] = [
     },
     recommendation:
       'Use IAM execution role instead of hardcoded credentials in environment variables',
+  },
+  {
+    id: 'LAM-SEC-003',
+    title: 'Lambda function without dead letter queue',
+    description: 'Lambda function does not have a dead letter queue configured',
+    severity: 'medium',
+    resourceTypes: ['aws_lambda_function'],
+    evaluate: (res) => !('dead_letter_config' in res.configuration),
+    recommendation: 'Configure dead_letter_config to capture failed invocations',
+  },
+  {
+    id: 'LAM-SEC-004',
+    title: 'Lambda function in VPC without security group',
+    description:
+      'Lambda function configured with VPC but may have open network access',
+    severity: 'medium',
+    resourceTypes: ['aws_lambda_function'],
+    evaluate: (res) => {
+      const vpc = res.configuration['vpc_config'];
+      if (vpc === undefined) return false;
+      const vpcObj: unknown = Array.isArray(vpc) ? vpc[0] : vpc;
+      if (vpcObj !== null && typeof vpcObj === 'object') {
+        const sgs = (vpcObj as Record<string, unknown>)['security_group_ids'];
+        return Array.isArray(sgs) && sgs.length === 0;
+      }
+      return false;
+    },
+    recommendation: 'Specify security_group_ids in vpc_config',
   },
 ];

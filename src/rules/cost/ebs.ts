@@ -6,7 +6,7 @@
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
 import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
-import { daysSince, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, confidenceFromUtilization, costOrWarn, CONF_STRONG, CONF_SECURITY, CONF_REVIEW_ONLY } from './helpers.js';
+import { daysSince, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, confidenceFromUtilization, costOrWarn, CONF_CERTAIN, CONF_STRONG, CONF_HIGH, CONF_PROBABLE, CONF_COST_OPT, CONF_REVIEW_ONLY } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { asStr } from '../../utils/coerce.js';
 import { EBS_GP3_PER_GB, EBS_GP3_IOPS_PRICE, EBS_IO1_PER_GB, EBS_IO1_IOPS_PRICE, EBS_SNAPSHOT_PER_GB } from '../../pricing/resources.js';
@@ -91,7 +91,7 @@ export function checkEBS003(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_to_gp3',
-    confidence: clampConfidence(CONF_SECURITY),
+    confidence: clampConfidence(CONF_HIGH),
     filePath,
     currentConfig: { volume_type: 'gp2' },
     suggestedConfig: { volume_type: 'gp3' },
@@ -120,7 +120,7 @@ export function checkEBS004(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: 0,
     suggestedAction: 'enable_encryption',
-    confidence: clampConfidence(0.99),
+    confidence: clampConfidence(CONF_CERTAIN),
     filePath,
     currentConfig: { encrypted: false },
     suggestedConfig: { encrypted: true },
@@ -173,7 +173,7 @@ export function checkEBS005(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_to_gp3',
-    confidence: clampConfidence(0.85),
+    confidence: clampConfidence(CONF_PROBABLE),
     filePath,
     currentConfig: { volume_type: volumeType, iops, size_gb: sizeGb },
     suggestedConfig: { volume_type: 'gp3', iops: cfg.gp3IOPSBaseline },
@@ -241,7 +241,7 @@ function checkEBS006(r: Resource, cfg: Cfg): Recommendation | null {
       risk: 'low',
       estimatedSavings: guardSavings(savings),
       suggestedAction: 'reduce_provisioned_iops',
-      confidence: clampConfidence(0.8),
+      confidence: clampConfidence(CONF_COST_OPT),
       filePath,
       currentConfig: { volume_type: volumeType, iops: provisionedIops, actual_iops_p95: actualIOPS, size_gb: sizeGb },
       suggestedConfig: { iops: recommendedIops },
@@ -267,7 +267,7 @@ function checkEBS006(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'review_provisioned_iops',
-    confidence: clampConfidence(0.6),
+    confidence: clampConfidence(CONF_REVIEW_ONLY),
     filePath,
     currentConfig: { volume_type: volumeType, iops: provisionedIops, size_gb: sizeGb },
     suggestedConfig: { action: 'review_in_cloudwatch' },
@@ -373,7 +373,7 @@ export function checkSNAP002(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'delete_old_snapshot',
-    confidence: clampConfidence(0.8),
+    confidence: clampConfidence(CONF_COST_OPT),
     currentConfig: { age_days: age, size_gb: sizeGB },
     suggestedConfig: { action: 'delete' },
     patchContent: `# Delete snapshot ${sanitizeResourceName(r.name)} (${age} days old)\n# aws ec2 delete-snapshot --snapshot-id ${sanitizeResourceName(r.id)}`,

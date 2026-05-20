@@ -6,7 +6,6 @@
 import type { Resource } from '../../aws/types.js';
 import type { RuleContext } from '../types.js';
 import { clampConfidence, guardCost, guardSavings } from '../../utils/numeric-guards.js';
-import { EBS_SNAPSHOT_PER_GB } from '../../pricing/resources.js';
 
 /** Parse "7d" → 7, "14d" → 14, "30d" → 30. Returns 30 for unrecognized formats. */
 function parsePeriodDays(period: string): number {
@@ -261,9 +260,14 @@ export const RULE_WARN_REASONS = {
 
 // ─── Named confidence constants ───────────────────────────────────────────────
 
+export const CONF_CERTAIN = 0.99;
 export const CONF_STRONG = 0.98;
-export const CONF_SECURITY = 0.95;
+export const CONF_HIGH = 0.95;
+export const CONF_LIKELY = 0.90;
+export const CONF_PROBABLE = 0.85;
 export const CONF_COST_OPT = 0.80;
+export const CONF_ESTIMATE = 0.70;
+export const CONF_FALLBACK_EST = 0.65;
 export const CONF_REVIEW_ONLY = 0.60;
 
 // ─── Shared helper functions ──────────────────────────────────────────────────
@@ -276,28 +280,6 @@ export function costOrWarn(r: Resource, ruleId: string, ctx?: RuleContext): numb
   const cost = getMonthlyCostStrict(r);
   if (cost === null) ctx?.warn(ruleId, r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
   return cost;
-}
-
-/**
- * Builds an implementation step that optionally prefixes with a file path.
- * Returns `Update ${filePath}: ${action}` when filePath is set, else `action`.
- */
-export function filePathStep(action: string, filePath: string | null | undefined): string {
-  return filePath ? `Update ${filePath}: ${action}` : action;
-}
-
-/**
- * Computes snapshot savings using strict monthly cost, then falls back to
- * size x EBS_SNAPSHOT_PER_GB. Returns null and warns via ctx when both are
- * unavailable. Only wire this in when the recommendation should be skipped on null.
- */
-export function snapshotSavings(r: Resource, ruleId: string, ctx?: RuleContext): number | null {
-  const strict = getMonthlyCostStrict(r);
-  if (strict !== null) return strict;
-  const sizeGB = numConfig(r, 'volume_size') || numConfig(r, 'size_gb');
-  if (sizeGB > 0) return sizeGB * EBS_SNAPSHOT_PER_GB;
-  ctx?.warn(ruleId, r.id, r.type, RULE_WARN_REASONS.MISSING_COST_AND_SIZE);
-  return null;
 }
 
 /**
@@ -314,5 +296,5 @@ export function calculateSavingsWithPricingFallback(
   if (currentMonthly > 0 && suggestedMonthly > 0) {
     return { savings: guardSavings(currentMonthly - suggestedMonthly), confidence: clampConfidence(CONF_COST_OPT) };
   }
-  return { savings: guardSavings(fallbackCost * fallbackMultiplier), confidence: clampConfidence(0.65) };
+  return { savings: guardSavings(fallbackCost * fallbackMultiplier), confidence: clampConfidence(CONF_FALLBACK_EST) };
 }

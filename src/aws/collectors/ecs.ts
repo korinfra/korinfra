@@ -8,7 +8,7 @@ import type { Cluster, ECSClient, DescribeServicesCommandOutput } from '@aws-sdk
 import pLimit from 'p-limit';
 import type { Resource } from '../types.js';
 import { throttledCall } from '../rate-limiter.js';
-import { tagsToMapLower } from '../utils.js';
+import { tagsToMapLower, buildCmdOptions, extractNextToken } from '../utils.js';
 import { dbg } from '../debug.js';
 
 async function listClusters(
@@ -23,11 +23,11 @@ async function listClusters(
     dbg(`    ecs ListClusters page:${pageNum + 1} start — region:${region} soFar:${acc.length}`);
     const t_lc = Date.now();
     const out = await throttledCall('ecs', 'ListClusters', region, () =>
-      client.send(new ListClustersCommand({ nextToken: token }), { ...(signal ? { abortSignal: signal } : {}) }),
+      client.send(new ListClustersCommand({ nextToken: token }), buildCmdOptions(signal)),
     );
     pageNum++;
     acc.push(...(out.clusterArns ?? []));
-    token = out.nextToken ?? undefined;
+    token = extractNextToken(out.nextToken);
     dbg(`    ecs ListClusters page:${pageNum} done — ${Date.now() - t_lc}ms inPage:${out.clusterArns?.length ?? 0} hasMore:${Boolean(token)}`);
   } while (token !== undefined);
   return acc;
@@ -46,11 +46,11 @@ async function collectServices(
     dbg(`    ecs ListServices page:${pageNum + 1} start — region:${region} soFar:${serviceArns.length}`);
     const t_ls = Date.now();
     const out = await throttledCall('ecs', 'ListServices', region, () =>
-      client.send(new ListServicesCommand({ cluster: clusterArn, nextToken: token }), { ...(signal ? { abortSignal: signal } : {}) }),
+      client.send(new ListServicesCommand({ cluster: clusterArn, nextToken: token }), buildCmdOptions(signal)),
     );
     pageNum++;
     serviceArns.push(...(out.serviceArns ?? []));
-    token = out.nextToken ?? undefined;
+    token = extractNextToken(out.nextToken);
     dbg(`    ecs ListServices page:${pageNum} done — ${Date.now() - t_ls}ms inPage:${out.serviceArns?.length ?? 0} hasMore:${Boolean(token)}`);
   } while (token !== undefined);
 
@@ -71,7 +71,7 @@ async function collectServices(
             services: batch,
             include: ['TAGS'],
           }),
-          { ...(signal ? { abortSignal: signal } : {}) },
+          buildCmdOptions(signal),
         ),
       ),
     );
@@ -131,7 +131,7 @@ export async function collectECS(
     const descOut = await throttledCall('ecs', 'DescribeClusters', region, () =>
       client.send(
         new DescribeClustersCommand({ clusters: batchArns, include: ['TAGS'] }),
-        { ...(signal ? { abortSignal: signal } : {}) },
+        buildCmdOptions(signal),
       ),
     );
     allClusters.push(...(descOut.clusters ?? []));

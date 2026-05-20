@@ -308,9 +308,11 @@ export async function estimateRDSCost(
     hourly = await client.getOnDemandPrice('AmazonRDS', cacheKey, region, multiAZ);
   }
 
-  hourly ??= FALLBACK_RDS_PRICES[instanceClass] ?? 0;
-  // Fallback prices are Single-AZ; double for Multi-AZ when not using live pricing
-  if (multiAZ && hourly > 0) hourly *= 2;
+  if (hourly === null) {
+    hourly = FALLBACK_RDS_PRICES[instanceClass] ?? 0;
+    // Fallback prices are Single-AZ; double for Multi-AZ when not using live pricing
+    if (multiAZ) hourly *= 2;
+  }
 
   let monthly = hourly * HOURS_PER_MONTH;
 

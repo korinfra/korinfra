@@ -6,7 +6,7 @@
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation } from '../types.js';
 import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
-import { strConfig, numConfig, sanitizeResourceName, normalizeToMonth, getMonthlyCost, confidenceFromUtilization } from './helpers.js';
+import { strConfig, numConfig, sanitizeResourceName, normalizeToMonth, getMonthlyCost, confidenceFromUtilization, CONF_HIGH, CONF_LIKELY, CONF_COST_OPT } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
 // Lambda architecture optimization (Graviton2 / arm64) savings estimate: ~20% based on AWS pricing.
@@ -158,7 +158,7 @@ export function checkLAM003(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: 0,
     suggestedAction: `upgrade_runtime_to_${suggestedRuntime}`,
-    confidence: clampConfidence(0.95),
+    confidence: clampConfidence(CONF_HIGH),
     filePath,
     currentConfig: { runtime },
     suggestedConfig: { runtime: suggestedRuntime },
@@ -246,7 +246,7 @@ export function checkLAM005(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_to_arm64',
-    confidence: clampConfidence(0.8),
+    confidence: clampConfidence(CONF_COST_OPT),
     filePath,
     currentConfig: { architectures: 'x86_64' },
     suggestedConfig: { architectures: 'arm64' },
@@ -278,7 +278,7 @@ export function checkLAM006(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'investigate_and_fix_errors',
-    confidence: clampConfidence(0.9),
+    confidence: clampConfidence(CONF_LIKELY),
     filePath,
     currentConfig: { error_rate_pct: errorRatePct },
     suggestedConfig: { error_rate_pct: 0 },
@@ -327,7 +327,7 @@ function checkLAM007(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: 0,
     suggestedAction: `upgrade_runtime_to_${upcoming.suggestedRuntime}`,
-    confidence: clampConfidence(0.95),
+    confidence: clampConfidence(CONF_HIGH),
     filePath,
     currentConfig: { runtime, days_until_deprecation: daysUntil },
     suggestedConfig: { runtime: upcoming.suggestedRuntime },
@@ -358,7 +358,7 @@ function checkLAM008(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'reduce_timeout',
-    confidence: clampConfidence(0.8),
+    confidence: clampConfidence(CONF_COST_OPT),
     filePath,
     currentConfig: { timeout_sec: timeoutSec },
     suggestedConfig: { timeout_sec: 60 },

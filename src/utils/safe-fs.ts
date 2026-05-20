@@ -91,7 +91,7 @@ export function safeReadFile(p: string, opts: SafeReadOptions = {}): string {
   checkNoSymlink(p);
   const fd = openSync(p, fsConstants.O_RDONLY | NOFOLLOW);
   try {
-    if (opts.requireMode !== undefined) {
+    if (opts.requireMode !== undefined && process.platform !== 'win32') {
       const actualMode = fstatSync(fd).mode & 0o777;
       if ((actualMode & ~opts.requireMode) !== 0) {
         throw new Error(

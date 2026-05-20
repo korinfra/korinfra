@@ -6,7 +6,7 @@
 import type { Resource } from '../../aws/types.js';
 import type { Recommendation, RuleContext } from '../types.js';
 import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
-import { suggestRDSRightsize, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, confidenceFromUtilization, costOrWarn, calculateSavingsWithPricingFallback } from './helpers.js';
+import { suggestRDSRightsize, strConfig, boolConfig, numConfig, sanitizeResourceName, getMonthlyCost, confidenceFromUtilization, costOrWarn, calculateSavingsWithPricingFallback, CONF_CERTAIN, CONF_HIGH, CONF_LIKELY, CONF_PROBABLE, CONF_COST_OPT, CONF_ESTIMATE } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 import { RDS_GP2_STORAGE_PER_GB, RDS_GP3_STORAGE_PER_GB, RDS_IO1_STORAGE_PER_GB, RDS_IO2_STORAGE_PER_GB, estimateRDSCostSync } from '../../pricing/resources.js';
 
@@ -66,7 +66,7 @@ export function checkRDS002(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enable_multi_az',
-    confidence: clampConfidence(0.9),
+    confidence: clampConfidence(CONF_LIKELY),
     filePath,
     currentConfig: { multi_az: false },
     suggestedConfig: { multi_az: true },
@@ -162,7 +162,7 @@ export function checkRDS004(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'high',
     estimatedSavings: 0,
     suggestedAction: 'enable_storage_encryption',
-    confidence: clampConfidence(0.99),
+    confidence: clampConfidence(CONF_CERTAIN),
     filePath,
     currentConfig: { storage_encrypted: false },
     suggestedConfig: { storage_encrypted: true },
@@ -192,7 +192,7 @@ export function checkRDS005(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'disable_public_access',
-    confidence: clampConfidence(0.99),
+    confidence: clampConfidence(CONF_CERTAIN),
     filePath,
     currentConfig: { publicly_accessible: true },
     suggestedConfig: { publicly_accessible: false },
@@ -224,7 +224,7 @@ export function checkRDS006(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'migrate_storage_to_gp3',
-    confidence: clampConfidence(0.95),
+    confidence: clampConfidence(CONF_HIGH),
     filePath,
     currentConfig: { storage_type: 'gp2' },
     suggestedConfig: { storage_type: 'gp3' },
@@ -258,7 +258,7 @@ export function checkRDS007(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'disable_multi_az_non_prod',
-    confidence: clampConfidence(0.85),
+    confidence: clampConfidence(CONF_PROBABLE),
     filePath,
     currentConfig: { multi_az: true, environment: env },
     suggestedConfig: { multi_az: false },
@@ -412,7 +412,7 @@ export function checkRDS010(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'purchase_rds_reserved_instance',
-    confidence: clampConfidence(0.70),
+    confidence: clampConfidence(CONF_ESTIMATE),
     currentConfig: { pricing: 'on_demand', instance_class: r.instanceType, cpu_avg_pct: r.utilization.cpuAverage, running_days: 30 },
     suggestedConfig: { pricing: 'reserved_1yr_no_upfront' },
     patchContent: `# Purchase 1-year No-Upfront RDS Reserved Instance for ${sanitizeResourceName(r.instanceType)} ${sanitizeResourceName(r.region)}\n# Check AWS Cost Explorer > RI recommendations first to avoid duplicates`,
@@ -443,7 +443,7 @@ export function checkRDS011(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: 0,
     suggestedAction: 'enable_automated_backups',
-    confidence: clampConfidence(0.95),
+    confidence: clampConfidence(CONF_HIGH),
     filePath,
     currentConfig: { backup_retention_period: 0 },
     suggestedConfig: { backup_retention_period: 7 },
@@ -560,7 +560,7 @@ export function checkRDS012(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: guardSavings(savings),
     suggestedAction: `upgrade_engine_to_${suggestedVersion}`,
-    confidence: clampConfidence(0.85),
+    confidence: clampConfidence(CONF_PROBABLE),
     filePath,
     currentConfig: { engine, engine_version: engineVersion, vCPU: vcpus },
     suggestedConfig: { engine_version: suggestedVersion },
@@ -614,7 +614,7 @@ export function checkRDS013(r: Resource, cfg: Cfg): Recommendation | null {
     risk: 'low',
     estimatedSavings: guardSavings(savings),
     suggestedAction: 'reduce_allocated_storage',
-    confidence: clampConfidence(0.8),
+    confidence: clampConfidence(CONF_COST_OPT),
     filePath,
     currentConfig: { allocated_storage_gb: allocatedGB, free_storage_gb: freeGB },
     suggestedConfig: { allocated_storage_gb: suggestedGB },
@@ -674,7 +674,7 @@ export function checkRDS014(r: Resource, _cfg: Cfg): Recommendation | null {
     risk: 'medium',
     estimatedSavings: guardSavings(monthlySurcharge),
     suggestedAction: 'upgrade_before_extended_support',
-    confidence: clampConfidence(0.9),
+    confidence: clampConfidence(CONF_LIKELY),
     filePath,
     currentConfig: { engine, engine_version: engineVersion, days_until_eol: daysUntilEol },
     suggestedConfig: { engine_version: 'latest' },

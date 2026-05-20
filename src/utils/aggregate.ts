@@ -2,10 +2,6 @@
  * Shared aggregation utilities for output formatters.
  */
 
-export interface CostEntry {
-  [key: string]: unknown;
-}
-
 /**
  * Groups items by a string key and sums a numeric value.
  */

@@ -122,22 +122,12 @@ export function createToolHandler<T>(
 
 /** Extract a string arg from an untyped args record. */
 export function getStringArg(args: Record<string, unknown>, key: string, fallback = ''): string {
-  return (args[key] as string | undefined) ?? fallback;
-}
-
-/** Extract a number arg from an untyped args record. */
-export function getNumberArg(args: Record<string, unknown>, key: string, fallback = 0): number {
-  return (args[key] as number | undefined) ?? fallback;
+  return typeof args[key] === 'string' ? args[key] : fallback;
 }
 
 /** Extract a typed array arg from an untyped args record. */
 export function getArrayArg<T>(args: Record<string, unknown>, key: string): T[] {
-  return (args[key] as T[] | undefined) ?? [];
-}
-
-/** Extract a boolean arg from an untyped args record. */
-export function getBoolArg(args: Record<string, unknown>, key: string, fallback = false): boolean {
-  return (args[key] as boolean | undefined) ?? fallback;
+  return Array.isArray(args[key]) ? (args[key] as T[]) : [];
 }
 
 /**
