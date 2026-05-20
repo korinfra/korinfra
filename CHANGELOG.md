@@ -55,7 +55,10 @@ All notable changes to KorInfra are documented here.
   `estimatedSavings: $0` recommendation. LAM-002/004 also stop emitting
   $0 savings in their tier-3 fallback path. Rules with threshold-based
   implicit gating (RDS-010, GENERAL-001) are documented with code comments
-  rather than switched (#75).
+  rather than switched (#75). **EC2-002 behavior change**: the previous
+  `$5` EBS minimum floor is removed — a stopped instance with
+  `monthlyCost: 0` (or missing) now skips with a warning instead of
+  firing with a `$5` estimated savings.
 
 ### Notes for operators
 

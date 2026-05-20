@@ -35,6 +35,18 @@ function makeUtil(networkInMB: number) {
   };
 }
 
+function makeCtx() {
+  const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+  return {
+    warnings,
+    ctx: {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    },
+  };
+}
+
 // ─── ELB-001: No healthy targets ──────────────────────────────────────────────
 
 describe('checkELB001 — load balancer with 0 healthy targets', () => {
@@ -152,12 +164,7 @@ describe('checkELB002 — Classic Load Balancer migration', () => {
   });
 
   it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     const r = makeALB({ type: 'classic_load_balancer', configuration: {} });
     expect(checkELB002(r, cfg, ctx)).toBeNull();
     expect(warnings).toHaveLength(1);

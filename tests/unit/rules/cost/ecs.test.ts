@@ -37,6 +37,18 @@ function makeUtil(cpuAverage: number, period: '7d' | '14d' | '30d' = '14d') {
   };
 }
 
+function makeCtx() {
+  const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+  return {
+    warnings,
+    ctx: {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    },
+  };
+}
+
 // ─── ECS-001: Idle service ─────────────────────────────────────────────────────
 
 describe('checkECS001 — idle ECS service', () => {
@@ -67,12 +79,7 @@ describe('checkECS001 — idle ECS service', () => {
   });
 
   it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     const r = makeECSService({ configuration: { launch_type: 'FARGATE', desired_count: 1, running_count: 0 } });
     expect(checkECS001(r, cfg, ctx)).toBeNull();
     expect(warnings).toHaveLength(1);
@@ -97,12 +104,13 @@ describe('checkECS002 — EC2 launch type', () => {
     expect(rec!.suggestedConfig).toMatchObject({ launch_type: 'FARGATE' });
     expect(rec!.implementationSteps.some((s) => s.includes('FARGATE'))).toBe(true);
 
-    // strict gating: missing/zero monthly_cost skips + warns
-    const ecs002Warnings: Array<{ ruleId: string }> = [];
-    const ecs002Ctx = { warn(ruleId: string, resourceId: string, resourceType: string, reason: string) { ecs002Warnings.push({ ruleId, resourceId, resourceType, reason }); } };
-    expect(checkECS002(makeECSService({ configuration: { launch_type: 'EC2', desired_count: 2, running_count: 2, monthlyCost: 0 } }), cfg, ecs002Ctx)).toBeNull();
-    expect(ecs002Warnings).toHaveLength(1);
-    expect(ecs002Warnings[0]).toMatchObject({ ruleId: 'ECS-002' });
+  });
+
+  it('skips and warns when monthly_cost is zero (#75 strict gating)', () => {
+    const { ctx, warnings } = makeCtx();
+    expect(checkECS002(makeECSService({ configuration: { launch_type: 'EC2', desired_count: 2, running_count: 2, monthlyCost: 0 } }), cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'ECS-002' });
   });
 
   it('does not fire for FARGATE, EXTERNAL, or wrong type', () => {
@@ -112,12 +120,7 @@ describe('checkECS002 — EC2 launch type', () => {
   });
 
   it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     const r = makeECSService({ configuration: { launch_type: 'EC2', desired_count: 2, running_count: 2 } });
     expect(checkECS002(r, cfg, ctx)).toBeNull();
     expect(warnings).toHaveLength(1);
@@ -157,12 +160,7 @@ describe('checkECS003 — over-provisioned ECS service', () => {
   });
 
   it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     const r = makeECSService({
       utilization: makeUtil(5.0),
       configuration: { launch_type: 'FARGATE', desired_count: 4, running_count: 4 },

@@ -5,7 +5,7 @@
 
 import type { Resource } from '../../aws/types.js';
 import type { RuleContext } from '../types.js';
-import { clampConfidence, guardCost, guardSavings } from '../../utils/numeric-guards.js';
+import { clampConfidence, guardCost } from '../../utils/numeric-guards.js';
 
 /** Parse "7d" → 7, "14d" → 14, "30d" → 30. Returns 30 for unrecognized formats. */
 function parsePeriodDays(period: string): number {
@@ -267,7 +267,6 @@ export const CONF_LIKELY = 0.90;
 export const CONF_PROBABLE = 0.85;
 export const CONF_COST_OPT = 0.80;
 export const CONF_ESTIMATE = 0.70;
-export const CONF_FALLBACK_EST = 0.65;
 export const CONF_REVIEW_ONLY = 0.60;
 
 // ─── Shared helper functions ──────────────────────────────────────────────────
@@ -282,19 +281,3 @@ export function costOrWarn(r: Resource, ruleId: string, ctx?: RuleContext): numb
   return cost;
 }
 
-/**
- * Computes savings when both real pricing numbers are available, with a
- * fallback multiplier estimate. Returns `{ savings, confidence }` — both
- * already guarded/clamped.
- */
-export function calculateSavingsWithPricingFallback(
-  currentMonthly: number,
-  suggestedMonthly: number,
-  fallbackCost: number,
-  fallbackMultiplier: number,
-): { savings: number; confidence: number } {
-  if (currentMonthly > 0 && suggestedMonthly > 0) {
-    return { savings: guardSavings(currentMonthly - suggestedMonthly), confidence: clampConfidence(CONF_COST_OPT) };
-  }
-  return { savings: guardSavings(fallbackCost * fallbackMultiplier), confidence: clampConfidence(CONF_FALLBACK_EST) };
-}
