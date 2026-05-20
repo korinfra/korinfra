@@ -244,7 +244,7 @@ describe('migrate — concurrent startup safety (regression for #21)', () => {
   // a concurrent startup silently leaving the schema behind the source of
   // truth (e.g. observed [1,2,3] would otherwise satisfy a self-referential
   // "contiguous 1..length" check).
-  const LATEST_MIGRATION = 4;
+  const LATEST_MIGRATION = 5;
 
   function assertSchemaMigrationsIsConsistent(dbPath: string): void {
     inspect(dbPath, (db) => {

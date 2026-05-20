@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { getDb } from '../storage/db.js';
 import { insertScan } from '../storage/queries/scans.js';
+import type { ScanWarning } from '../storage/queries/scans.js';
 import { insertResources } from '../storage/queries/resources.js';
 import { insertCosts } from '../storage/queries/costs.js';
 import { upsertRecommendations } from '../storage/queries/recommendations.js';
@@ -122,6 +123,15 @@ function normalizeRecommendation(r: Record<string, unknown>): Recommendation {
   };
 }
 
+function normalizeWarning(w: Record<string, unknown>): ScanWarning {
+  return {
+    ruleId: typeof w['ruleId'] === 'string' ? w['ruleId'] : '',
+    resourceId: typeof w['resourceId'] === 'string' ? w['resourceId'] : '',
+    resourceType: typeof w['resourceType'] === 'string' ? w['resourceType'] : '',
+    reason: typeof w['reason'] === 'string' ? w['reason'] : '',
+  };
+}
+
 interface SaveScanInput {
   aws_profile?: string;
   aws_region?: string;
@@ -129,6 +139,7 @@ interface SaveScanInput {
   resources?: Record<string, unknown>[];
   costs?: Record<string, unknown>[];
   recommendations?: Record<string, unknown>[];
+  warnings?: Record<string, unknown>[];
   metadata?: Record<string, unknown>;
   /** ISO 8601 timestamp when the scan pipeline actually started. If omitted, falls back to current time. */
   started_at?: string;
@@ -159,6 +170,11 @@ export const saveScanTool: ToolDefinition = {
         description: 'Array of cost optimization recommendations',
         items: { type: 'object' },
       },
+      warnings: {
+        type: 'array',
+        description: 'Rule warnings emitted during evaluate_rules (resources skipped during evaluation)',
+        items: { type: 'object' },
+      },
       metadata: {
         type: 'object',
         description: 'Optional metadata to store with the scan',
@@ -185,6 +201,7 @@ export const saveScanTool: ToolDefinition = {
       const rawResources = (input.resources ?? []);
       const rawCosts = (input.costs ?? []);
       const rawRecommendations = (input.recommendations ?? []);
+      const normalizedWarnings = (input.warnings ?? []).map(normalizeWarning);
 
       const normalizedCosts = rawCosts.map(normalizeCost);
       const rawMappedCosts = normalizedCosts.map(mapCostEntry);
@@ -225,6 +242,7 @@ export const saveScanTool: ToolDefinition = {
           scenario_b_count: scenarioBCnt,
           scenario_c_count: scenarioCCnt,
           metadata: input.metadata ?? null,
+          warnings: normalizedWarnings.length > 0 ? normalizedWarnings : null,
         });
 
         if (resources.length > 0) insertResources(db, scanId, resources);
@@ -237,6 +255,7 @@ export const saveScanTool: ToolDefinition = {
         resources: resources.length,
         costs: costs.length,
         recommendations: recommendations.length,
+        warnings: normalizedWarnings.length,
         total_cost: totalCost,
         total_savings: totalSavings,
         saved_at: completedAt,

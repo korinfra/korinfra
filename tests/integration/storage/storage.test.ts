@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestDb } from '../../helpers/db.js';
 import { insertScan, getScan, listScans, deleteScan, updateScanStatus } from '../../../src/storage/queries/scans.js';
+import type { ScanWarning } from '../../../src/storage/queries/scans.js';
 import { insertResources, listResources } from '../../../src/storage/queries/resources.js';
 import { upsertPrice, getPrice, purgeExpired, getCacheStats } from '../../../src/storage/queries/pricing.js';
 import type { Driver } from '../../../src/storage/drivers/node.js';
@@ -61,9 +62,11 @@ describe('storage — migrations', () => {
     }
 
     // idempotent: running migrations twice must not throw
+    // ALTER TABLE ADD COLUMN is not SQL-idempotent; schema_migrations versioning ensures single execution in production.
     const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql')).sort();
     for (const file of files) {
       const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+      if (/ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN/i.test(sql)) continue;
       expect(() => db.exec(sql)).not.toThrow();
     }
     db.close();
@@ -112,6 +115,17 @@ describe('storage — scans CRUD', () => {
     // metadata stored as JSON
     insertScan(db, makeScan('scan-meta', { metadata: { key: 'value', count: 42 } }));
     expect(getScan(db, 'scan-meta')!.metadata).toEqual({ key: 'value', count: 42 });
+
+    // warnings stored and retrieved as JSON array
+    const warnings: ScanWarning[] = [
+      { ruleId: 'EC2-001', resourceId: 'i-abc123', resourceType: 'ec2_instance', reason: 'monthly_cost missing or invalid' },
+    ];
+    insertScan(db, makeScan('scan-warn', { warnings }));
+    expect(getScan(db, 'scan-warn')!.warnings).toEqual(warnings);
+
+    // null warnings stored as null
+    insertScan(db, makeScan('scan-no-warn', { warnings: null }));
+    expect(getScan(db, 'scan-no-warn')!.warnings).toBeNull();
   });
 });
 

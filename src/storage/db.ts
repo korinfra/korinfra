@@ -319,6 +319,10 @@ CREATE INDEX IF NOT EXISTS idx_scans_created_at ON scans(created_at);
     ALTER TABLE resources ADD COLUMN monthly_cost_source TEXT;
   `,
   },
+  {
+    version: 5,
+    sql: 'ALTER TABLE scans ADD COLUMN warnings TEXT;',
+  },
 ];
 
 (function validateMigrations() {

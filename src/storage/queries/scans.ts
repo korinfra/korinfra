@@ -1,7 +1,14 @@
 import type { Driver } from '../drivers/node.js';
-import { safeParse } from '../helpers.js';
+import { safeParse, safeParseArray } from '../helpers.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface ScanWarning {
+  ruleId: string;
+  resourceId: string;
+  resourceType: string;
+  reason: string;
+}
 
 export interface Scan {
   id: string;
@@ -19,6 +26,7 @@ export interface Scan {
   scenario_b_count: number;
   scenario_c_count: number;
   metadata?: Record<string, unknown> | null;
+  warnings?: ScanWarning[] | null;
   created_at?: string;
 }
 
@@ -44,6 +52,7 @@ function rowToScan(row: Record<string, unknown>): Scan {
     scenario_b_count: Number(row['scenario_b_count'] ?? 0),
     scenario_c_count: Number(row['scenario_c_count'] ?? 0),
     metadata: safeParse(row['metadata']),
+    warnings: safeParseArray<ScanWarning>(row['warnings']),
   };
   if (created_at !== undefined) result['created_at'] = created_at;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -58,8 +67,8 @@ export function insertScan(db: Driver, scan: Scan): void {
     INSERT INTO scans (id, started_at, completed_at, status, terraform_path,
       aws_profile, aws_region, total_resources, total_cost,
       total_recommendations, total_savings, scenario_a_count,
-      scenario_b_count, scenario_c_count, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      scenario_b_count, scenario_c_count, metadata, warnings)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     scan.id,
     scan.started_at,
@@ -76,6 +85,7 @@ export function insertScan(db: Driver, scan: Scan): void {
     scan.scenario_b_count,
     scan.scenario_c_count,
     scan.metadata ? JSON.stringify(scan.metadata) : null,
+    scan.warnings ? JSON.stringify(scan.warnings) : null,
   );
 }
 
@@ -84,7 +94,7 @@ export function getScan(db: Driver, id: string): Scan | null {
     SELECT id, started_at, completed_at, status, terraform_path,
       aws_profile, aws_region, total_resources, total_cost,
       total_recommendations, total_savings, scenario_a_count,
-      scenario_b_count, scenario_c_count, metadata, created_at
+      scenario_b_count, scenario_c_count, metadata, warnings, created_at
     FROM scans WHERE id = ?
   `).get(id) as Record<string, unknown> | undefined;
   return row ? rowToScan(row) : null;
@@ -96,7 +106,7 @@ export function listScans(db: Driver, limit = 50, offset = 0): Scan[] {
       aws_profile, aws_region, total_resources, total_cost,
       (SELECT COUNT(*) FROM recommendations WHERE scan_id = scans.id) AS total_recommendations,
       total_savings, scenario_a_count,
-      scenario_b_count, scenario_c_count, metadata, created_at
+      scenario_b_count, scenario_c_count, metadata, warnings, created_at
     FROM scans ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?
   `).all(limit, offset) as Array<Record<string, unknown>>;
   return rows.map(rowToScan);

@@ -55,6 +55,7 @@ export const getHistoryTool: ToolDefinition = {
             scenario_a_count: scan.scenario_a_count,
             scenario_b_count: scan.scenario_b_count,
             scenario_c_count: scan.scenario_c_count,
+            warnings: scan.warnings ?? null,
           }],
           count: 1,
         }, 'moderate'));
@@ -83,6 +84,7 @@ export const getHistoryTool: ToolDefinition = {
           scenario_a_count: s.scenario_a_count,
           scenario_b_count: s.scenario_b_count,
           scenario_c_count: s.scenario_c_count,
+          warning_count: s.warnings?.length ?? 0,
         })),
         count: scans.length,
         limit,
