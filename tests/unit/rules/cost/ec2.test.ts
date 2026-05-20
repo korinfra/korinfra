@@ -86,6 +86,19 @@ describe('checkEC2001 — idle instance', () => {
     expect(checkEC2001(makeEC2({ utilization: makeUtil(1.0, 2, '14d') }), cfg)).not.toBeNull();
     expect(checkEC2001(makeEC2({ utilization: makeUtil(0.5, 1, '30d') }), cfg)).not.toBeNull();
   });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeEC2({ utilization: makeUtil(2.0), configuration: {} });
+    expect(checkEC2001(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'EC2-001', resourceId: r.id });
+  });
 });
 
 // ─── EC2-002: Stopped instance ────────────────────────────────────────────────
@@ -101,13 +114,17 @@ describe('checkEC2002 — stopped instance', () => {
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('EC2-002');
 
-    // min savings fallback
+    // strict gating: missing/zero monthly_cost skips + warns
+    const ec2002Warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ec2002Ctx = { warn(ruleId: string, resourceId: string, resourceType: string, reason: string) { ec2002Warnings.push({ ruleId, resourceId, resourceType, reason }); } };
     const r2 = makeEC2({
       state: 'stopped',
       launchTime: new Date(Date.now() - 30 * 86_400_000).toISOString(),
       configuration: { monthlyCost: 0, stopped_at: new Date(Date.now() - 30 * 86_400_000).toISOString() },
     });
-    expect(checkEC2002(r2, cfg)!.estimatedSavings).toBe(5);
+    expect(checkEC2002(r2, cfg, ec2002Ctx)).toBeNull();
+    expect(ec2002Warnings).toHaveLength(1);
+    expect(ec2002Warnings[0]).toMatchObject({ ruleId: 'EC2-002' });
   });
 
   it('does not fire when stopped < threshold, running, or wrong type', () => {
@@ -141,6 +158,19 @@ describe('checkEC2003 — previous-gen instance', () => {
     expect(checkEC2003(makeEC2({ instanceType: 'm6g.large' }), cfg)).toBeNull();
     expect(checkEC2003(makeEC2({ type: 'rds_instance', instanceType: 'm3.large' }), cfg)).toBeNull();
   });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeEC2({ instanceType: 'm3.large', configuration: {} });
+    expect(checkEC2003(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'EC2-003', resourceId: r.id });
+  });
 });
 
 // ─── EC2-006: Graviton migration ─────────────────────────────────────────────
@@ -168,6 +198,21 @@ describe('checkEC2006 — Graviton migration', () => {
     expect(checkEC2006(makeEC2({ instanceType: 'm3.large', configuration: { architecture: 'x86_64' } }), cfg)).toBeNull();
     expect(checkEC2006(makeEC2({ instanceType: 'p4d.24xlarge', configuration: { architecture: 'x86_64' } }), cfg)).toBeNull();
     expect(checkEC2006(makeEC2({ type: 'rds_instance', configuration: { architecture: 'x86_64' } }), cfg)).toBeNull();
+  });
+
+  it('skips and warns when pricing-table misses AND monthly_cost is missing (#75 partial-strict)', () => {
+    // m7i.8xlarge → m8g.8xlarge: neither is in the fallback pricing table → both return 0 → else branch;
+    // no monthlyCost → skip + warn.
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeEC2({ instanceType: 'm7i.8xlarge', configuration: { architecture: 'x86_64' } });
+    expect(checkEC2006(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'EC2-006', resourceId: r.id });
   });
 });
 
@@ -211,6 +256,21 @@ describe('checkEC2004 — oversized instance (CPU P95 < rightsizeCPUThreshold)',
     // wrong type
     expect(checkEC2004(makeEC2({ type: 'rds_instance', utilization: makeUtil(5, 10) }), cfg)).toBeNull();
   });
+
+  it('skips and warns when pricing-table misses AND monthly_cost is missing (#75 partial-strict)', () => {
+    // m5.8xlarge is not in the fallback pricing table → currentMonthly=0 → strict fallback;
+    // no monthlyCost → skip + warn.
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeEC2({ instanceType: 'm5.8xlarge', configuration: {}, utilization: makeUtil(10, 20) });
+    expect(checkEC2004(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'EC2-004', resourceId: r.id });
+  });
 });
 
 // ─── EC2-005: On-demand > 30 days ─────────────────────────────────────────────
@@ -244,6 +304,23 @@ describe('checkEC2005 — on-demand instance running 30+ days', () => {
     // wrong type
     expect(checkEC2005(makeEC2({ type: 'rds_instance', state: 'running', launchTime: new Date(Date.now() - 35 * 86_400_000).toISOString() }), cfg)).toBeNull();
   });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeEC2({
+      state: 'running',
+      launchTime: new Date(Date.now() - 35 * 86_400_000).toISOString(),
+      configuration: {},
+    });
+    expect(checkEC2005(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'EC2-005', resourceId: r.id });
+  });
 });
 
 // ─── EC2-007: t2 → t3 migration ───────────────────────────────────────────────
@@ -267,6 +344,21 @@ describe('checkEC2007 — t2 to t3 upgrade', () => {
     expect(checkEC2007(makeEC2({ instanceType: 'm5.large' }), cfg)).toBeNull();
     expect(checkEC2007(makeEC2({ type: 'rds_instance', instanceType: 't2.large' }), cfg)).toBeNull();
   });
+
+  it('skips and warns when pricing-table misses AND monthly_cost is missing (#75 partial-strict)', () => {
+    // t2.nano is not in the fallback pricing table → currentMonthly=0 → strict fallback;
+    // no monthlyCost → skip + warn.
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeEC2({ instanceType: 't2.nano', configuration: {} });
+    expect(checkEC2007(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'EC2-007', resourceId: r.id });
+  });
 });
 
 // ─── EC2-008: GPU/specialty previous-gen upgrade ──────────────────────────────
@@ -288,6 +380,19 @@ describe('checkEC2008 — GPU/specialty previous-gen upgrade', () => {
     // m3 is handled by EC2-003 (isPreviousGen), so EC2-008 skips it
     expect(checkEC2008(makeEC2({ instanceType: 'm3.large' }), cfg)).toBeNull();
     expect(checkEC2008(makeEC2({ type: 'rds_instance', instanceType: 'g2.2xlarge' }), cfg)).toBeNull();
+  });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeEC2({ instanceType: 'g2.2xlarge', configuration: {} });
+    expect(checkEC2008(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'EC2-008', resourceId: r.id });
   });
 });
 

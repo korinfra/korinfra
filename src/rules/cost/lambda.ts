@@ -4,9 +4,10 @@
  */
 
 import type { Resource } from '../../aws/types.js';
-import type { Recommendation } from '../types.js';
+import type { Recommendation, RuleContext } from '../types.js';
+import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
-import { strConfig, numConfig, sanitizeResourceName, normalizeToMonth, getMonthlyCost, confidenceFromUtilization, CONF_HIGH, CONF_LIKELY, CONF_COST_OPT } from './helpers.js';
+import { strConfig, numConfig, sanitizeResourceName, normalizeToMonth, getMonthlyCost, costOrWarn, confidenceFromUtilization, CONF_HIGH, CONF_LIKELY, CONF_COST_OPT } from './helpers.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
 
 // Lambda architecture optimization (Graviton2 / arm64) savings estimate: ~20% based on AWS pricing.
@@ -48,7 +49,7 @@ export function checkLAM001(r: Resource, _cfg: Cfg): Recommendation | null {
 }
 
 /** LAM-002: Overprovisioned Lambda memory. */
-export function checkLAM002(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkLAM002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'lambda_function' || !r.utilization) return null;
   const memMB = numConfig(r, 'memory_mb');
   const invocations = r.utilization.invocations ?? 0;
@@ -75,8 +76,8 @@ export function checkLAM002(r: Resource, cfg: Cfg): Recommendation | null {
     savings = monthlyCost * (1 - suggestedMem / memMB);
     confidence = confidenceFromUtilization(0.55, r.utilization);
   } else {
-    savings = 0;
-    confidence = 0.45;
+    ctx?.warn('LAM-002', r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
+    return null;
   }
 
   const filePath = strConfig(r, 'file_path');
@@ -173,7 +174,7 @@ export function checkLAM003(r: Resource, _cfg: Cfg): Recommendation | null {
 }
 
 /** LAM-004: Low-invocation Lambda with high memory. */
-export function checkLAM004(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkLAM004(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'lambda_function') return null;
   const memMB = numConfig(r, 'memory_mb');
   const rawInvocations = r.utilization ? (r.utilization.invocations ?? 0) : 0;
@@ -197,8 +198,8 @@ export function checkLAM004(r: Resource, cfg: Cfg): Recommendation | null {
     savings = monthlyCost * (1 - suggestedMem / memMB);
     confidence = confidenceFromUtilization(0.55, r.utilization);
   } else {
-    savings = 0;
-    confidence = 0.45;
+    ctx?.warn('LAM-004', r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
+    return null;
   }
 
   const filePath = strConfig(r, 'file_path');
@@ -227,12 +228,13 @@ export function checkLAM004(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** LAM-005: Lambda on x86_64 — consider arm64/Graviton. */
-export function checkLAM005(r: Resource, _cfg: Cfg): Recommendation | null {
+export function checkLAM005(r: Resource, _cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'lambda_function') return null;
   let arch = strConfig(r, 'architectures');
   if (!arch) arch = strConfig(r, 'architecture');
   if (arch !== 'x86_64') return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'LAM-005', ctx);
+  if (monthlyCost === null) return null;
   const savings = monthlyCost * LAMBDA_ARCHITECTURE_SAVINGS_RATIO;
   const filePath = strConfig(r, 'file_path');
   return {

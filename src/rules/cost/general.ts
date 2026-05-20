@@ -16,6 +16,8 @@ type Cfg = typeof THRESHOLDS & ThresholdsOverride;
 /** GENERAL-001: Resource in expensive region. */
 export function checkGENERAL001(r: Resource, cfg: Cfg): Recommendation | null {
   const monthlyCost = getMonthlyCost(r);
+  // Implicit strict gating: getMonthlyCost returns 0 for missing cost, which is always
+  // < regionCostThreshold ($100), so this rule already skips when monthly_cost is unavailable.
   if (monthlyCost < cfg.regionCostThreshold) return null;
   if ((r.tags['DataResidency']?.length ?? 0) > 0 || (r.tags['Compliance']?.length ?? 0) > 0) return null;
 

@@ -133,6 +133,19 @@ describe('checkLAM005 — switch x86_64 to arm64 (Graviton)', () => {
     expect(checkLAM005(makeLambda({ configuration: { architectures: 'arm64', memory_mb: 512 } }), cfg)).toBeNull();
     expect(checkLAM005(makeLambda({ configuration: { memory_mb: 512, runtime: 'python3.12' } }), cfg)).toBeNull();
   });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeLambda({ configuration: { architectures: 'x86_64', memory_mb: 512 } });
+    expect(checkLAM005(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'LAM-005', resourceId: r.id });
+  });
 });
 
 // ─── LAM-002: Memory overprovisioning ─────────────────────────────────────────
@@ -164,6 +177,21 @@ describe('checkLAM002 — overprovisioned Lambda memory', () => {
     expect(checkLAM002(makeLambda({ configuration: { memory_mb: 128 }, utilization: makeUtil(10000) }), cfg)).toBeNull();
     expect(checkLAM002(makeLambda({ configuration: { memory_mb: 2048 }, utilization: makeUtil(0) }), cfg)).toBeNull();
     expect(checkLAM002(makeLambda({ configuration: { memory_mb: 1024 } }), cfg)).toBeNull();
+  });
+
+  it('tier-3 skips and warns when both avgDurationMs and monthly_cost are missing (#75)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    // memory_mb >= 512 + invocations > 0 → passes initial guard;
+    // no avgDurationMs → tier-1 fails; no monthlyCost → tier-2 fails → tier-3 skip+warn.
+    const r = makeLambda({ configuration: { memory_mb: 1024 }, utilization: makeUtil(500) });
+    expect(checkLAM002(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'LAM-002', resourceId: r.id });
   });
 });
 
@@ -226,6 +254,21 @@ describe('checkLAM004 — low-invocation Lambda with high memory', () => {
     expect(checkLAM004(makeLambda({ configuration: { memory_mb: 3008 }, utilization: makeUtil(200) }), cfg)).toBeNull();
   });
 
+  it('tier-3 skips and warns when both avgDurationMs and monthly_cost are missing (#75)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    // memory_mb > 512 + invocations < lambdaLowInvocations (100) → passes initial guard;
+    // no avgDurationMs → tier-1 fails; no monthlyCost → tier-2 fails → tier-3 skip+warn.
+    const r = makeLambda({ configuration: { memory_mb: 1024 }, utilization: makeUtil(50) });
+    expect(checkLAM004(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'LAM-004', resourceId: r.id });
+  });
+
   it('normalizes invocations to monthly rate — 50 invocations in 7d = ~214/month, above 100 threshold → no fire', () => {
     // 50 raw invocations × (30/7) ≈ 214/month — well above cfg.lambdaLowInvocations (100)
     const r = makeLambda({
@@ -236,9 +279,9 @@ describe('checkLAM004 — low-invocation Lambda with high memory', () => {
   });
 
   it('normalizes invocations to monthly rate — 20 invocations in 7d = ~86/month, below 100 threshold → fires', () => {
-    // 20 raw × (30/7) ≈ 86/month — below threshold
+    // 20 raw × (30/7) ≈ 86/month — below threshold; monthlyCost drives tier-2 savings
     const r = makeLambda({
-      configuration: { memory_mb: 1024 },
+      configuration: { memory_mb: 1024, monthlyCost: 5 },
       utilization: { ...makeUtil(20), period: '7d' as const },
     });
     expect(checkLAM004(r, cfg)).not.toBeNull();

@@ -106,6 +106,19 @@ describe('checkDDB002 — DynamoDB provisioned without auto-scaling', () => {
     expect(checkDDB002(makeTable({ configuration: { billing_mode: 'PAY_PER_REQUEST', monthlyCost: 20 } }), cfg)).toBeNull();
     expect(checkDDB002(makeTable({ configuration: { billing_mode: 'PAY_PER_REQUEST' } }), cfg)).toBeNull();
   });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeTable({ configuration: { billing_mode: 'PROVISIONED', read_capacity: 100, write_capacity: 100 } });
+    expect(checkDDB002(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'DDB-002', resourceId: r.id });
+  });
 });
 
 // ─── DDB-001: data-quality skip warnings (#44 Item 1) ─────────────────────────
@@ -142,6 +155,16 @@ describe('DDB-001 — emits warnings on data-quality skips', () => {
       resourceId: broken.id,
       reason: 'consumed capacity is non-finite',
     });
+  });
+
+  it('warns when monthly_cost is missing (#75 strict gating)', () => {
+    const { ctx, warnings } = makeCtx();
+    const r = makeTable({
+      configuration: { billing_mode: 'PROVISIONED', read_capacity: 5, write_capacity: 5 },
+    });
+    expect(checkDDB001(r, cfg, ctx)).toBeNull();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ ruleId: 'DDB-001', resourceId: r.id });
   });
 
   it('warns when zero provisioned and zero consumed capacity', () => {

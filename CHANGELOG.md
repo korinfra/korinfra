@@ -47,6 +47,15 @@ All notable changes to KorInfra are documented here.
   `size_gb`-based fallback when only `monthly_cost` is missing. LB-002
   drops the misleading `ALB_BASE_HOURLY` ($16/mo) fixed-rate fallback,
   which mis-quoted NLBs and LCU-heavy ALBs by 3–4× (#44 Item 2).
+- **22 more cost rules now require `monthly_cost` to emit recommendations.**
+  EC2-001/002/003/004/005/006/007/008, EBS-003, RDS-006/007/008, DDB-001/002,
+  ECS-001/002/003, ELC-002, ELB-002, LAM-005, S3-001/002 now use
+  `getMonthlyCostStrict()` and emit a structured warning (surfaced in
+  `warnings[]`) when `monthly_cost` is missing, instead of emitting a
+  `estimatedSavings: $0` recommendation. LAM-002/004 also stop emitting
+  $0 savings in their tier-3 fallback path. Rules with threshold-based
+  implicit gating (RDS-010, GENERAL-001) are documented with code comments
+  rather than switched (#75).
 
 ### Notes for operators
 

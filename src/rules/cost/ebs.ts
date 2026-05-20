@@ -75,10 +75,11 @@ export function checkEBS002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
 }
 
 /** EBS-003: gp2 → gp3 migration (20% savings). */
-export function checkEBS003(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkEBS003(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ebs_volume') return null;
   if (strConfig(r, 'volume_type') !== 'gp2') return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'EBS-003', ctx);
+  if (monthlyCost === null) return null;
   const savings = monthlyCost * cfg.ebsGP2ToGP3SavingsRatio;
   const filePath = strConfig(r, 'file_path');
   return {

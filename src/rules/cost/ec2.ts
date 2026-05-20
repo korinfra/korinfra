@@ -4,7 +4,8 @@
  */
 
 import type { Resource } from '../../aws/types.js';
-import type { Recommendation } from '../types.js';
+import type { Recommendation, RuleContext } from '../types.js';
+import { RULE_WARN_REASONS } from '../types.js';
 import type { ThresholdsOverride, THRESHOLDS } from '../config.js';
 import { FALLBACK_EC2_PRICES, EBS_GP3_PER_GB, estimateEC2CostSync } from '../../pricing/resources.js';
 import {
@@ -21,6 +22,8 @@ import {
   sanitizeResourceName,
   normalizeToMonth,
   getMonthlyCost,
+  getMonthlyCostStrict,
+  costOrWarn,
   confidenceFromUtilization,
   CONF_HIGH,
   CONF_LIKELY,
@@ -38,12 +41,13 @@ type Cfg = typeof THRESHOLDS & ThresholdsOverride & { currency: string };
 const EBS_MINIMUM_MONTHLY_USD = 5.0;
 
 /** EC2-001: Idle instance (CPU avg < threshold). */
-export function checkEC2001(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkEC2001(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ec2_instance' || !r.utilization) return null;
   const util = r.utilization;
   if (util.cpuAverage >= cfg.idleCPUThreshold) return null;
   if (util.dataPoints <= 0) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'EC2-001', ctx);
+  if (monthlyCost === null) return null;
   // Savings = full cost minus retained EBS cost (still billed when stopped)
   const ebsGB = (r.configuration['ebs_volumes_total_gb'] as number | undefined) ?? 0;
   const ebsMonthlyCost = ebsGB * EBS_GP3_PER_GB;
@@ -77,7 +81,7 @@ export function checkEC2001(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EC2-002: Stopped instance > threshold days with EBS volumes. */
-export function checkEC2002(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkEC2002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ec2_instance' || r.state !== 'stopped') return null;
   // Prefer state_transition_days (populated by collector) over stopped_at.
   // If neither is available, skip the rule — falling back to launchTime would
@@ -86,9 +90,9 @@ export function checkEC2002(r: Resource, cfg: Cfg): Recommendation | null {
   const transitionDays = numConfig(r, 'state_transition_days');
   const stoppedDays = transitionDays || (stoppedAt ? daysSince(stoppedAt) : null);
   if (stoppedDays === null || stoppedDays < cfg.stoppedInstanceDays) return null;
-  const monthlyCost = getMonthlyCost(r);
-  let savings = monthlyCost * cfg.ec2StoppedEBSMultiplier;
-  if (savings === 0) savings = EBS_MINIMUM_MONTHLY_USD;
+  const monthlyCost = costOrWarn(r, 'EC2-002', ctx);
+  if (monthlyCost === null) return null;
+  const savings = monthlyCost * cfg.ec2StoppedEBSMultiplier;
   if (!Number.isFinite(savings) || savings < 0) return null;
   const filePath = strConfig(r, 'file_path');
   return {
@@ -117,14 +121,15 @@ export function checkEC2002(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EC2-003: Previous-generation instance family. */
-export function checkEC2003(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkEC2003(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ec2_instance' || !isPreviousGen(r.instanceType)) return null;
   const [family, size] = splitInstanceType(r.instanceType);
   if (!size) return null;
   const newFamily = previousGenFamilies[family];
   if (!newFamily) return null;
   const suggestedType = newFamily + '.' + size;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'EC2-003', ctx);
+  if (monthlyCost === null) return null;
   // Use real pricing from fallback table when available; fallback to cfg value for conservative estimate
   const currentHourly = FALLBACK_EC2_PRICES[r.instanceType];
   const suggestedHourly = FALLBACK_EC2_PRICES[suggestedType];
@@ -163,7 +168,7 @@ export function checkEC2003(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EC2-004: Oversized instance (CPU P95 < threshold). */
-export function checkEC2004(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkEC2004(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ec2_instance' || !r.utilization) return null;
   const util = r.utilization;
   if (util.cpuP95 >= cfg.rightsizeCPUThreshold) return null;
@@ -184,7 +189,6 @@ export function checkEC2004(r: Resource, cfg: Cfg): Recommendation | null {
 
   const suggested = suggestRightsize(r.instanceType, util.cpuP95, cfg.rightsizeCPUThreshold);
   if (suggested === r.instanceType) return null;
-  const monthlyCost = getMonthlyCost(r);
   const [, currentSize] = splitInstanceType(r.instanceType);
   const [, suggestedSize] = splitInstanceType(suggested);
   const currentIdx = sizeIndex(currentSize);
@@ -197,10 +201,15 @@ export function checkEC2004(r: Resource, cfg: Cfg): Recommendation | null {
   if (currentMonthly > 0 && suggestedMonthly > 0) {
     savings = currentMonthly - suggestedMonthly;
   } else {
+    const mc = getMonthlyCostStrict(r);
+    if (mc === null) {
+      ctx?.warn('EC2-004', r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
+      return null;
+    }
     const sizeRatio = suggestedIdx >= 0 && currentIdx > suggestedIdx
       ? Math.pow(0.5, currentIdx - suggestedIdx)
       : cfg.ec2RightsizeMultiplier;
-    savings = monthlyCost * (1 - sizeRatio);
+    savings = mc * (1 - sizeRatio);
   }
   savings = Math.max(0, savings);
   if (!Number.isFinite(savings)) return null;
@@ -249,13 +258,14 @@ export function checkEC2004(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EC2-005: On-demand instance running 30+ days — RI/Savings Plan opportunity. */
-export function checkEC2005(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkEC2005(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ec2_instance' || r.state !== 'running') return null;
   const lifecycle = strConfig(r, 'lifecycle');
   if (lifecycle === 'spot') return null;
   const runningDays = daysSince(r.launchTime) ?? 0;
   if (runningDays < cfg.onDemandRunningDays) return null;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'EC2-005', ctx);
+  if (monthlyCost === null) return null;
   const savings = monthlyCost * cfg.ec2RIDiscountMultiplier;
   if (!Number.isFinite(savings) || savings < 0) return null;
   return {
@@ -282,7 +292,7 @@ export function checkEC2005(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EC2-006: Graviton migration (x86_64 → arm64). */
-export function checkEC2006(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkEC2006(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ec2_instance') return null;
   const arch = strConfig(r, 'architecture');
   if (arch !== 'x86_64') return null;
@@ -290,7 +300,6 @@ export function checkEC2006(r: Resource, cfg: Cfg): Recommendation | null {
   const gravitonFamily = gravitonFamilies[family];
   if (!gravitonFamily) return null;
   const suggestedType = gravitonFamily + '.' + size;
-  const monthlyCost = getMonthlyCost(r);
   // Prefer real pricing delta; fall back to configured multiplier estimate
   const currentMonthly = estimateEC2CostSync(r.instanceType, r.region);
   const gravitonMonthly = estimateEC2CostSync(suggestedType, r.region);
@@ -300,7 +309,12 @@ export function checkEC2006(r: Resource, cfg: Cfg): Recommendation | null {
     savings = Math.max(0, currentMonthly - gravitonMonthly);
     confidence = 0.85;
   } else {
-    savings = monthlyCost * cfg.ec2GravitonMultiplier;
+    const mc = getMonthlyCostStrict(r);
+    if (mc === null) {
+      ctx?.warn('EC2-006', r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
+      return null;
+    }
+    savings = mc * cfg.ec2GravitonMultiplier;
     confidence = 0.65; // instance type not in fallback pricing table
   }
   if (!Number.isFinite(savings) || savings < 0) return null;
@@ -332,18 +346,25 @@ export function checkEC2006(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EC2-007: t2 → t3 migration (also recommends t4g as preferred target). */
-export function checkEC2007(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkEC2007(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ec2_instance') return null;
   const [family, size] = splitInstanceType(r.instanceType);
   if (family !== 't2') return null;
   const suggestedType = 't3.' + size;
-  const monthlyCost = getMonthlyCost(r);
   // Prefer real pricing delta; fall back to configured multiplier estimate
   const currentMonthly = estimateEC2CostSync(r.instanceType, r.region);
   const t3Monthly = estimateEC2CostSync(suggestedType, r.region);
-  const savings = currentMonthly > 0 && t3Monthly > 0
-    ? Math.max(0, currentMonthly - t3Monthly)
-    : monthlyCost * cfg.ec2T2T3Multiplier;
+  let savings: number;
+  if (currentMonthly > 0 && t3Monthly > 0) {
+    savings = Math.max(0, currentMonthly - t3Monthly);
+  } else {
+    const mc = getMonthlyCostStrict(r);
+    if (mc === null) {
+      ctx?.warn('EC2-007', r.id, r.type, RULE_WARN_REASONS.MISSING_COST);
+      return null;
+    }
+    savings = mc * cfg.ec2T2T3Multiplier;
+  }
   if (!Number.isFinite(savings) || savings < 0) return null;
   const filePath = strConfig(r, 'file_path');
   return {
@@ -372,7 +393,7 @@ export function checkEC2007(r: Resource, cfg: Cfg): Recommendation | null {
 }
 
 /** EC2-008: GPU/ML/specialty previous-generation instance upgrade (April 2026). */
-export function checkEC2008(r: Resource, cfg: Cfg): Recommendation | null {
+export function checkEC2008(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommendation | null {
   if (r.type !== 'ec2_instance' || !r.instanceType) return null;
   // Skip families already handled by EC2-003 (previousGenFamilies in helpers.ts)
   if (isPreviousGen(r.instanceType)) return null;
@@ -388,7 +409,8 @@ export function checkEC2008(r: Resource, cfg: Cfg): Recommendation | null {
   const newFamily = upgradePaths[family];
   if (!newFamily) return null;
   const suggestedType = newFamily + '.' + size;
-  const monthlyCost = getMonthlyCost(r);
+  const monthlyCost = costOrWarn(r, 'EC2-008', ctx);
+  if (monthlyCost === null) return null;
   const savings = monthlyCost * cfg.ec2GPUPreviousGenMultiplier;
   if (!Number.isFinite(savings) || savings < 0) return null;
   const filePath = strConfig(r, 'file_path');

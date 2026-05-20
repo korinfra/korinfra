@@ -11,19 +11,41 @@ import { describe, it, expect } from 'vitest';
 import { ruleRegistry } from '../../../src/rules/registry.js';
 import type { CostGating } from '../../../src/rules/types.js';
 
-/** The 11 rules that #44 Item 2 designates as strict cost-saving rules. */
+/** The 33 rules designated as strict cost-saving rules (#44 Item 2 original 11 + 22 added by #75). */
 const STRICT_RULES: ReadonlySet<string> = new Set([
   'EBS-001',
   'EBS-002',
+  'EBS-003',
   'SNAP-001',
   'SNAP-002',
   'RDS-001',
   'RDS-003',
+  'RDS-006',
+  'RDS-007',
+  'RDS-008',
   'RDS-009',
   'ELC-001',
+  'ELC-002',
   'ELC-003',
   'ELB-001',
+  'ELB-002',
   'LB-002',
+  'S3-001',
+  'S3-002',
+  'DDB-001',
+  'DDB-002',
+  'ECS-001',
+  'ECS-002',
+  'ECS-003',
+  'LAM-005',
+  'EC2-001',
+  'EC2-002',
+  'EC2-003',
+  'EC2-004',
+  'EC2-005',
+  'EC2-006',
+  'EC2-007',
+  'EC2-008',
 ]);
 
 describe('Rule registry — costGating classification (#44)', () => {

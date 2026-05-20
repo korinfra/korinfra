@@ -46,10 +46,12 @@ describe('checkS3001 — no lifecycle policy', () => {
     expect(steps).toContain('STANDARD_IA');
     expect(steps).toContain('GLACIER');
 
-    // $0 cost
-    const rec0 = checkS3001(makeS3Bucket({ configuration: { monthlyCost: 0, lifecycle_rules_count: 0, has_lifecycle: false } }), cfg);
-    expect(rec0).not.toBeNull();
-    expect(rec0!.estimatedSavings).toBe(0);
+    // strict gating: missing/zero monthly_cost skips + warns
+    const s3001Warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const s3001Ctx = { warn(ruleId: string, resourceId: string, resourceType: string, reason: string) { s3001Warnings.push({ ruleId, resourceId, resourceType, reason }); } };
+    expect(checkS3001(makeS3Bucket({ configuration: { monthlyCost: 0, lifecycle_rules_count: 0, has_lifecycle: false } }), cfg, s3001Ctx)).toBeNull();
+    expect(s3001Warnings).toHaveLength(1);
+    expect(s3001Warnings[0]).toMatchObject({ ruleId: 'S3-001' });
   });
 
   it('does not fire when lifecycle is configured or wrong resource type', () => {
@@ -81,6 +83,19 @@ describe('checkS3002 — missing Intelligent-Tiering', () => {
     expect(checkS3002(makeS3Bucket({ configuration: { monthlyCost: 150, lifecycle_rules_count: 2, has_lifecycle: true, has_intelligent_tiering: true } }), cfg)).toBeNull();
     expect(checkS3002(makeS3Bucket({ configuration: { monthlyCost: 100, lifecycle_rules_count: 0, has_lifecycle: false, has_intelligent_tiering: false } }), cfg)).toBeNull();
     expect(checkS3002(makeS3Bucket({ type: 'ebs_volume', configuration: { monthlyCost: 100, lifecycle_rules_count: 1, has_intelligent_tiering: false } }), cfg)).toBeNull();
+  });
+
+  it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
+    const s3002Warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+    const s3002Ctx = {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        s3002Warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    };
+    const r = makeS3Bucket({ configuration: { lifecycle_rules_count: 2, has_lifecycle: true, has_intelligent_tiering: false } });
+    expect(checkS3002(r, cfg, s3002Ctx)).toBeNull();
+    expect(s3002Warnings).toHaveLength(1);
+    expect(s3002Warnings[0]).toMatchObject({ ruleId: 'S3-002', resourceId: r.id });
   });
 });
 
