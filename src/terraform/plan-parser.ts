@@ -9,7 +9,7 @@
  * https://developer.hashicorp.com/terraform/internals/json-format
  */
 
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { z } from 'zod';
@@ -107,16 +107,6 @@ const MAX_PLAN_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
 /** Read a Terraform plan JSON file from disk and validate it. */
 export async function parsePlanFile(filePath: string): Promise<TerraformPlan> {
   const absPath = resolve(filePath);
-  try {
-    const { size } = await stat(absPath);
-    if (size > MAX_PLAN_FILE_BYTES) {
-      throw new Error(`Terraform plan file is too large: ${size} bytes (max ${MAX_PLAN_FILE_BYTES})`);
-    }
-  } catch (err) {
-    throw new Error(`Failed to read Terraform plan file ${absPath}: ${err instanceof Error ? err.message : String(err)}`, {
-      cause: err,
-    });
-  }
   let buffer: Buffer;
   try {
     buffer = await readFile(absPath);
@@ -124,6 +114,9 @@ export async function parsePlanFile(filePath: string): Promise<TerraformPlan> {
     throw new Error(`Failed to read Terraform plan file ${absPath}: ${err instanceof Error ? err.message : String(err)}`, {
       cause: err,
     });
+  }
+  if (buffer.length > MAX_PLAN_FILE_BYTES) {
+    throw new Error(`Terraform plan file is too large: ${buffer.length} bytes (max ${MAX_PLAN_FILE_BYTES})`);
   }
   const plan = parsePlanFromString(buffer.toString('utf8'));
   logger.debug({ planFile: absPath, changes: plan.resource_changes.length }, 'Parsed Terraform plan');
