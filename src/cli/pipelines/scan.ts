@@ -19,7 +19,7 @@ import { scanTerraformTool } from '../../tools/scan-terraform.js';
 import { classifyResourcesTool } from '../../tools/classify-resources.js';
 import { AWS_REGION_RE } from '../utils/validateRegions.js';
 import { clampConfidence, guardSavings } from '../../utils/numeric-guards.js';
-import { RULE_WARN_REASONS } from '../../rules/types.js';
+import { RULE_WARN_REASONS, type RuleWarning } from '../../rules/types.js';
 
 /** Parse a ToolResult's JSON text content. Throws on error results. */
 export function parseToolResult(result: ToolResult): unknown {
@@ -300,14 +300,6 @@ export function buildScanPipelineSteps(opts: ScanPipelineOptions = {}): Pipeline
   ];
 }
 
-/** A rule-emitted warning for a resource that was skipped during evaluation. */
-export interface ScanWarning {
-  ruleId: string;
-  resourceId: string;
-  resourceType: string;
-  reason: string;
-}
-
 /** Extract ScanSummaryData-compatible shape from pipeline context. */
 export function extractScanSummary(ctx: PipelineContext): {
   resourceCount: number;
@@ -322,7 +314,7 @@ export function extractScanSummary(ctx: PipelineContext): {
   errorCount: number;
   failedRegions: string[];
   unknownCostCount: number;
-  warnings: ScanWarning[];
+  warnings: RuleWarning[];
 } {
   const collectResult = ctx.results.get('collect') as {
     resourceCount?: number;
@@ -331,7 +323,7 @@ export function extractScanSummary(ctx: PipelineContext): {
   const rulesResult = ctx.results.get('rules') as {
     summary?: { estimatedSavings?: number; recommendationsFound?: number };
     recommendations?: unknown[];
-    warnings?: ScanWarning[];
+    warnings?: RuleWarning[];
   } | undefined;
   const anomalyResult = ctx.results.get('anomalies') as { anomalyCount?: number } | undefined;
   const saveResult = ctx.results.get('save') as { total_cost?: number; scan_id?: string } | undefined;
@@ -362,7 +354,7 @@ export function extractScanSummary(ctx: PipelineContext): {
   // security-only rules emit recommendations even when monthly_cost is 0.
   // Exact-match by design — SNAP-001/002 use MISSING_COST_AND_SIZE (separate
   // semantic: both cost AND size missing, not just cost) and are excluded here.
-  const ruleWarnings: ScanWarning[] = rulesResult?.warnings ?? [];
+  const ruleWarnings: RuleWarning[] = rulesResult?.warnings ?? [];
   const unknownCostResources = new Set(
     ruleWarnings
       .filter((w) => w.reason === RULE_WARN_REASONS.MISSING_COST)
