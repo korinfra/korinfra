@@ -22,6 +22,18 @@ function makeTable(overrides: Partial<Resource> = {}): Resource {
   };
 }
 
+function makeCtx() {
+  const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+  return {
+    warnings,
+    ctx: {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    },
+  };
+}
+
 // ─── DDB-001: Provisioned → on-demand ─────────────────────────────────────────
 
 describe('checkDDB001 — switch DynamoDB provisioned to on-demand', () => {
@@ -108,12 +120,7 @@ describe('checkDDB002 — DynamoDB provisioned without auto-scaling', () => {
   });
 
   it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     const r = makeTable({ configuration: { billing_mode: 'PROVISIONED', read_capacity: 100, write_capacity: 100 } });
     expect(checkDDB002(r, cfg, ctx)).toBeNull();
     expect(warnings).toHaveLength(1);
@@ -124,18 +131,6 @@ describe('checkDDB002 — DynamoDB provisioned without auto-scaling', () => {
 // ─── DDB-001: data-quality skip warnings (#44 Item 1) ─────────────────────────
 
 describe('DDB-001 — emits warnings on data-quality skips', () => {
-  function makeCtx() {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    return {
-      warnings,
-      ctx: {
-        warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-          warnings.push({ ruleId, resourceId, resourceType, reason });
-        },
-      },
-    };
-  }
-
   it('warns when consumed capacity is non-finite', () => {
     const { ctx, warnings } = makeCtx();
     const broken = makeTable({

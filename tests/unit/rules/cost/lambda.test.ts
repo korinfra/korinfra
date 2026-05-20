@@ -52,6 +52,18 @@ function makeUtil(invocations: number) {
   };
 }
 
+function makeCtx() {
+  const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+  return {
+    warnings,
+    ctx: {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    },
+  };
+}
+
 // ─── LAM-001: Unused Lambda ───────────────────────────────────────────────────
 
 describe('checkLAM001 — unused Lambda function (zero invocations)', () => {
@@ -135,12 +147,7 @@ describe('checkLAM005 — switch x86_64 to arm64 (Graviton)', () => {
   });
 
   it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     const r = makeLambda({ configuration: { architectures: 'x86_64', memory_mb: 512 } });
     expect(checkLAM005(r, cfg, ctx)).toBeNull();
     expect(warnings).toHaveLength(1);
@@ -180,12 +187,7 @@ describe('checkLAM002 — overprovisioned Lambda memory', () => {
   });
 
   it('tier-3 skips and warns when both avgDurationMs and monthly_cost are missing (#75)', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     // memory_mb >= 512 + invocations > 0 → passes initial guard;
     // no avgDurationMs → tier-1 fails; no monthlyCost → tier-2 fails → tier-3 skip+warn.
     const r = makeLambda({ configuration: { memory_mb: 1024 }, utilization: makeUtil(500) });
@@ -255,12 +257,7 @@ describe('checkLAM004 — low-invocation Lambda with high memory', () => {
   });
 
   it('tier-3 skips and warns when both avgDurationMs and monthly_cost are missing (#75)', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     // memory_mb > 512 + invocations < lambdaLowInvocations (100) → passes initial guard;
     // no avgDurationMs → tier-1 fails; no monthlyCost → tier-2 fails → tier-3 skip+warn.
     const r = makeLambda({ configuration: { memory_mb: 1024 }, utilization: makeUtil(50) });

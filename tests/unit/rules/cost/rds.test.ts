@@ -46,6 +46,18 @@ function makeUtil(cpuAverage: number, cpuP95 = 10, period: '7d' | '14d' | '30d' 
   };
 }
 
+function makeCtx() {
+  const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
+  return {
+    warnings,
+    ctx: {
+      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
+        warnings.push({ ruleId, resourceId, resourceType, reason });
+      },
+    },
+  };
+}
+
 // ─── RDS-001: Idle RDS ────────────────────────────────────────────────────────
 
 describe('checkRDS001 — idle RDS instance', () => {
@@ -86,12 +98,7 @@ describe('checkRDS001 — idle RDS instance', () => {
   // instead of silently emitting estimatedSavings: 0. The rule context receives
   // a warning so JSON consumers can surface the skipped resource.
   it('skips and emits a warning when monthly_cost is NaN', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     const r = makeRDS({ utilization: makeUtil(0.1), configuration: { monthlyCost: NaN } });
     expect(checkRDS001(r, cfg, ctx)).toBeNull();
     expect(warnings).toHaveLength(1);
@@ -125,12 +132,7 @@ describe('checkRDS003 — oversized RDS instance', () => {
 
   // #44 Item 2: when both pricing-table tiers fail, fall back to monthly_cost; warn + skip if missing too.
   it('skips and warns when pricing-table lookup fails AND monthly_cost is missing', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     // 'db.zzz.xlarge' is intentionally not in FALLBACK_RDS_PRICES so both pricing lookups return 0;
     // 'xlarge' is a valid size index so suggestRDSRightsize produces 'db.zzz.medium' (different from
     // the input) and the rule proceeds past the suggestedType === r.instanceType early-out.
@@ -195,12 +197,7 @@ describe('checkRDS007 — Multi-AZ in non-production environment', () => {
   });
 
   it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     const r = makeRDS({ configuration: { multi_az: true }, tags: { Environment: 'staging' } });
     expect(checkRDS007(r, cfg, ctx)).toBeNull();
     expect(warnings).toHaveLength(1);
@@ -269,12 +266,7 @@ describe('checkRDS006 — gp2 to gp3 migration', () => {
   });
 
   it('skips and warns when monthly_cost is missing (#75 strict gating)', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     const r = makeRDS({ configuration: { storage_type: 'gp2' } });
     expect(checkRDS006(r, cfg, ctx)).toBeNull();
     expect(warnings).toHaveLength(1);
@@ -304,12 +296,7 @@ describe('checkRDS008 — Graviton migration', () => {
   });
 
   it('skips and warns when pricing-table misses AND monthly_cost is missing (#75 strict gating)', () => {
-    const warnings: Array<{ ruleId: string; resourceId: string; resourceType: string; reason: string }> = [];
-    const ctx = {
-      warn(ruleId: string, resourceId: string, resourceType: string, reason: string) {
-        warnings.push({ ruleId, resourceId, resourceType, reason });
-      },
-    };
+    const { ctx, warnings } = makeCtx();
     // 'db.c5.large' maps to 'db.c7g.large' but neither is in FALLBACK_RDS_PRICES → both return 0;
     // no monthlyCost forces the strict fallback to skip + warn.
     const r = makeRDS({ instanceType: 'db.c5.large', configuration: { monthlyCost: NaN } });
