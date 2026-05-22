@@ -129,6 +129,81 @@ function metadataHttpTokens(after: Record<string, unknown>): string {
 const NOW = new Date().toISOString();
 
 // ---------------------------------------------------------------------------
+// Task-definition index (cross-resource resolution for aws_ecs_service)
+// ---------------------------------------------------------------------------
+
+export interface TaskDefIndexEntry {
+  cpuUnits: number; // CPU units as-parsed (e.g. 2048 for 2 vCPU)
+  memoryMb: number; // Memory in MB (e.g. 4096 for 4 GB)
+}
+
+export type TaskDefIndex = Map<string, TaskDefIndexEntry>;
+
+/**
+ * Scan resource_changes once and index every aws_ecs_task_definition by:
+ *   1. Plan address ("aws_ecs_task_definition.api", "module.x.aws_ecs_task_definition.api")
+ *   2. family ("api")
+ *   3. family:revision ("api:3") — only when both are known at plan time
+ *   4. ARN ("arn:aws:ecs:...") — only when known at plan time
+ *
+ * Skips entries with unknown or zero CPU/memory (can't produce a valid cost).
+ * Skips destroy/no-op/read actions (their after state is irrelevant).
+ */
+export function buildTaskDefIndex(
+  resourceChanges: readonly TerraformResourceChange[],
+): TaskDefIndex {
+  const index: TaskDefIndex = new Map();
+  const ambiguousFamilies = new Set<string>();
+
+  for (const rc of resourceChanges) {
+    if (rc.type !== 'aws_ecs_task_definition') continue;
+    const action = resolveAction(rc.change.actions);
+    if (action === 'destroy' || action === 'no-op' || action === 'read') continue;
+
+    const after = rc.change.after;
+    if (after === null || after === undefined) continue;
+
+    const afterUnknown = rc.change.after_unknown ?? {};
+
+    if (afterUnknown['cpu'] === true || afterUnknown['memory'] === true) continue;
+
+    const cpuUnits = floatValue(after['cpu']);
+    const memoryMb = floatValue(after['memory']);
+    if (cpuUnits <= 0 || memoryMb <= 0) continue;
+
+    const entry: TaskDefIndexEntry = { cpuUnits, memoryMb };
+
+    index.set(rc.address, entry);
+
+    const family = asStr(after['family']);
+    if (family !== '' && afterUnknown['family'] !== true) {
+      if (!ambiguousFamilies.has(family)) {
+        if (index.has(family)) {
+          // Second task def with the same family name — bare-family key is ambiguous.
+          // Remove it so a service referencing only "my-family" doesn't resolve to
+          // the wrong revision. family:revision keys remain unaffected.
+          index.delete(family);
+          ambiguousFamilies.add(family);
+        } else {
+          index.set(family, entry);
+        }
+      }
+      const revision = floatValue(after['revision']);
+      if (revision > 0 && afterUnknown['revision'] !== true) {
+        index.set(`${family}:${revision}`, entry);
+      }
+    }
+
+    const arn = asStr(after['arn']);
+    if (arn !== '' && afterUnknown['arn'] !== true) {
+      index.set(arn, entry);
+    }
+  }
+
+  return index;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -139,6 +214,8 @@ export interface SynthesizedResource {
   tfResource: TerraformResource;
   /** How trustworthy the cost figure is — surfaced in the cost-impact table. */
   costStatus: CostStatus;
+  /** Warnings to surface in the top-level output warnings[]. */
+  warnings?: string[];
 }
 
 /**
@@ -152,6 +229,7 @@ export function synthesizeResource(
   change: TerraformResourceChange,
   side: Side,
   defaultRegion: string,
+  taskDefIndex?: TaskDefIndex,
 ): SynthesizedResource | null {
   // Data sources never contribute to cost.
   if (change.address.startsWith('data.')) return null;
@@ -360,16 +438,74 @@ export function synthesizeResource(
       };
     }
     case 'aws_ecs_service': {
-      const configuration: Record<string, unknown> = {
-        desired_count: floatValue(after['desired_count']) > 0 ? floatValue(after['desired_count']) : 1,
-        // Real task CPU/memory live on aws_ecs_task_definition referenced by ARN;
-        // resolving them is complex when the task def is new (after_unknown.arn).
-        // Engine defaults (0.25 vCPU / 0.5 GB) apply when these fields are absent.
-      };
+      // Preserve desired_count=0 (stopped service, $0 cost). Only fall back to 1
+      // when the field is absent entirely (null/undefined) from the plan.
+      const rawDesiredCount = floatValue(after['desired_count']);
+      const desiredCount = after['desired_count'] === null || after['desired_count'] === undefined ? 1 : rawDesiredCount;
+      const configuration: Record<string, unknown> = { desired_count: desiredCount };
+
+      let costStatus: CostStatus = 'partial-unknown';
+      let warnings: string[] | undefined;
+
+      // Only resolve against the index for the after (future) side.
+      // The before state represents deployed reality whose task def is not in
+      // this plan's index — passing the index for before would risk resolving
+      // an old service to new task-def specs when the family name collides.
+      if (taskDefIndex !== undefined && side === 'after') {
+        const taskDefUnknown = isUnknown(afterUnknown, 'task_definition');
+        const taskDefRef = taskDefUnknown ? '' : asStr(after['task_definition']);
+
+        let entry: TaskDefIndexEntry | undefined;
+
+        if (taskDefRef !== '') {
+          entry = taskDefIndex.get(taskDefRef);
+        } else if (taskDefUnknown) {
+          // Heuristic for co-deployed task defs whose ARN is unknown at plan time.
+          // Use lastIndexOf so the replacement targets the resource-type segment, not
+          // a module segment — handles paths like module.aws_ecs_service.aws_ecs_service.api.
+          //   aws_ecs_service.api           → aws_ecs_task_definition.api
+          //   module.web.aws_ecs_service.api → module.web.aws_ecs_task_definition.api
+          const typeMarker = '.aws_ecs_service.';
+          const lastDotIdx = change.address.lastIndexOf(typeMarker);
+          const siblingAddress = lastDotIdx !== -1
+            ? change.address.slice(0, lastDotIdx) + '.aws_ecs_task_definition.' +
+              change.address.slice(lastDotIdx + typeMarker.length)
+            : change.address.startsWith('aws_ecs_service.')
+              ? 'aws_ecs_task_definition.' + change.address.slice('aws_ecs_service.'.length)
+              : change.address;
+          entry = taskDefIndex.get(siblingAddress);
+        }
+
+        if (entry !== undefined) {
+          // engine.ts reads task_cpu as vCPUs → divide CPU units by 1024
+          // engine.ts reads task_memory as MB → pass through unchanged
+          configuration['task_cpu'] = entry.cpuUnits / 1024;
+          configuration['task_memory'] = entry.memoryMb;
+          costStatus = 'known';
+        } else if (taskDefUnknown) {
+          warnings = [
+            `${change.address}: task definition (unknown at plan time) not found in plan` +
+            ` — cost estimate uses engine defaults (0.25 vCPU / 0.5 GB)`,
+          ];
+        } else if (taskDefRef !== '') {
+          warnings = [
+            `${change.address}: task definition "${taskDefRef}" not found in plan` +
+            ` — cost estimate uses engine defaults (0.25 vCPU / 0.5 GB)`,
+          ];
+        } else {
+          // task_definition is a known empty string — likely a Terraform config error.
+          warnings = [
+            `${change.address}: task_definition is empty — no task definition reference found` +
+            ` — cost estimate uses engine defaults (0.25 vCPU / 0.5 GB)`,
+          ];
+        }
+      }
+
       return {
         resource: { ...baseResource, type: 'ecs_service', instanceType: '', configuration },
         tfResource,
-        costStatus: 'partial-unknown',
+        costStatus,
+        ...(warnings !== undefined ? { warnings } : {}),
       };
     }
     default: {

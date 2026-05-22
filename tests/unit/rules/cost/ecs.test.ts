@@ -126,6 +126,19 @@ describe('checkECS002 — EC2 launch type', () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toMatchObject({ ruleId: 'ECS-002', resourceId: r.id });
   });
+
+  it('uses default cpu/memory (0.25 vCPU / 512 MB) when fields are absent', () => {
+    // No cpu/memory/task_cpu/task_memory in configuration — must fall back to
+    // defaults (256 CPU units → 0.25 vCPU, 512 MB) and still compute a Fargate estimate.
+    const r = makeECSService({ configuration: { launch_type: 'EC2', desired_count: 1, running_count: 1, monthlyCost: 500 } });
+    const rec = checkECS002(r, cfg);
+    expect(rec).not.toBeNull();
+    expect(rec!.ruleId).toBe('ECS-002');
+    // Fargate with defaults: (0.25 * VCPU_RATE + 0.5 * MEM_RATE) * 730 * 1 ≈ 9.01
+    // savings ≈ 500 − 9.01 ≈ 490.99
+    expect(rec!.estimatedSavings).toBeGreaterThan(400);
+    expect(rec!.estimatedSavings).toBeLessThan(500);
+  });
 });
 
 // ─── ECS-003: Over-provisioned service ───────────────────────────────────────

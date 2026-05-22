@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  buildTaskDefIndex,
   resolveAction,
   synthesizeResource,
 } from '../../../src/terraform/plan-resource.js';
@@ -411,7 +412,7 @@ describe('synthesizeResource — aws_dynamodb_table', () => {
 });
 
 describe('synthesizeResource — aws_ecs_service', () => {
-  it('maps desired_count and marks costStatus=partial-unknown (task def not resolved in v1)', () => {
+  it('falls back to partial-unknown without warnings when no index is passed', () => {
     const change = makeChange({
       address: 'aws_ecs_service.api',
       type: 'aws_ecs_service',
@@ -428,5 +429,302 @@ describe('synthesizeResource — aws_ecs_service', () => {
     expect(synth!.resource.type).toBe('ecs_service');
     expect(synth!.resource.configuration['desired_count']).toBe(5);
     expect(synth!.costStatus).toBe('partial-unknown');
+    expect(synth!.resource.configuration['task_cpu']).toBeUndefined();
+    expect(synth!.warnings).toBeUndefined();
+  });
+
+  it('resolves task def by plan address → costStatus known, task_cpu stored as vCPUs', () => {
+    const taskDefChange = makeChange({
+      address: 'aws_ecs_task_definition.api',
+      type: 'aws_ecs_task_definition',
+      change: {
+        actions: ['create'],
+        after: { family: 'api', cpu: '2048', memory: '4096' },
+        after_unknown: { arn: true, revision: true },
+      },
+    });
+    const serviceChange = makeChange({
+      address: 'aws_ecs_service.api',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: {
+          desired_count: 10,
+          launch_type: 'FARGATE',
+          task_definition: 'aws_ecs_task_definition.api',
+        },
+      },
+    });
+    const index = buildTaskDefIndex([taskDefChange, serviceChange]);
+    const synth = synthesizeResource(serviceChange, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('known');
+    expect(synth!.resource.configuration['desired_count']).toBe(10);
+    expect(synth!.resource.configuration['task_cpu']).toBe(2);    // 2048 / 1024
+    expect(synth!.resource.configuration['task_memory']).toBe(4096); // MB unchanged
+    expect(synth!.warnings).toBeUndefined();
+  });
+
+  it('removes bare-family key when two task defs share the same family (last-write-wins prevention)', () => {
+    const index = buildTaskDefIndex([
+      makeChange({
+        address: 'aws_ecs_task_definition.api-v1',
+        type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'api', cpu: 512, memory: 1024, revision: 1 }, after_unknown: {} },
+      }),
+      makeChange({
+        address: 'aws_ecs_task_definition.api-v2',
+        type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'api', cpu: 2048, memory: 4096, revision: 2 }, after_unknown: {} },
+      }),
+    ]);
+    // Bare family key must be absent — resolution would be ambiguous.
+    expect(index.has('api')).toBe(false);
+    // Per-revision keys must still be present and correct.
+    expect(index.get('api:1')?.cpuUnits).toBe(512);
+    expect(index.get('api:2')?.cpuUnits).toBe(2048);
+    // Service referencing bare "api" must get a warning, not silently pick the wrong one.
+    const serviceChange = makeChange({
+      address: 'aws_ecs_service.app',
+      type: 'aws_ecs_service',
+      change: { actions: ['create'], after: { desired_count: 1, task_definition: 'api' } },
+    });
+    const synth = synthesizeResource(serviceChange, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('partial-unknown');
+    expect(synth!.warnings).toHaveLength(1);
+  });
+
+  it('resolves task def by bare family name → costStatus known', () => {
+    const index = buildTaskDefIndex([
+      makeChange({
+        address: 'aws_ecs_task_definition.svc',
+        type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'my-svc', cpu: 1024, memory: 2048 } },
+      }),
+    ]);
+    const serviceChange = makeChange({
+      address: 'aws_ecs_service.svc',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: { desired_count: 3, task_definition: 'my-svc' },
+      },
+    });
+    const synth = synthesizeResource(serviceChange, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('known');
+    expect(synth!.resource.configuration['task_cpu']).toBe(1);    // 1024 / 1024
+    expect(synth!.resource.configuration['task_memory']).toBe(2048);
+  });
+
+  it('emits partial-unknown + warning when task_definition ARN is not in plan', () => {
+    const index = buildTaskDefIndex([]);
+    const serviceChange = makeChange({
+      address: 'aws_ecs_service.legacy',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: {
+          desired_count: 2,
+          task_definition: 'arn:aws:ecs:us-east-1:123456789012:task-definition/legacy:5',
+        },
+      },
+    });
+    const synth = synthesizeResource(serviceChange, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('partial-unknown');
+    expect(synth!.warnings).toHaveLength(1);
+    expect(synth!.warnings![0]).toContain('aws_ecs_service.legacy');
+    expect(synth!.warnings![0]).toContain('not found in plan');
+  });
+
+  it('resolves via sibling-address heuristic when after_unknown.task_definition is true', () => {
+    const index = buildTaskDefIndex([
+      makeChange({
+        address: 'aws_ecs_task_definition.worker',
+        type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'worker', cpu: '512', memory: '1024' } },
+      }),
+    ]);
+    const serviceChange = makeChange({
+      address: 'aws_ecs_service.worker',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: { desired_count: 4, task_definition: null },
+        after_unknown: { task_definition: true },
+      },
+    });
+    const synth = synthesizeResource(serviceChange, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('known');
+    expect(synth!.resource.configuration['task_cpu']).toBe(0.5);  // 512 / 1024
+    expect(synth!.resource.configuration['task_memory']).toBe(1024);
+    expect(synth!.warnings).toBeUndefined();
+  });
+
+  it('resolves task def by family:revision string → costStatus known', () => {
+    const index = buildTaskDefIndex([
+      makeChange({
+        address: 'aws_ecs_task_definition.svc',
+        type: 'aws_ecs_task_definition',
+        change: {
+          actions: ['create'],
+          after: { family: 'my-svc', cpu: 1024, memory: 2048, revision: 3 },
+          after_unknown: {},
+        },
+      }),
+    ]);
+    const serviceChange = makeChange({
+      address: 'aws_ecs_service.svc',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: { desired_count: 2, task_definition: 'my-svc:3' },
+      },
+    });
+    const synth = synthesizeResource(serviceChange, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('known');
+    expect(synth!.resource.configuration['task_cpu']).toBe(1);    // 1024 / 1024
+    expect(synth!.resource.configuration['task_memory']).toBe(2048);
+    expect(synth!.warnings).toBeUndefined();
+  });
+
+  it('sibling-address heuristic works for module-prefixed addresses', () => {
+    const index = buildTaskDefIndex([
+      makeChange({
+        address: 'module.web.aws_ecs_task_definition.api',
+        type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'web-api', cpu: 2048, memory: 4096 } },
+      }),
+    ]);
+    const serviceChange = makeChange({
+      address: 'module.web.aws_ecs_service.api',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: { desired_count: 3, task_definition: null },
+        after_unknown: { task_definition: true },
+      },
+    });
+    const synth = synthesizeResource(serviceChange, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('known');
+    expect(synth!.resource.configuration['task_cpu']).toBe(2);    // 2048 / 1024
+    expect(synth!.resource.configuration['task_memory']).toBe(4096);
+  });
+
+  it('does not resolve task def on the before side even when index has the family name', () => {
+    // Simulates an update where the before-state references "api" (bare family),
+    // which also appears in the new task-def index. The before cost must NOT
+    // silently pick up new task-def specs — it must stay partial-unknown.
+    const index = buildTaskDefIndex([
+      makeChange({
+        address: 'aws_ecs_task_definition.api',
+        type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'api', cpu: 4096, memory: 8192 } },
+      }),
+    ]);
+    const serviceChange = makeChange({
+      address: 'aws_ecs_service.api',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['update'],
+        before: { desired_count: 2, task_definition: 'api' }, // bare family — old deployed state
+        after: { desired_count: 2, task_definition: null },
+        after_unknown: { task_definition: true },
+      },
+    });
+    const synthBefore = synthesizeResource(serviceChange, 'before', 'us-east-1', index);
+    expect(synthBefore!.costStatus).toBe('partial-unknown');
+    expect(synthBefore!.resource.configuration['task_cpu']).toBeUndefined();
+    expect(synthBefore!.warnings).toBeUndefined();
+
+    // After side should still resolve correctly.
+    const synthAfter = synthesizeResource(serviceChange, 'after', 'us-east-1', index);
+    expect(synthAfter!.costStatus).toBe('known');
+    expect(synthAfter!.resource.configuration['task_cpu']).toBe(4);    // 4096 / 1024
+  });
+
+  it('preserves desired_count=0 (stopped service) instead of forcing it to 1', () => {
+    // A service with desired_count=0 is intentionally stopped and should cost $0.
+    // The old code forced desired_count to 1, causing a spurious non-zero estimate.
+    const synth = synthesizeResource(
+      makeChange({
+        address: 'aws_ecs_service.stopped',
+        type: 'aws_ecs_service',
+        change: { actions: ['create'], after: { desired_count: 0, launch_type: 'FARGATE' } },
+      }),
+      'after',
+      'us-east-1',
+      undefined,
+    );
+    expect(synth).toBeDefined();
+    expect(synth!.resource.configuration['desired_count']).toBe(0);
+  });
+
+  it('emits a warning and leaves costStatus partial-unknown when task_definition is an empty string', () => {
+    const index = buildTaskDefIndex([
+      makeChange({
+        address: 'aws_ecs_task_definition.api',
+        type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'api', cpu: 1024, memory: 2048 } },
+      }),
+    ]);
+    const synth = synthesizeResource(
+      makeChange({
+        address: 'aws_ecs_service.broken',
+        type: 'aws_ecs_service',
+        change: {
+          actions: ['create'],
+          after: { desired_count: 2, task_definition: '' },
+          after_unknown: {},
+        },
+      }),
+      'after',
+      'us-east-1',
+      index,
+    );
+    expect(synth).toBeDefined();
+    expect(synth!.costStatus).toBe('partial-unknown');
+    expect(synth!.warnings).toBeDefined();
+    expect(synth!.warnings![0]).toMatch(/task_definition is empty/);
+  });
+});
+
+describe('buildTaskDefIndex — ambiguous family handling', () => {
+  it('removes bare-family key when two task defs share the same family', () => {
+    const changes = [
+      makeChange({
+        address: 'aws_ecs_task_definition.v1',
+        type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'api', cpu: 1024, memory: 2048, revision: 1 } },
+      }),
+      makeChange({
+        address: 'aws_ecs_task_definition.v2',
+        type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'api', cpu: 2048, memory: 4096, revision: 2 } },
+      }),
+    ];
+    const index = buildTaskDefIndex(changes);
+    // Bare family key must be absent — ambiguous
+    expect(index.has('api')).toBe(false);
+    // family:revision keys are still safe to use
+    expect(index.has('api:1')).toBe(true);
+    expect(index.has('api:2')).toBe(true);
+    // Plan addresses are also still safe
+    expect(index.has('aws_ecs_task_definition.v1')).toBe(true);
+    expect(index.has('aws_ecs_task_definition.v2')).toBe(true);
+  });
+
+  it('does not re-add bare-family key for a third task def with the same family', () => {
+    const changes = [
+      makeChange({ address: 'aws_ecs_task_definition.a', type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'svc', cpu: 256, memory: 512, revision: 1 } } }),
+      makeChange({ address: 'aws_ecs_task_definition.b', type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'svc', cpu: 512, memory: 1024, revision: 2 } } }),
+      makeChange({ address: 'aws_ecs_task_definition.c', type: 'aws_ecs_task_definition',
+        change: { actions: ['create'], after: { family: 'svc', cpu: 1024, memory: 2048, revision: 3 } } }),
+    ];
+    const index = buildTaskDefIndex(changes);
+    expect(index.has('svc')).toBe(false);
+    expect(index.has('svc:1')).toBe(true);
+    expect(index.has('svc:2')).toBe(true);
+    expect(index.has('svc:3')).toBe(true);
   });
 });

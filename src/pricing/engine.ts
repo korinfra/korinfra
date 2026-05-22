@@ -151,7 +151,7 @@ export class CostEngine {
         // For Fargate, estimate based on task CPU/memory if available, otherwise use defaults
         const taskCpuVcpus = floatValue(cfg['task_cpu']) || 0.25;
         const taskMemoryGB = floatValue(cfg['task_memory']) / 1024 || 0.5;
-        const desiredCount = floatValue(cfg['desired_count']) || 1;
+        const desiredCount = cfg['desired_count'] !== null && cfg['desired_count'] !== undefined ? floatValue(cfg['desired_count']) : 1;
         return estimateECSCost(taskCpuVcpus, taskMemoryGB) * desiredCount;
       }
 
