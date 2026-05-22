@@ -18,10 +18,12 @@ import { evaluateSecurityRules } from '../rules/security/index.js';
 import { extractDefaultRegion, parsePlanFile } from '../terraform/plan-parser.js';
 import type { TerraformResourceChange } from '../terraform/plan-parser.js';
 import {
+  buildTaskDefIndex,
   resolveAction,
   synthesizeResource,
   type CostStatus,
   type NormalizedAction,
+  type TaskDefIndex,
 } from '../terraform/plan-resource.js';
 import { normalizeResourceType } from '../terraform/parser.js';
 import type { TerraformResource } from '../terraform/types.js';
@@ -106,11 +108,24 @@ async function costForChange(
   change: TerraformResourceChange,
   side: 'before' | 'after',
   defaultRegion: string,
-): Promise<{ cost: number; status: CostStatus; resource: Resource | null; tfResource: TerraformResource | null } | null> {
-  const synth = synthesizeResource(change, side, defaultRegion);
+  taskDefIndex: TaskDefIndex,
+): Promise<{
+  cost: number;
+  status: CostStatus;
+  resource: Resource | null;
+  tfResource: TerraformResource | null;
+  warnings?: string[];
+} | null> {
+  const synth = synthesizeResource(change, side, defaultRegion, taskDefIndex);
   if (synth === null) return null;
   const raw = await estimateMonthlyCost(synth.resource);
-  return { cost: safeCost(raw), status: synth.costStatus, resource: synth.resource, tfResource: synth.tfResource };
+  return {
+    cost: safeCost(raw),
+    status: synth.costStatus,
+    resource: synth.resource,
+    tfResource: synth.tfResource,
+    ...(synth.warnings !== undefined ? { warnings: synth.warnings } : {}),
+  };
 }
 
 export async function runAnalyzePlan(
@@ -123,6 +138,8 @@ export async function runAnalyzePlan(
   if (planRegion === null) {
     logger.debug({ planFile, defaultRegion }, 'Plan has no provider region — defaulting');
   }
+
+  const taskDefIndex = buildTaskDefIndex(plan.resource_changes);
 
   const changes: AnalyzePlanChangeRow[] = [];
   const afterResources: Resource[] = [];
@@ -151,15 +168,19 @@ export async function runAnalyzePlan(
     }
 
     const before = (action === 'update' || action === 'destroy' || action === 'replace')
-      ? await costForChange(change, 'before', defaultRegion)
+      ? await costForChange(change, 'before', defaultRegion, taskDefIndex)
       : null;
     const after = (action === 'create' || action === 'update' || action === 'replace')
-      ? await costForChange(change, 'after', defaultRegion)
+      ? await costForChange(change, 'after', defaultRegion, taskDefIndex)
       : null;
 
     if (action === 'destroy' && before === null) {
       planWarnings.push(`${change.address}: before state unavailable for destroy — savings shown as $0.00`);
     }
+    // Warnings for unresolvable task defs are only surfaced for the after
+    // (future) side — before-side misses are expected when the currently-deployed
+    // task def is not part of this plan.
+    if (after?.warnings !== undefined) planWarnings.push(...after.warnings);
     const beforeUsd = before?.cost ?? 0;
     const afterUsd = after?.cost ?? 0;
     const deltaUsd = afterUsd - beforeUsd;

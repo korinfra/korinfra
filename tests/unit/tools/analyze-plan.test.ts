@@ -5,6 +5,7 @@ import { dirname, resolve, relative } from 'node:path';
 import { analyzePlanTool, runAnalyzePlan } from '../../../src/tools/analyze-plan.js';
 import type { AnalyzePlanResult } from '../../../src/tools/analyze-plan.js';
 import type { ToolResult } from '../../../src/tools/types.js';
+import { FARGATE_LINUX_VCPU_HOURLY, FARGATE_LINUX_MEMORY_HOURLY, HOURS_PER_MONTH } from '../../../src/pricing/resources.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -99,6 +100,29 @@ describe('runAnalyzePlan — pure function', () => {
     expect(r.summary.netDeltaMonthlyUsd).toBe(
       Math.round(r.summary.netDeltaMonthlyUsd * 100) / 100,
     );
+  });
+
+  it('resolves in-plan ECS task def and computes accurate Fargate cost (10×2vCPU/4GB)', async () => {
+    const expectedMonthly = (2 * FARGATE_LINUX_VCPU_HOURLY + 4 * FARGATE_LINUX_MEMORY_HOURLY) * HOURS_PER_MONTH * 10;
+
+    const r = await runAnalyzePlan(fixture('ecs-with-task-def.json'));
+
+    expect(r.changes).toHaveLength(2); // task def + service
+
+    const svcRow = r.changes.find((c) => c.tfType === 'aws_ecs_service');
+    expect(svcRow).toBeDefined();
+    expect(svcRow!.costStatus).toBe('known');
+    expect(svcRow!.afterUsd).toBeGreaterThan(0);
+
+    const tdRow = r.changes.find((c) => c.tfType === 'aws_ecs_task_definition');
+    expect(tdRow).toBeDefined();
+    expect(tdRow!.costStatus).toBe('unpriced');
+
+    // Net delta = ECS service only (unpriced task def row excluded)
+    expect(Math.abs(r.summary.netDeltaMonthlyUsd - expectedMonthly)).toBeLessThan(1);
+
+    // No warnings about unresolved task definitions
+    expect(r.warnings.filter((w) => w.includes('task definition'))).toHaveLength(0);
   });
 });
 

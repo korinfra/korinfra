@@ -58,17 +58,17 @@ export function checkECS002(r: Resource, cfg: Cfg, ctx?: RuleContext): Recommend
   const filePath = strConfig(r, 'file_path');
 
   // Estimate Fargate cost using task CPU/memory from config.
-  // ECS task definitions store cpu in CPU units (1024 = 1 vCPU) and memory in MB.
-  // Accept both task_cpu/task_memory keys (collector-set) and cpu/memory (ECS-native format).
-  const rawCpuUnits =
-    (r.configuration['task_cpu'] as number | string | undefined) ??
-    (r.configuration['cpu'] as number | string | undefined) ??
-    256;
+  // task_cpu (set by plan synthesis) is already in vCPUs (e.g. 2 for 2 vCPU).
+  // cpu (AWS-native / ECS-native format) is in CPU units (e.g. 2048 for 2 vCPU).
+  // task_memory and memory are both in MB.
+  const taskCpuVcpus =
+    r.configuration['task_cpu'] !== undefined
+      ? Number(r.configuration['task_cpu'])
+      : Number((r.configuration['cpu'] as number | string | undefined) ?? 256) / 1024;
   const rawMemoryMB =
     (r.configuration['task_memory'] as number | string | undefined) ??
     (r.configuration['memory'] as number | string | undefined) ??
     512;
-  const taskCpuVcpus = Number(rawCpuUnits) / 1024;
   const taskMemoryGB = Number(rawMemoryMB) / 1024;
   const desiredCount = (r.configuration['desired_count'] as number | undefined) ?? 1;
   const fargateMonthlyCost =

@@ -196,8 +196,8 @@ plan` step required.
 
 | Value | Meaning |
 |---|---|
-| `known` | All pricing fields known; `deltaUsd` is the real monthly impact. |
-| `partial-unknown` | Some pricing fields are computed at apply (e.g. ECS task definition ARN). Best-effort cost computed; excluded from net total. |
+| `known` | All pricing fields known; `deltaUsd` is the real monthly impact. For ECS Fargate services, this requires the companion `aws_ecs_task_definition` to be present in the same plan. |
+| `partial-unknown` | Some pricing fields cannot be resolved from the plan. For ECS services, this means the task definition's CPU/memory are unavailable (e.g. the task def is already deployed and not part of this plan). Cost is estimated using engine defaults (0.25 vCPU / 0.5 GB); row is excluded from net total. |
 | `unknown` | A pricing-critical field (e.g. `instance_type`) is computed at apply time. `deltaUsd` is `0` and the row is excluded from net total. |
 | `variable` | Usage-dependent resource (Lambda, S3 storage, DynamoDB on-demand). Fixed-cost floor is included in net total. |
 | `unpriced` | Resource type not in the pricing engine. Row is shown for review but excluded from net total. |
