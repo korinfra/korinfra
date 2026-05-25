@@ -136,10 +136,10 @@ normal and a note is written to stderr:
 [korinfra] AI provider not configured — skipping analysis. Run `korinfra init` to configure.
 ```
 
-The command exits `0` in both cases — the `--analyze` flag never changes the
-exit code. In CI, the JSON output's `next[]` array includes an
-`"analyze with AI"` entry automatically when a provider is available and
-`--analyze` was not already passed.
+The `--analyze` flag never changes the exit code — `--fail-on critical` and
+other exit-code flags still apply normally. In CI, the JSON output's `next[]`
+array includes an `"analyze with AI"` entry automatically when a provider is
+available and `--analyze` was not already passed.
 
 ## 2. Terraform security scanning
 
