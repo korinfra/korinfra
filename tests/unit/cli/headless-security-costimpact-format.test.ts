@@ -231,11 +231,25 @@ describe('runHeadlessTextCommand("security", --format)', () => {
     expect(stdoutBuf).not.toContain('Security scan:');
   });
 
-  it('--output flag emits a warning to stderr and still writes to stdout', async () => {
+  it('--format csv --output <within-cwd> writes CSV to file and confirms on stderr', async () => {
+    const outPath = path.join(process.cwd(), 'sec-test-output.csv');
+    try {
+      const result = await runHeadlessTextCommand('security', ['--format', 'csv', '--output', outPath]);
+      expect(result).toBe(true);
+      expect(stdoutBuf).toBe('');
+      expect(stderrBuf).toContain('CSV report written to');
+      expect(fs.readFileSync(outPath, 'utf8')).toContain('RULE001');
+    } finally {
+      try { fs.unlinkSync(outPath); } catch { /* already gone */ }
+    }
+  });
+
+  it('--output outside cwd sets exitCode 2 and writes error to stderr', async () => {
     const result = await runHeadlessTextCommand('security', ['--format', 'csv', '--output', '/tmp/out.csv']);
     expect(result).toBe(true);
-    expect(stderrBuf).toContain('--output is not yet supported for security');
-    expect(stdoutBuf).toContain('RULE001');
+    expect(process.exitCode).toBe(2);
+    expect(stderrBuf).toContain('must stay within the current directory');
+    expect(stdoutBuf).toBe('');
   });
 
   it('--fail-on partial emits a warning to stderr (not applicable to security)', async () => {
@@ -318,11 +332,25 @@ describe('runHeadlessTextCommand("cost-impact", --format)', () => {
     expect(stdoutBuf).not.toContain('korinfra cost-impact');
   });
 
-  it('--output flag emits a warning to stderr and still writes to stdout', async () => {
+  it('--format csv --output <within-cwd> writes CSV to file and confirms on stderr', async () => {
+    const outPath = path.join(process.cwd(), 'ci-test-output.csv');
+    try {
+      const result = await runHeadlessTextCommand('cost-impact', ['--plan-file', PLAN_PATH, '--format', 'csv', '--output', outPath]);
+      expect(result).toBe(true);
+      expect(stdoutBuf).toBe('');
+      expect(stderrBuf).toContain('CSV report written to');
+      expect(fs.readFileSync(outPath, 'utf8')).toContain('aws_instance.web');
+    } finally {
+      try { fs.unlinkSync(outPath); } catch { /* already gone */ }
+    }
+  });
+
+  it('--output outside cwd sets exitCode 2 and writes error to stderr', async () => {
     const result = await runHeadlessTextCommand('cost-impact', ['--plan-file', PLAN_PATH, '--format', 'csv', '--output', '/tmp/out.csv']);
     expect(result).toBe(true);
-    expect(stderrBuf).toContain('--output is not yet supported for cost-impact');
-    expect(stdoutBuf).toContain('aws_instance.web');
+    expect(process.exitCode).toBe(2);
+    expect(stderrBuf).toContain('must stay within the current directory');
+    expect(stdoutBuf).toBe('');
   });
 
   it('--fail-on partial emits warning to stderr (not applicable to cost-impact)', async () => {
@@ -393,11 +421,26 @@ describe('runJsonCommand("security", --format)', () => {
     expect(stdoutBuf).toContain('RULE001');
   });
 
-  it('--output flag emits warning to stderr in JSON mode', async () => {
+  it('--format csv --output <within-cwd> writes CSV to file and returns 0', async () => {
+    const outPath = path.join(process.cwd(), 'json-sec-test-output.csv');
+    try {
+      const code = await runJsonCommand('security', ['--format', 'csv', '--output', outPath]);
+      expect(code).toBe(0);
+      expect(stdoutBuf).toBe('');
+      expect(stderrBuf).toContain('CSV report written to');
+      expect(fs.readFileSync(outPath, 'utf8')).toContain('RULE001');
+    } finally {
+      try { fs.unlinkSync(outPath); } catch { /* already gone */ }
+    }
+  });
+
+  it('--output outside cwd returns 2 with JSON error', async () => {
     const code = await runJsonCommand('security', ['--format', 'csv', '--output', '/tmp/out.csv']);
-    expect(code).toBe(0);
-    expect(stderrBuf).toContain('--output is not yet supported for security');
-    expect(stdoutBuf).toContain('RULE001');
+    expect(code).toBe(2);
+    const parsed = JSON.parse(stdoutBuf) as { command: string; status: string; error: string };
+    expect(parsed.command).toBe('security');
+    expect(parsed.status).toBe('error');
+    expect(parsed.error).toContain('must stay within the current directory');
   });
 
   it('--fail-on partial emits warning to stderr in JSON mode', async () => {
@@ -454,11 +497,26 @@ describe('runJsonCommand("cost-impact", --format)', () => {
     expect(stdoutBuf).toContain('aws_instance.web');
   });
 
-  it('--output flag emits warning to stderr in JSON mode', async () => {
+  it('--format csv --output <within-cwd> writes CSV to file and returns 0', async () => {
+    const outPath = path.join(process.cwd(), 'json-ci-test-output.csv');
+    try {
+      const code = await runJsonCommand('cost-impact', ['--plan-file', PLAN_PATH, '--format', 'csv', '--output', outPath]);
+      expect(code).toBe(0);
+      expect(stdoutBuf).toBe('');
+      expect(stderrBuf).toContain('CSV report written to');
+      expect(fs.readFileSync(outPath, 'utf8')).toContain('aws_instance.web');
+    } finally {
+      try { fs.unlinkSync(outPath); } catch { /* already gone */ }
+    }
+  });
+
+  it('--output outside cwd returns 2 with JSON error', async () => {
     const code = await runJsonCommand('cost-impact', ['--plan-file', PLAN_PATH, '--format', 'csv', '--output', '/tmp/out.csv']);
-    expect(code).toBe(0);
-    expect(stderrBuf).toContain('--output is not yet supported for cost-impact');
-    expect(stdoutBuf).toContain('aws_instance.web');
+    expect(code).toBe(2);
+    const parsed = JSON.parse(stdoutBuf) as { command: string; status: string; error: string };
+    expect(parsed.command).toBe('cost-impact');
+    expect(parsed.status).toBe('error');
+    expect(parsed.error).toContain('must stay within the current directory');
   });
 
   it('--fail-on partial emits warning to stderr in JSON mode', async () => {
