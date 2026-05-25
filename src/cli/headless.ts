@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import yaml from 'js-yaml';
 
-import { safeWriteFile } from '../utils/safe-fs.js';
+import { safeWriteFile, checkNoSymlink } from '../utils/safe-fs.js';
 import { loadConfig, findConfigPath, saveConfig } from '../config/index.js';
 import { ConfigSchema } from '../config/types.js';
 import { writekorinfraConfig, validateApiKey } from './commands/init-core.js';
@@ -86,7 +86,8 @@ function loadHeadlessConfigFile(configFile: string): Record<string, string> {
   }
   let fd: number | undefined;
   try {
-    fd = fs.openSync(realPath, 'r');
+    checkNoSymlink(realPath);
+    fd = fs.openSync(realPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) {
       throw new Error(`--config: not a regular file: ${realPath}`);
