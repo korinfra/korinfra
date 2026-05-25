@@ -893,7 +893,9 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     lines.push('');
     lines.push('Next:');
     lines.push('- korinfra cost-impact --plan-file plan.json --json              (machine-readable)');
-    lines.push('- korinfra cost-impact --plan-file plan.json --no-tui --analyze  (AI analysis)');
+    if (!hasFlag(commandArgs, '--analyze')) {
+      lines.push('- korinfra cost-impact --plan-file plan.json --no-tui --analyze  (AI analysis)');
+    }
     lines.push('- korinfra security --dir ./terraform                            (post-apply security review)');
     writeLines(lines);
 
