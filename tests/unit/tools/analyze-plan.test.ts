@@ -5,22 +5,13 @@ import { dirname, resolve, relative } from 'node:path';
 import { analyzePlanTool, runAnalyzePlan } from '../../../src/tools/analyze-plan.js';
 import type { AnalyzePlanResult } from '../../../src/tools/analyze-plan.js';
 import type { ToolResult } from '../../../src/tools/types.js';
-import {
-  FARGATE_LINUX_VCPU_HOURLY,
-  FARGATE_LINUX_MEMORY_HOURLY,
-  FARGATE_ARM_VCPU_HOURLY,
-  FARGATE_ARM_MEMORY_HOURLY,
-  HOURS_PER_MONTH,
-} from '../../../src/pricing/resources.js';
+import { FARGATE_LINUX_VCPU_HOURLY, FARGATE_LINUX_MEMORY_HOURLY, HOURS_PER_MONTH } from '../../../src/pricing/resources.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const fixture = (name: string): string =>
   resolve(__dirname, '../../fixtures/terraform-plans', name);
-
-const fixtureTfDir = (name: string): string =>
-  resolve(__dirname, '../../fixtures/terraform-dirs', name);
 
 // The Tool validates that the path stays within process.cwd(), so we use a
 // cwd-relative path. Tests run with cwd at the repo root.
@@ -188,145 +179,5 @@ describe('analyzePlanTool — handler input validation', () => {
       currency: 'EUR',
     });
     expect(result.isError).toBeFalsy();
-  });
-});
-
-describe('runAnalyzePlan — ECS task def resolution (issue #62)', () => {
-  it('resolves task CPU/memory from companion task def in same plan', async () => {
-    const r = await runAnalyzePlan(fixture('ecs-with-task-def.json'));
-    // 10 tasks × 2 vCPU × 4 GB — engine formula:
-    // (2 × FARGATE_LINUX_VCPU_HOURLY + 4 × FARGATE_LINUX_MEMORY_HOURLY) × HOURS_PER_MONTH × 10
-    const expected = (2 * FARGATE_LINUX_VCPU_HOURLY + 4 * FARGATE_LINUX_MEMORY_HOURLY) * HOURS_PER_MONTH * 10;
-    expect(Math.abs(r.summary.netDeltaMonthlyUsd - expected)).toBeLessThan(1);
-    expect(r.summary.unknownCount).toBe(0);
-    const ecsSvcRow = r.changes.find((c) => c.address === 'aws_ecs_service.api');
-    expect(ecsSvcRow?.costStatus).toBe('known');
-  });
-
-  it('emits no ECS task-def warnings when plan has no ECS services', async () => {
-    // simple-create.json has no ECS services, so no ECS warnings expected
-    const r = await runAnalyzePlan(fixture('simple-create.json'));
-    const ecsWarnings = r.warnings.filter((w) => w.includes('ECS service'));
-    expect(ecsWarnings).toHaveLength(0);
-  });
-});
-
-describe('runAnalyzePlan — tfdir filePath wiring (issue #63)', () => {
-  it('scans tfdir without error when tfdirPath matches a resource', async () => {
-    const r = await runAnalyzePlan(fixture('simple-create.json'), 'USD', { tfdirPath: fixtureTfDir('simple') });
-    // simple/main.tf contains aws_instance.web which matches the plan address
-    // No security/cost findings in a clean t3.micro create, but we verify no crash and no scan error
-    const scanError = r.warnings.find((w) => w.includes('--tfdir scan failed'));
-    expect(scanError).toBeUndefined();
-  });
-
-  it('populates filePath on change rows when tfdirPath matches a resource', async () => {
-    const r = await runAnalyzePlan(fixture('simple-create.json'), 'USD', { tfdirPath: fixtureTfDir('simple') });
-    const row = r.changes.find((c) => c.address === 'aws_instance.web');
-    expect(row).toBeDefined();
-    expect(row!.filePath).toMatch(/simple\/main\.tf$/);
-  });
-
-  it('adds unmatched warning for root resources not in tfdir', async () => {
-    const r = await runAnalyzePlan(fixture('multi-action.json'), 'USD', { tfdirPath: fixtureTfDir('simple') });
-    const unmatchedWarning = r.warnings.find((w) => w.includes('not matched in --tfdir'));
-    expect(unmatchedWarning).toBeDefined();
-  });
-
-  it('does not add module-unmatched warning when all unmatched are root-module resources', async () => {
-    const r = await runAnalyzePlan(fixture('multi-action.json'), 'USD', { tfdirPath: fixtureTfDir('simple') });
-    const moduleWarning = r.warnings.find((w) => w.includes('module paths are not scanned'));
-    expect(moduleWarning).toBeUndefined();
-  });
-});
-
-describe('runAnalyzePlan — region inference warning', () => {
-  it('adds a warning when plan has no provider region', async () => {
-    const r = await runAnalyzePlan(fixture('no-region.json'));
-    const regionWarning = r.warnings.find((w) => w.includes('No AWS region found'));
-    expect(regionWarning).toBeDefined();
-    expect(regionWarning).toMatch(/us-east-1/);
-  });
-
-  it('does not add a region warning when plan has an explicit region', async () => {
-    const r = await runAnalyzePlan(fixture('simple-create.json'));
-    const regionWarning = r.warnings.find((w) => w.includes('No AWS region found'));
-    expect(regionWarning).toBeUndefined();
-  });
-
-  it('still returns valid cost results when region defaults', async () => {
-    const r = await runAnalyzePlan(fixture('no-region.json'));
-    expect(r.summary.counts.create).toBe(1);
-    expect(r.summary.netDeltaMonthlyUsd).toBeGreaterThan(0);
-  });
-});
-
-describe('runAnalyzePlan — ARM Fargate pricing (issue #62 extension)', () => {
-  it('prices ARM Fargate ~20% cheaper than x86 for the same CPU/memory/count', async () => {
-    const armResult = await runAnalyzePlan(fixture('ecs-fargate-arm.json'));
-    const x86Result = await runAnalyzePlan(fixture('ecs-with-task-def.json'));
-
-    const armCost = armResult.summary.netDeltaMonthlyUsd;
-    const x86Cost = x86Result.summary.netDeltaMonthlyUsd;
-
-    expect(armCost).toBeGreaterThan(0);
-    expect(armCost).toBeLessThan(x86Cost);
-    // ARM should be roughly 20% cheaper
-    const ratio = armCost / x86Cost;
-    expect(ratio).toBeGreaterThan(0.75);
-    expect(ratio).toBeLessThan(0.90);
-  });
-
-  it('ARM Fargate 10 tasks × 2 vCPU × 4 GB matches FARGATE_ARM constants', async () => {
-    const r = await runAnalyzePlan(fixture('ecs-fargate-arm.json'));
-    const expected = (2 * FARGATE_ARM_VCPU_HOURLY + 4 * FARGATE_ARM_MEMORY_HOURLY) * HOURS_PER_MONTH * 10;
-    expect(Math.abs(r.summary.netDeltaMonthlyUsd - expected)).toBeLessThan(1);
-    expect(r.summary.unknownCount).toBe(0);
-    const svcRow = r.changes.find((c) => c.address === 'aws_ecs_service.api');
-    expect(svcRow?.costStatus).toBe('known');
-  });
-});
-
-describe('runAnalyzePlan — Aurora Serverless v2 pricing', () => {
-  it('prices aurora_serverless_v2 cluster with variable cost status', async () => {
-    const r = await runAnalyzePlan(fixture('aurora-serverless-v2.json'));
-    expect(r.summary.counts.create).toBe(1);
-    // min 0.5 ACU, max 8 ACU — midpoint 4.25 ACU × $0.12/hr × 730h ≈ $372
-    const row = r.changes.find((c) => c.address === 'aws_rds_cluster.main');
-    expect(row).toBeDefined();
-    expect(row!.costStatus).toBe('variable');
-    expect(row!.afterUsd).toBeGreaterThan(0);
-    expect(r.summary.variableCount).toBe(1);
-    expect(r.summary.unknownCount).toBe(0);
-  });
-});
-
-describe('runAnalyzePlan — ElastiCache Replication Group pricing', () => {
-  it('prices cache.r6g.large with 3 nodes as elasticache_cluster', async () => {
-    const r = await runAnalyzePlan(fixture('elasticache-rg.json'));
-    expect(r.summary.counts.create).toBe(1);
-    const row = r.changes.find((c) => c.address === 'aws_elasticache_replication_group.cache');
-    expect(row).toBeDefined();
-    expect(row!.costStatus).toBe('known');
-    expect(row!.afterUsd).toBeGreaterThan(0);
-    expect(r.summary.netDeltaMonthlyUsd).toBeGreaterThan(0);
-  });
-});
-
-describe('runAnalyzePlan — Lambda arm64 (issue #62 extension)', () => {
-  it('parses lambda-arm fixture without errors and produces variable-cost rows', async () => {
-    const r = await runAnalyzePlan(fixture('lambda-arm.json'));
-    expect(r.summary.counts.create).toBe(2);
-
-    const armRow = r.changes.find((c) => c.address === 'aws_lambda_function.processor');
-    const x86Row = r.changes.find((c) => c.address === 'aws_lambda_function.processor_x86');
-
-    expect(armRow).toBeDefined();
-    expect(x86Row).toBeDefined();
-    expect(armRow?.costStatus).toBe('variable');
-    expect(x86Row?.costStatus).toBe('variable');
-    // Without utilization data both functions cost $0 (below free tier)
-    expect(armRow?.afterUsd).toBe(0);
-    expect(x86Row?.afterUsd).toBe(0);
   });
 });

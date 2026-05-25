@@ -12,8 +12,8 @@ describe('formatPathForTerminal', () => {
   it('uses relative path when shorter than absolute', () => {
     const abs = process.cwd() + '/src/something.ts';
     const result = formatPathForTerminal(abs, { cwd: process.cwd() });
-    // Should be relative, not the full absolute
-    expect(result.length).toBeLessThanOrEqual(abs.length);
+    // Relative path is always strictly shorter than absolute when inside cwd
+    expect(result.length).toBeLessThan(abs.length);
     expect(result).toContain('something.ts');
   });
 

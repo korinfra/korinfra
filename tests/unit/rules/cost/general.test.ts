@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { checkGENERAL001 } from '../../../../src/rules/cost/general.js';
 import { THRESHOLDS } from '../../../../src/rules/config.js';
+import { DEFAULT_REGIONAL_PREMIUMS } from '../../../../src/config/defaults.js';
 import type { Resource } from '../../../../src/aws/types.js';
 
 const cfg = THRESHOLDS;
@@ -29,7 +30,7 @@ describe('checkGENERAL001 — expensive region', () => {
     const recSg = checkGENERAL001(sg, cfg);
     expect(recSg).not.toBeNull();
     expect(recSg!.ruleId).toBe('GENERAL-001');
-    expect(recSg!.estimatedSavings).toBeCloseTo(21);
+    expect(recSg!.estimatedSavings).toBeCloseTo(175 * DEFAULT_REGIONAL_PREMIUMS['ap-southeast-1']!);
     expect(recSg!.title).toContain('12%');
     expect(recSg!.suggestedConfig).toMatchObject({ region: 'us-east-1' });
     expect(recSg!.currentConfig).toMatchObject({ region: 'ap-southeast-1', monthly_cost: 175 });

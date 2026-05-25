@@ -48,6 +48,9 @@ describe('checkEBS001 — unattached volume', () => {
     expect(rec!.estimatedSavings).toBeCloseTo(25, 2);
     expect(rec!.currentConfig!.volume_type).toBe('gp2');
     expect(rec!.suggestedConfig!.action).toBe('delete');
+    expect(rec!.risk).toBe('low');
+    expect(rec!.suggestedAction).toBeDefined();
+    expect(typeof rec!.suggestedAction).toBe('string');
   });
 
   it('does not fire when in-use or wrong resource type', () => {
@@ -115,7 +118,8 @@ describe('checkEBS002 — old snapshot (>90 days)', () => {
     expect(rec!.risk).toBe('low');
     expect(rec!.confidence).toBeCloseTo(0.6);
     expect(rec!.estimatedSavings).toBeCloseTo(10, 2);
-    expect(rec!.currentConfig!.age_days).toBeGreaterThan(90);
+    // makeSnapshot uses Date.now() - 100 * 86_400_000 → daysSince = exactly 100
+    expect(rec!.currentConfig!.age_days).toBe(100);
     expect(rec!.title).toMatch(/snap-prod/);
     expect(rec!.description).toContain(String(EBS_SNAPSHOT_PER_GB));
   });
@@ -128,7 +132,8 @@ describe('checkEBS002 — old snapshot (>90 days)', () => {
     });
     const rec = checkEBS002(r, cfg);
     expect(rec).not.toBeNull();
-    expect(rec!.currentConfig!.age_days).toBeGreaterThanOrEqual(ageDays - 1);
+    // launchTime is Date.now() - 120 * 86_400_000 → daysSince is deterministically 120
+    expect(rec!.currentConfig!.age_days).toBe(120);
   });
 
   it('does not fire for recent snapshot (<= 90 days), wrong type, or null launchTime', () => {

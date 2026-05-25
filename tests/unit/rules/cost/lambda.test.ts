@@ -72,7 +72,10 @@ describe('checkLAM001 — unused Lambda function (zero invocations)', () => {
     const rec = checkLAM001(r, cfg);
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('LAM-001');
+    expect(rec!.risk).toBe('low');
     expect(rec!.suggestedAction).toBe('delete_lambda');
+    // confidenceFromUtilization(0.75, {period:'30d', dp:100, dg:0, freshness:1}) → 0.75 * 1.05 = 0.7875
+    expect(rec!.confidence).toBeCloseTo(0.7875, 3);
     expect(rec!.currentConfig).toMatchObject({ invocation_count: 0 });
   });
 
@@ -100,7 +103,9 @@ describe('checkLAM006 — Lambda function with high error rate', () => {
     const rec = checkLAM006(r, cfg);
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('LAM-006');
+    expect(rec!.risk).toBe('low');
     expect(rec!.suggestedAction).toBe('investigate_and_fix_errors');
+    expect(rec!.confidence).toBe(0.90); // CONF_LIKELY
     expect(rec!.currentConfig).toMatchObject({ error_rate_pct: threshold + 5 });
     expect(rec!.suggestedConfig).toMatchObject({ error_rate_pct: 0 });
   });
@@ -163,6 +168,12 @@ describe('checkLAM002 — overprovisioned Lambda memory', () => {
     const rec1 = checkLAM002(r1, cfg);
     expect(rec1).not.toBeNull();
     expect(rec1!.ruleId).toBe('LAM-002');
+    expect(rec1!.risk).toBe('medium');
+    expect(rec1!.suggestedAction).toContain('reduce_memory_to_');
+    // tier-2 (monthlyCost present, avgDurationMs=0): savings = 60 * (1 - 512/1024) = 30
+    expect(rec1!.estimatedSavings).toBe(30);
+    // confidenceFromUtilization(0.55, {period:'30d', dp:100, dg:0, freshness:1}) → 0.55 * 1.05 = 0.5775
+    expect(rec1!.confidence).toBeCloseTo(0.5775, 3);
     expect(rec1!.suggestedConfig).toMatchObject({ memory_size: 512 });
 
     const r2 = makeLambda({ configuration: { memory_mb: 3008, monthlyCost: 300 }, utilization: makeUtil(1000) });

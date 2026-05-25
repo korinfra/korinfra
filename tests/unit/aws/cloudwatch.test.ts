@@ -103,8 +103,8 @@ describe('collectEC2MetricsBatched', () => {
       { Id: 'e0_dwrite', Timestamps: timestamps, Values: cpuValues },
     ]);
     await collectEC2MetricsBatched(p95Client, 'us-east-1', p95Resources, '7d');
-    expect(p95Resources[0]!.utilization!.cpuP95).toBeGreaterThanOrEqual(94);
-    expect(p95Resources[0]!.utilization!.cpuP95).toBeLessThanOrEqual(100);
+    // Linear interpolation p95 of [1..100]: idx=0.95*99=94.05 → lo=95, hi=96 → 95 + 1*0.05 = 95.05
+    expect(p95Resources[0]!.utilization!.cpuP95).toBeCloseTo(95.05, 1);
 
     // Network bytes to MB conversion
     const netResources: Resource[] = [makeResource({ id: 'i-network001', type: 'ec2_instance', state: 'running' })];

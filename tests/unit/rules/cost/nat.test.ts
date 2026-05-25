@@ -42,7 +42,10 @@ describe('checkNET001 — low-traffic NAT Gateway', () => {
     const rec = checkNET001(makeNAT({ utilization: makeUtil(200, 0), configuration: { monthlyCost: 45 } }), cfg);
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('NET-001');
+    expect(rec!.risk).toBe('medium');
     expect(rec!.suggestedAction).toBe('replace_with_nat_instance');
+    // confidenceFromUtilization(0.7, {period:'30d', dp:720, dg:0, freshness:1}) → 0.7 * 1.05 = 0.735
+    expect(rec!.confidence).toBeCloseTo(0.735, 3);
 
     // 600 MB < 1 GB threshold
     expect(checkNET001(makeNAT({ utilization: makeUtil(400, 200), configuration: { monthlyCost: 45 } }), cfg)).not.toBeNull();
@@ -70,7 +73,10 @@ describe('checkNAT001 — NAT Gateway candidate for VPC endpoint replacement', (
     const rec1 = checkNAT001(r1, cfg);
     expect(rec1).not.toBeNull();
     expect(rec1!.ruleId).toBe('NAT-001');
+    expect(rec1!.risk).toBe('low');
     expect(rec1!.suggestedAction).toBe('add_vpc_endpoints');
+    // confidenceFromUtilization(0.7, {period:'30d', dp:720, dg:0, freshness:1}) → 0.7 * 1.05 = 0.735
+    expect(rec1!.confidence).toBeCloseTo(0.735, 3);
 
     // 2 GB
     expect(checkNAT001(makeNAT({ utilization: makeUtil(1024, 1024), configuration: { monthlyCost: 60 } }), cfg)!.estimatedSavings).toBeCloseTo(24, 1);

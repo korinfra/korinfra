@@ -18,6 +18,8 @@ import {
   DYNAMO_RCU_PER_MONTH,
   DYNAMO_STORAGE_PER_GB,
   DYNAMO_FREE_STORAGE_GB,
+  estimateECSCost,
+  ALB_BASE_HOURLY,
 } from '../../../src/pricing/resources.js';
 import type { Resource } from '../../../src/aws/types.js';
 
@@ -89,11 +91,12 @@ describe('estimateMonthlyCost — Lambda', () => {
     const freeTier = makeResource({ type: 'lambda_function', configuration: { memory_mb: 128 }, utilization: makeUtil(128, 200, 1_000_000) });
     expect(await estimateMonthlyCost(freeTier)).toBe(0);
 
-    // 10M invocations, 512MB, 200ms — non-trivial charge
+    // 10M invocations, 512MB, 200ms:
+    //   request cost: (10M - 1M free) / 1M * $0.20 = $1.80
+    //   duration: 10M * 0.2s * 0.5GB = 1M GB-s; billable = 1M - 400k = 600k; cost ≈ $10.00
     const highTraffic = makeResource({ type: 'lambda_function', configuration: { memory_mb: 512 }, utilization: makeUtil(512, 200, 10_000_000) });
     const cost = await estimateMonthlyCost(highTraffic);
-    expect(cost).toBeGreaterThan(5);
-    expect(cost).toBeLessThan(20);
+    expect(cost).toBeCloseTo(1.80 + 600_000 * 0.0000166667, 1);
   });
 });
 
@@ -178,5 +181,32 @@ describe('estimateMonthlyCost — Elastic IP and unknown type', () => {
     expect(await estimateMonthlyCost(makeResource({ type: 'elastic_ip', state: 'unattached', configuration: {} }))).toBeCloseTo(EIP_HOURLY * HOURS_PER_MONTH, 2);
     expect(await estimateMonthlyCost(makeResource({ type: 'elastic_ip', state: 'associated', configuration: {} }))).toBeCloseTo(EIP_HOURLY * HOURS_PER_MONTH, 2);
     expect(await estimateMonthlyCost(makeResource({ type: 'unknown_resource_type', configuration: {} }))).toBe(0);
+  });
+});
+
+// ─── ECS service ──────────────────────────────────────────────────────────────
+
+describe('estimateMonthlyCost — ECS service', () => {
+  it('dispatches to estimateECSCost and scales by desired_count', async () => {
+    const single = await estimateMonthlyCost(makeResource({ type: 'ecs_service', configuration: { task_cpu: 0.25, task_memory: 512, desired_count: 1 } }));
+    expect(single).toBeGreaterThan(0);
+    expect(single).toBeCloseTo(estimateECSCost(0.25, 0.5), 4);
+
+    const scaled = await estimateMonthlyCost(makeResource({ type: 'ecs_service', configuration: { task_cpu: 0.25, task_memory: 512, desired_count: 3 } }));
+    expect(scaled).toBeCloseTo(single * 3, 4);
+  });
+});
+
+// ─── Load balancer ────────────────────────────────────────────────────────────
+
+describe('estimateMonthlyCost — load balancer', () => {
+  it('application LB returns a positive cost above ALB base hourly rate', async () => {
+    const alb = await estimateMonthlyCost(makeResource({ type: 'load_balancer', configuration: { type: 'application' } }));
+    expect(alb).toBeGreaterThan(ALB_BASE_HOURLY * HOURS_PER_MONTH);
+  });
+
+  it('network and gateway LBs also return positive costs', async () => {
+    expect(await estimateMonthlyCost(makeResource({ type: 'load_balancer', configuration: { type: 'network' } }))).toBeGreaterThan(0);
+    expect(await estimateMonthlyCost(makeResource({ type: 'load_balancer', configuration: { type: 'gateway' } }))).toBeGreaterThan(0);
   });
 });

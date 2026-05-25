@@ -55,7 +55,9 @@ describe('checkELB001 — load balancer with 0 healthy targets', () => {
     const rec = checkELB001(r, cfg);
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('ELB-001');
+    expect(rec!.risk).toBe('low');
     expect(rec!.suggestedAction).toBe('delete');
+    expect(rec!.confidence).toBe(0.90); // CONF_LIKELY
 
     // NLB and ALB types also fire
     expect(checkELB001(makeALB({ type: 'nlb', configuration: { healthy_target_count: 0, lb_type: 'network', monthlyCost: 16 } }), cfg)).not.toBeNull();
@@ -76,7 +78,13 @@ describe('checkELB001 — load balancer with 0 healthy targets', () => {
 
 describe('checkLB002 — idle load balancer with negligible traffic', () => {
   it('fires for near-zero traffic with monthlyCost provided (post-#44: strict cost gating)', () => {
-    expect(checkLB002(makeALB({ configuration: { lb_type: 'application', monthlyCost: 18 }, utilization: makeUtil(0.05) }), cfg)).not.toBeNull();
+    const rec = checkLB002(makeALB({ configuration: { lb_type: 'application', monthlyCost: 18 }, utilization: makeUtil(0.05) }), cfg);
+    expect(rec).not.toBeNull();
+    expect(rec!.ruleId).toBe('LB-002');
+    expect(rec!.risk).toBe('low');
+    expect(rec!.suggestedAction).toBe('delete');
+    // confidenceFromUtilization(0.9, {period:'7d', dp:100, dg:0}) → 0.9 * 0.9 = 0.81
+    expect(rec!.confidence).toBeCloseTo(0.81, 2);
     expect(checkLB002(makeALB({ configuration: { lb_type: 'application', monthlyCost: 18 }, utilization: makeUtil(0) }), cfg)).not.toBeNull();
     // NLB also fires
     expect(checkLB002(makeALB({ type: 'nlb', configuration: { lb_type: 'network', monthlyCost: 16 }, utilization: makeUtil(0) }), cfg)).not.toBeNull();

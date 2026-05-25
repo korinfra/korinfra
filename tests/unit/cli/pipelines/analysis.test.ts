@@ -104,9 +104,9 @@ describe('stripTimestamps', () => {
     // The JSON in <aws-data> tags should not contain the timestamp keys.
     // Extract the resources JSON block.
     const match = output.match(/<aws-data>\n([\s\S]*?)\n<\/aws-data>/);
-    expect(match).toBeTruthy();
+    expect(match).not.toBeNull();
     const resourcesJson = match?.[1];
-    expect(resourcesJson).toBeTruthy();
+    expect(resourcesJson).not.toBeNull();
 
     // Verify the JSON is valid and parse it
     const parsed = JSON.parse(resourcesJson!);
@@ -138,7 +138,7 @@ describe('stripTimestamps', () => {
 
     // Find the rules section
     const rulesMatch = output.match(/## Rules evaluation:[\s\S]*?<aws-data>\n([\s\S]*?)\n<\/aws-data>/);
-    expect(rulesMatch).toBeTruthy();
+    expect(rulesMatch).not.toBeNull();
     const rulesJson = rulesMatch?.[1];
     const parsed = JSON.parse(rulesJson!);
 
