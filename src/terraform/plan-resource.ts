@@ -15,6 +15,7 @@
 
 import type { Resource } from '../aws/types.js';
 import { asStr, boolValue, floatValue } from '../utils/coerce.js';
+import { ECS_ARCH_ARM, ECS_ARCH_X86, LAMBDA_ARCH_X86 } from '../pricing/resources.js';
 import { normalizeResourceType } from './parser.js';
 import type { TerraformPlanChange, TerraformResourceChange } from './plan-parser.js';
 import type { TerraformResource } from './types.js';
@@ -83,6 +84,7 @@ export interface TaskDefEntry {
   cpu: number;
   memory: number;
   moduleAddress: string;
+  architecture: string; // ECS_ARCH_X86 | ECS_ARCH_ARM from runtime_platform.cpu_architecture
 }
 
 export interface TaskDefIndex {
@@ -126,7 +128,17 @@ export function buildTaskDefIndex(changes: readonly TerraformResourceChange[]): 
     const moduleAddress = change.module_address ?? '';
     const family = asStr(after['family']);
     const arn = asStr(after['arn']);
-    const entry: TaskDefEntry = { cpu, memory, moduleAddress };
+
+    // runtime_platform.cpu_architecture — can be an array (HCL block) or object
+    let architecture = ECS_ARCH_X86;
+    const rp = after['runtime_platform'];
+    const rpObj: Record<string, unknown> = Array.isArray(rp) && rp.length > 0
+      ? (rp[0] !== null && typeof rp[0] === 'object' ? rp[0] as Record<string, unknown> : {})
+      : (rp !== null && typeof rp === 'object' && !Array.isArray(rp) ? rp as Record<string, unknown> : {});
+    const cpuArch = asStr(rpObj['cpu_architecture']);
+    if (cpuArch === ECS_ARCH_ARM) architecture = ECS_ARCH_ARM;
+
+    const entry: TaskDefEntry = { cpu, memory, moduleAddress, architecture };
 
     byKey.set(change.address, entry);
 
@@ -366,8 +378,12 @@ export function synthesizeResource(
     }
     case 'aws_lambda_function': {
       const memoryMb = floatValue(after['memory_size']) > 0 ? floatValue(after['memory_size']) : 128;
+      // architectures is a list in Terraform; default is ["x86_64"]
+      const archs = after['architectures'];
+      const architecture = Array.isArray(archs) && archs.length > 0 ? asStr(archs[0]) : LAMBDA_ARCH_X86;
       const configuration: Record<string, unknown> = {
         memory_mb: memoryMb,
+        architecture,
       };
       return {
         resource: { ...baseResource, type: 'lambda_function', instanceType: '', configuration },
@@ -445,6 +461,82 @@ export function synthesizeResource(
         costStatus: 'known',
       };
     }
+    case 'aws_rds_cluster_instance': {
+      const instanceType = asStr(after['instance_class']);
+      const costStatus: CostStatus = isUnknown(afterUnknown, 'instance_class')
+        ? 'unknown'
+        : instanceType === ''
+          ? 'unknown'
+          : 'known';
+      const configuration: Record<string, unknown> = {
+        engine: asStr(after['engine'], 'aurora-mysql'),
+        multi_az: false, // multi-AZ at the cluster level; instance itself is not doubled
+        allocated_storage: 0, // storage is cluster-level, not per-instance
+        storage_type: 'aurora',
+        iops: 0,
+        storage_encrypted: boolValue(after['storage_encrypted']),
+        publicly_accessible: boolValue(after['publicly_accessible']),
+        backup_retention_period: 0,
+      };
+      return {
+        resource: { ...baseResource, type: 'rds_instance', instanceType, configuration },
+        tfResource,
+        costStatus,
+      };
+    }
+    case 'aws_rds_cluster': {
+      // Serverless v2: cluster has serverlessv2_scaling_configuration — price by ACU
+      const sv2Raw = after['serverlessv2_scaling_configuration'];
+      const sv2Obj: Record<string, unknown> | null =
+        Array.isArray(sv2Raw) && sv2Raw.length > 0 && sv2Raw[0] !== null && typeof sv2Raw[0] === 'object'
+          ? (sv2Raw[0] as Record<string, unknown>)
+          : sv2Raw !== null && typeof sv2Raw === 'object' && !Array.isArray(sv2Raw)
+            ? (sv2Raw as Record<string, unknown>)
+            : null;
+      if (sv2Obj !== null) {
+        const minCapacity = floatValue(sv2Obj['min_capacity']);
+        const maxCapacity = floatValue(sv2Obj['max_capacity']);
+        const configuration: Record<string, unknown> = {
+          min_capacity: minCapacity,
+          max_capacity: maxCapacity,
+          engine: asStr(after['engine'], 'aurora-mysql'),
+        };
+        return {
+          resource: { ...baseResource, type: 'aurora_serverless_v2', instanceType: '', configuration },
+          tfResource,
+          costStatus: 'variable', // actual ACU usage depends on workload
+        };
+      }
+      // Provisioned Aurora cluster — cost comes from aws_rds_cluster_instance resources
+      return {
+        resource: { ...baseResource, type: normalizedType, instanceType: '', configuration: {} },
+        tfResource,
+        costStatus: 'unpriced',
+      };
+    }
+    case 'aws_elasticache_replication_group': {
+      const nodeType = asStr(after['node_type']);
+      const costStatus: CostStatus = isUnknown(afterUnknown, 'node_type')
+        ? 'unknown'
+        : nodeType === ''
+          ? 'unknown'
+          : 'known';
+      const numCacheClusters = floatValue(after['num_cache_clusters']);
+      const numNodeGroups = floatValue(after['num_node_groups']);
+      const replicasPerNodeGroup = floatValue(after['replicas_per_node_group']);
+      // Cluster mode: each shard has 1 primary + N replicas; non-cluster: num_cache_clusters nodes
+      const totalNodes = numNodeGroups > 0
+        ? numNodeGroups * (replicasPerNodeGroup + 1)
+        : Math.max(1, numCacheClusters);
+      const configuration: Record<string, unknown> = {
+        num_cache_nodes: totalNodes,
+      };
+      return {
+        resource: { ...baseResource, type: 'elasticache_cluster', instanceType: nodeType, configuration },
+        tfResource,
+        costStatus,
+      };
+    }
     case 'aws_ecs_service': {
       // Preserve desired_count=0 (stopped service, $0 cost). Only fall back to 1
       // when the field is absent entirely (null/undefined) from the plan.
@@ -472,7 +564,7 @@ export function synthesizeResource(
               const fam = m[1] ?? '';
               const rev = m[2];
               if (rev !== undefined) taskDef = taskDefIndex.byKey.get(`${fam}:${rev}`);
-              if (taskDef === undefined) taskDef = taskDefIndex.byKey.get(fam);
+              taskDef ??= taskDefIndex.byKey.get(fam);
             }
           }
         } else if (taskDefUnknown) {
@@ -482,8 +574,8 @@ export function synthesizeResource(
           const moduleEntry = taskDefIndex.byModule.get(moduleAddress);
           if (moduleEntry !== null && moduleEntry !== undefined) {
             taskDef = moduleEntry;
-          } else {
-            // Sibling address heuristic:
+          } else if (moduleEntry === undefined) {
+            // No task defs in this module — try sibling address heuristic:
             //   aws_ecs_service.api           → aws_ecs_task_definition.api
             //   module.web.aws_ecs_service.api → module.web.aws_ecs_task_definition.api
             const typeMarker = '.aws_ecs_service.';
@@ -496,11 +588,14 @@ export function synthesizeResource(
                 : change.address;
             taskDef = taskDefIndex.byKey.get(siblingAddress);
           }
+          // When moduleEntry === null (multiple task defs in same module — ambiguous),
+          // skip the sibling heuristic and let the service remain partial-unknown.
         }
 
         if (taskDef !== undefined) {
           configuration['task_cpu'] = taskDef.cpu / 1024; // CPU units → vCPUs
           configuration['task_memory'] = taskDef.memory;  // MB; engine divides by 1024 for GB
+          configuration['task_architecture'] = taskDef.architecture; // 'X86_64' | 'ARM64'
           costStatus = 'known';
         } else if (taskDefUnknown) {
           warnings = [

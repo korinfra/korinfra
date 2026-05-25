@@ -7,6 +7,7 @@ import { lambdaRules } from '../../../../src/rules/security/lambda.js';
 import { networkRules } from '../../../../src/rules/security/network.js';
 import { encryptionRules } from '../../../../src/rules/security/encryption.js';
 import { miscRules } from '../../../../src/rules/security/misc.js';
+import { ecsRules } from '../../../../src/rules/security/ecs.js';
 import { evaluateSecurityRules, allSecurityRules, securityRuleCount } from '../../../../src/rules/security/index.js';
 import type { TfResource } from '../../../../src/rules/security/types.js';
 
@@ -596,5 +597,110 @@ describe('allSecurityRules and securityRuleCount', () => {
 
     const ids = allSecurityRules.map((r) => r.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+// ─── ECS Security Rules ───────────────────────────────────────────────────────
+
+function makeTaskDef(cfg: Record<string, unknown>): TfResource {
+  return makeTf('aws_ecs_task_definition', cfg);
+}
+
+describe('ECS-SEC-002 — privileged container', () => {
+  const rule = ecsRules.find((r) => r.id === 'ECS-SEC-002')!;
+
+  it('fires when any container has privileged=true', () => {
+    const containers = JSON.stringify([{ name: 'app', image: 'nginx', privileged: true }]);
+    expect(rule.evaluate(makeTaskDef({ container_definitions: containers }))).toBe(true);
+  });
+
+  it('does not fire when no container is privileged', () => {
+    const containers = JSON.stringify([{ name: 'app', image: 'nginx', privileged: false }]);
+    expect(rule.evaluate(makeTaskDef({ container_definitions: containers }))).toBe(false);
+  });
+
+  it('does not fire when container_definitions is absent', () => {
+    expect(rule.evaluate(makeTaskDef({}))).toBe(false);
+  });
+
+  it('does not fire when container_definitions is malformed JSON', () => {
+    expect(rule.evaluate(makeTaskDef({ container_definitions: 'not-json' }))).toBe(false);
+  });
+});
+
+describe('ECS-SEC-003 — plaintext secrets in environment variables', () => {
+  const rule = ecsRules.find((r) => r.id === 'ECS-SEC-003')!;
+
+  it('fires when env var name contains "password" with a non-empty hardcoded value', () => {
+    const containers = JSON.stringify([
+      { name: 'app', environment: [{ name: 'DB_PASSWORD', value: 'supersecret' }] },
+    ]);
+    expect(rule.evaluate(makeTaskDef({ container_definitions: containers }))).toBe(true);
+  });
+
+  it('fires on "secret", "token", "api_key" names', () => {
+    for (const name of ['APP_SECRET', 'GITHUB_TOKEN', 'API_KEY']) {
+      const containers = JSON.stringify([{ name: 'app', environment: [{ name, value: 'hardcoded' }] }]);
+      expect(rule.evaluate(makeTaskDef({ container_definitions: containers }))).toBe(true);
+    }
+  });
+
+  it('does not fire when value starts with ${ (Terraform reference)', () => {
+    const containers = JSON.stringify([
+      { name: 'app', environment: [{ name: 'DB_PASSWORD', value: '${aws_secretsmanager_secret_version.db.secret_string}' }] },
+    ]);
+    expect(rule.evaluate(makeTaskDef({ container_definitions: containers }))).toBe(false);
+  });
+
+  it('does not fire when value is empty (unset)', () => {
+    const containers = JSON.stringify([
+      { name: 'app', environment: [{ name: 'DB_PASSWORD', value: '' }] },
+    ]);
+    expect(rule.evaluate(makeTaskDef({ container_definitions: containers }))).toBe(false);
+  });
+
+  it('does not fire for non-sensitive env var names', () => {
+    const containers = JSON.stringify([
+      { name: 'app', environment: [{ name: 'LOG_LEVEL', value: 'debug' }] },
+    ]);
+    expect(rule.evaluate(makeTaskDef({ container_definitions: containers }))).toBe(false);
+  });
+
+  it('does not fire when value is an SSM Parameter Store path starting with /', () => {
+    const containers = JSON.stringify([
+      { name: 'app', environment: [{ name: 'DB_PASSWORD', value: '/app/prod/db-password' }] },
+    ]);
+    expect(rule.evaluate(makeTaskDef({ container_definitions: containers }))).toBe(false);
+  });
+
+  it('does not fire when value is an SSM path with ssm: prefix', () => {
+    const containers = JSON.stringify([
+      { name: 'app', environment: [{ name: 'DB_PASSWORD', value: 'ssm:/app/prod/db-password' }] },
+    ]);
+    expect(rule.evaluate(makeTaskDef({ container_definitions: containers }))).toBe(false);
+  });
+
+  it('does not fire when value is whitespace-only', () => {
+    const containers = JSON.stringify([
+      { name: 'app', environment: [{ name: 'DB_PASSWORD', value: '   ' }] },
+    ]);
+    expect(rule.evaluate(makeTaskDef({ container_definitions: containers }))).toBe(false);
+  });
+});
+
+describe('ECS-SEC-004 — host network mode', () => {
+  const rule = ecsRules.find((r) => r.id === 'ECS-SEC-004')!;
+
+  it('fires when network_mode = "host"', () => {
+    expect(rule.evaluate(makeTaskDef({ network_mode: 'host' }))).toBe(true);
+  });
+
+  it('does not fire for awsvpc or bridge', () => {
+    expect(rule.evaluate(makeTaskDef({ network_mode: 'awsvpc' }))).toBe(false);
+    expect(rule.evaluate(makeTaskDef({ network_mode: 'bridge' }))).toBe(false);
+  });
+
+  it('does not fire when network_mode is absent', () => {
+    expect(rule.evaluate(makeTaskDef({}))).toBe(false);
   });
 });

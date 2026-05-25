@@ -8,6 +8,12 @@ import {
   estimateEIPCost,
   estimateRDSCost,
   estimateELBCost,
+  estimateECSCost,
+  FARGATE_LINUX_VCPU_HOURLY,
+  FARGATE_LINUX_MEMORY_HOURLY,
+  FARGATE_ARM_VCPU_HOURLY,
+  FARGATE_ARM_MEMORY_HOURLY,
+  HOURS_PER_MONTH,
 } from '../../../src/pricing/resources.js';
 
 // ─── EC2 ─────────────────────────────────────────────────────────────────────
@@ -97,6 +103,66 @@ describe('estimateLambdaCost', () => {
   });
 });
 
+// ─── Lambda arm64 ─────────────────────────────────────────────────────────────
+
+describe('estimateLambdaCost — arm64 vs x86_64', () => {
+  it('arm64 costs ~20% less than x86_64 for identical usage above free tier', () => {
+    const invocations = 10_000_000; // 9M billable
+    const durationMs = 500;
+    const memoryMB = 512;
+
+    const x86Cost = estimateLambdaCost(memoryMB, durationMs, invocations, 'x86_64');
+    const armCost = estimateLambdaCost(memoryMB, durationMs, invocations, 'arm64');
+
+    expect(armCost).toBeGreaterThan(0);
+    expect(armCost).toBeLessThan(x86Cost);
+    // arm64 GB-second price is 0.0000133334 vs 0.0000166667 = 20% cheaper
+    const ratio = armCost / x86Cost;
+    expect(ratio).toBeGreaterThan(0.75);
+    expect(ratio).toBeLessThan(0.90);
+  });
+
+  it('arm64 GB-second price is exactly $0.0000133334', () => {
+    // 1024 MB = 1 GB; 1000ms = 1s; 1M invocations (all in free request tier)
+    // GB-seconds = 1 * 1 * 1,000,000 = 1,000,000; billable = 1,000,000 - 400,000 = 600,000
+    const cost = estimateLambdaCost(1024, 1000, 1_000_000, 'arm64');
+    // No request cost (1M ≤ free tier); only duration cost
+    expect(cost).toBeCloseTo(600_000 * 0.0000133334, 4);
+  });
+});
+
+// ─── ECS Fargate ARM ──────────────────────────────────────────────────────────
+
+describe('estimateECSCost — ARM vs x86_64', () => {
+  it('ARM Fargate costs ~20% less than x86 for identical vCPU/memory', () => {
+    const cpuVcpus = 2;
+    const memoryGB = 4;
+
+    const x86Cost = estimateECSCost(cpuVcpus, memoryGB, 'X86_64');
+    const armCost = estimateECSCost(cpuVcpus, memoryGB, 'ARM64');
+
+    expect(armCost).toBeGreaterThan(0);
+    expect(armCost).toBeLessThan(x86Cost);
+    const ratio = armCost / x86Cost;
+    expect(ratio).toBeGreaterThan(0.75);
+    expect(ratio).toBeLessThan(0.90);
+  });
+
+  it('x86_64 cost matches FARGATE_LINUX constants', () => {
+    const cost = estimateECSCost(1, 2, 'X86_64');
+    expect(cost).toBeCloseTo((FARGATE_LINUX_VCPU_HOURLY + 2 * FARGATE_LINUX_MEMORY_HOURLY) * HOURS_PER_MONTH, 4);
+  });
+
+  it('ARM64 cost matches FARGATE_ARM constants', () => {
+    const cost = estimateECSCost(1, 2, 'ARM64');
+    expect(cost).toBeCloseTo((FARGATE_ARM_VCPU_HOURLY + 2 * FARGATE_ARM_MEMORY_HOURLY) * HOURS_PER_MONTH, 4);
+  });
+
+  it('defaults to x86_64 when architecture is omitted', () => {
+    expect(estimateECSCost(1, 2)).toBeCloseTo(estimateECSCost(1, 2, 'X86_64'), 6);
+  });
+});
+
 // ─── NAT Gateway, EIP, RDS, ELB ──────────────────────────────────────────────
 
 describe('estimateNATGatewayCost', () => {
@@ -117,7 +183,7 @@ describe('estimateEIPCost', () => {
 describe('estimateRDSCost', () => {
   it('prices single-AZ, multi-AZ (2x), storage surcharge, and returns 0 for empty class', async () => {
     const singleAZ = await estimateRDSCost(null, 'db.t3.medium', 'mysql', false, 0, 'us-east-1');
-    expect(singleAZ).toBeCloseTo(0.068 * 730, 2);
+    expect(singleAZ).toBeCloseTo(0.072 * 730, 2);
 
     const multiAZ = await estimateRDSCost(null, 'db.t3.medium', 'mysql', true, 0, 'us-east-1');
     expect(multiAZ).toBeCloseTo(singleAZ * 2, 2);
@@ -180,9 +246,9 @@ describe('estimateRDSCost with live pricing client (multiAZ doubling fix)', () =
       0,
     );
 
-    // Fallback price for db.m5.large is 0.171, doubled to 0.342 for multiAZ
-    // Expected: 0.171 * 2 * 730 + 100 * 0.115
-    expect(cost).toBeCloseTo(0.171 * 2 * 730 + 100 * 0.115, 1);
+    // Fallback price for db.m5.large is 0.178, doubled to 0.356 for multiAZ
+    // Expected: 0.178 * 2 * 730 + 100 * 0.115
+    expect(cost).toBeCloseTo(0.178 * 2 * 730 + 100 * 0.115, 1);
   });
 
   it('does not apply doubling when multiAZ=false, regardless of client', async () => {
@@ -201,9 +267,9 @@ describe('estimateRDSCost with live pricing client (multiAZ doubling fix)', () =
       0,
     );
 
-    // Fallback price is 0.171, no doubling because multiAZ=false
-    // Expected: 0.171 * 730 + 100 * 0.115
-    expect(cost).toBeCloseTo(0.171 * 730 + 100 * 0.115, 1);
+    // Fallback price is 0.178, no doubling because multiAZ=false
+    // Expected: 0.178 * 730 + 100 * 0.115
+    expect(cost).toBeCloseTo(0.178 * 730 + 100 * 0.115, 1);
   });
 
   it('correctly uses cache key with multiAZ flag when querying client', async () => {

@@ -19,7 +19,10 @@ import {
   estimateNATGatewayCost,
   estimateEIPCost,
   estimateECSCost,
+  estimateAuroraServerlessV2Cost,
   EBS_SNAPSHOT_PER_GB,
+  LAMBDA_ARCH_X86,
+  ECS_ARCH_X86,
 } from './resources.js';
 
 // ─── Helper utilities ─────────────────────────────────────────────────────────
@@ -87,6 +90,7 @@ export class CostEngine {
       case 'lambda_function': {
         let memoryMB = floatValue(cfg['memory_mb']);
         if (memoryMB === 0) memoryMB = 128;
+        const architecture = (cfg['architecture'] as string | undefined) ?? LAMBDA_ARCH_X86;
         let avgDurationMs = 0;
         let invocationsPerMonth = 0;
         if (resource.utilization) {
@@ -99,7 +103,7 @@ export class CostEngine {
             invocationsPerMonth = rawInvocations * (30 / periodDays);
           }
         }
-        return estimateLambdaCost(memoryMB, avgDurationMs, invocationsPerMonth);
+        return estimateLambdaCost(memoryMB, avgDurationMs, invocationsPerMonth, architecture);
       }
 
       case 'load_balancer': {
@@ -148,11 +152,18 @@ export class CostEngine {
         return estimateEIPCost(resource.state === 'associated');
 
       case 'ecs_service': {
-        // For Fargate, estimate based on task CPU/memory if available, otherwise use defaults
+        // For Fargate, estimate based on task CPU/memory/architecture if available
         const taskCpuVcpus = floatValue(cfg['task_cpu']) || 0.25;
         const taskMemoryGB = floatValue(cfg['task_memory']) / 1024 || 0.5;
         const desiredCount = cfg['desired_count'] !== null && cfg['desired_count'] !== undefined ? floatValue(cfg['desired_count']) : 1;
-        return estimateECSCost(taskCpuVcpus, taskMemoryGB) * desiredCount;
+        const taskArchitecture = (cfg['task_architecture'] as string | undefined) ?? ECS_ARCH_X86;
+        return estimateECSCost(taskCpuVcpus, taskMemoryGB, taskArchitecture) * desiredCount;
+      }
+
+      case 'aurora_serverless_v2': {
+        const minCapacity = floatValue(cfg['min_capacity']);
+        const maxCapacity = floatValue(cfg['max_capacity']);
+        return estimateAuroraServerlessV2Cost(minCapacity, maxCapacity);
       }
 
       default:

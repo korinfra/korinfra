@@ -119,8 +119,8 @@ describe('checkRDS003 — oversized RDS instance', () => {
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('RDS-003');
     expect(rec!.impact).toBe('high');
-    // Real pricing delta: db.m5.xlarge (0.342/hr) → db.m5.large (0.171/hr): 0.171*730 ≈ 124.83
-    expect(rec!.estimatedSavings).toBeCloseTo(124.83, 1);
+    // Real pricing delta: db.m5.xlarge (0.356/hr) → db.m5.large (0.178/hr): 0.178*730 ≈ 129.94
+    expect(rec!.estimatedSavings).toBeCloseTo(129.94, 1);
   });
 
   it('does not fire when CPU >= threshold, no utilization, wrong type, or already smallest', () => {

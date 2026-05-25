@@ -46,14 +46,12 @@ const fixture = (name: string): string =>
 // ─── Stdout / stderr capture ─────────────────────────────────────────────────
 
 let stdoutBuf = '';
-let stderrBuf = '';
 let origStdoutWrite: typeof process.stdout.write;
 let origStderrWrite: typeof process.stderr.write;
 let origExitCode: number | string | undefined;
 
 beforeEach(() => {
   stdoutBuf = '';
-  stderrBuf = '';
   origStdoutWrite = process.stdout.write.bind(process.stdout);
   origStderrWrite = process.stderr.write.bind(process.stderr);
   origExitCode = process.exitCode;
@@ -61,10 +59,7 @@ beforeEach(() => {
     stdoutBuf += String(chunk);
     return true;
   }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: unknown) => {
-    stderrBuf += String(chunk);
-    return true;
-  }) as typeof process.stderr.write;
+  process.stderr.write = (() => true) as typeof process.stderr.write;
 });
 
 afterEach(() => {
@@ -147,6 +142,17 @@ describe('runJsonCommand("cost-impact") — --fail-on-delta (issue #64)', () => 
     const code = await runJsonCommand('cost-impact', [
       '--plan-file', fixture('simple-create.json'),
       '--fail-on-delta', '-100',
+    ]);
+    expect(code).toBe(2);
+    const out = JSON.parse(stdoutBuf) as { status: string; error: string };
+    expect(out.status).toBe('error');
+    expect(out.error).toMatch(/must be >= 0/i);
+  });
+
+  it('returns 2 for --fail-on-delta=-100 (equals form negative)', async () => {
+    const code = await runJsonCommand('cost-impact', [
+      '--plan-file', fixture('simple-create.json'),
+      '--fail-on-delta=-100',
     ]);
     expect(code).toBe(2);
     const out = JSON.parse(stdoutBuf) as { status: string; error: string };

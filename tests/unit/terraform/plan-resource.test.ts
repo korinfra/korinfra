@@ -703,13 +703,13 @@ describe('buildTaskDefIndex — ambiguous family handling', () => {
     ];
     const index = buildTaskDefIndex(changes);
     // Bare family key must be absent — ambiguous
-    expect(index.has('api')).toBe(false);
+    expect(index.byKey.has('api')).toBe(false);
     // family:revision keys are still safe to use
-    expect(index.has('api:1')).toBe(true);
-    expect(index.has('api:2')).toBe(true);
+    expect(index.byKey.has('api:1')).toBe(true);
+    expect(index.byKey.has('api:2')).toBe(true);
     // Plan addresses are also still safe
-    expect(index.has('aws_ecs_task_definition.v1')).toBe(true);
-    expect(index.has('aws_ecs_task_definition.v2')).toBe(true);
+    expect(index.byKey.has('aws_ecs_task_definition.v1')).toBe(true);
+    expect(index.byKey.has('aws_ecs_task_definition.v2')).toBe(true);
   });
 
   it('does not re-add bare-family key for a third task def with the same family', () => {
@@ -722,10 +722,10 @@ describe('buildTaskDefIndex — ambiguous family handling', () => {
         change: { actions: ['create'], after: { family: 'svc', cpu: 1024, memory: 2048, revision: 3 } } }),
     ];
     const index = buildTaskDefIndex(changes);
-    expect(index.has('svc')).toBe(false);
-    expect(index.has('svc:1')).toBe(true);
-    expect(index.has('svc:2')).toBe(true);
-    expect(index.has('svc:3')).toBe(true);
+    expect(index.byKey.has('svc')).toBe(false);
+    expect(index.byKey.has('svc:1')).toBe(true);
+    expect(index.byKey.has('svc:2')).toBe(true);
+    expect(index.byKey.has('svc:3')).toBe(true);
   });
 });
 
@@ -738,6 +738,7 @@ describe('synthesizeResource — ECS task def resolved via index', () => {
     arn?: string;
     moduleAddress?: string;
     arnUnknown?: boolean;
+    extra?: Record<string, unknown>;
   }): TerraformResourceChange {
     return makeChange({
       address: opts.address,
@@ -750,6 +751,7 @@ describe('synthesizeResource — ECS task def resolved via index', () => {
           cpu: opts.cpu,
           memory: opts.memory,
           ...(opts.arn !== undefined ? { arn: opts.arn } : {}),
+          ...(opts.extra ?? {}),
         },
         ...(opts.arnUnknown ? { after_unknown: { arn: true } } : {}),
       },
@@ -844,5 +846,194 @@ describe('synthesizeResource — ECS task def resolved via index', () => {
     });
     const synth = synthesizeResource(svc, 'after', 'us-east-1', index);
     expect(synth!.costStatus).toBe('partial-unknown');
+  });
+
+  it('reads ARM64 cpu_architecture from runtime_platform (array form) and sets task_architecture', () => {
+    const td = makeTaskDefChange({
+      address: 'aws_ecs_task_definition.arm',
+      cpu: '2048',
+      memory: '4096',
+      family: 'arm',
+      arnUnknown: true,
+      extra: { runtime_platform: [{ cpu_architecture: 'ARM64', operating_system_family: 'LINUX' }] },
+    });
+    const index = buildTaskDefIndex([td]);
+    const svc = makeChange({
+      address: 'aws_ecs_service.arm',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: { desired_count: 1, task_definition: 'aws_ecs_task_definition.arm' },
+        after_unknown: {},
+      },
+    });
+    const synth = synthesizeResource(svc, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('known');
+    expect(synth!.resource.configuration['task_architecture']).toBe('ARM64');
+  });
+
+  it('defaults to X86_64 when runtime_platform is absent', () => {
+    const td = makeTaskDefChange({
+      address: 'aws_ecs_task_definition.x86',
+      cpu: '1024',
+      memory: '2048',
+      family: 'x86',
+      arnUnknown: true,
+    });
+    const index = buildTaskDefIndex([td]);
+    const svc = makeChange({
+      address: 'aws_ecs_service.x86',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: { desired_count: 1, task_definition: 'aws_ecs_task_definition.x86' },
+        after_unknown: {},
+      },
+    });
+    const synth = synthesizeResource(svc, 'after', 'us-east-1', index);
+    expect(synth!.resource.configuration['task_architecture']).toBe('X86_64');
+  });
+});
+
+describe('synthesizeResource — aws_rds_cluster_instance', () => {
+  it('maps instance_class to instanceType and type=rds_instance', () => {
+    const change = makeChange({
+      address: 'aws_rds_cluster_instance.writer',
+      type: 'aws_rds_cluster_instance',
+      change: { actions: ['create'], after: { instance_class: 'db.r6g.large', engine: 'aurora-mysql' } },
+    });
+    const synth = synthesizeResource(change, 'after', 'us-east-1');
+    expect(synth!.resource.type).toBe('rds_instance');
+    expect(synth!.resource.instanceType).toBe('db.r6g.large');
+    expect(synth!.resource.configuration['engine']).toBe('aurora-mysql');
+    expect(synth!.resource.configuration['multi_az']).toBe(false);
+    expect(synth!.costStatus).toBe('known');
+  });
+
+  it('marks unknown when instance_class is masked', () => {
+    const change = makeChange({
+      address: 'aws_rds_cluster_instance.writer',
+      type: 'aws_rds_cluster_instance',
+      change: { actions: ['create'], after: { instance_class: null }, after_unknown: { instance_class: true } },
+    });
+    const synth = synthesizeResource(change, 'after', 'us-east-1');
+    expect(synth!.costStatus).toBe('unknown');
+  });
+});
+
+describe('synthesizeResource — aws_rds_cluster', () => {
+  it('maps serverlessv2_scaling_configuration to aurora_serverless_v2 with variable cost', () => {
+    const change = makeChange({
+      address: 'aws_rds_cluster.main',
+      type: 'aws_rds_cluster',
+      change: {
+        actions: ['create'],
+        after: {
+          engine: 'aurora-mysql',
+          serverlessv2_scaling_configuration: [{ min_capacity: 0.5, max_capacity: 8 }],
+        },
+      },
+    });
+    const synth = synthesizeResource(change, 'after', 'us-east-1');
+    expect(synth!.resource.type).toBe('aurora_serverless_v2');
+    expect(synth!.resource.configuration['min_capacity']).toBe(0.5);
+    expect(synth!.resource.configuration['max_capacity']).toBe(8);
+    expect(synth!.costStatus).toBe('variable');
+  });
+
+  it('marks provisioned Aurora cluster as unpriced (instances cost separately)', () => {
+    const change = makeChange({
+      address: 'aws_rds_cluster.provisioned',
+      type: 'aws_rds_cluster',
+      change: { actions: ['create'], after: { engine: 'aurora-mysql', engine_mode: 'provisioned' } },
+    });
+    const synth = synthesizeResource(change, 'after', 'us-east-1');
+    expect(synth!.costStatus).toBe('unpriced');
+  });
+});
+
+describe('synthesizeResource — aws_elasticache_replication_group', () => {
+  it('maps node_type and num_cache_clusters to elasticache_cluster', () => {
+    const change = makeChange({
+      address: 'aws_elasticache_replication_group.cache',
+      type: 'aws_elasticache_replication_group',
+      change: { actions: ['create'], after: { node_type: 'cache.r6g.large', num_cache_clusters: 3 } },
+    });
+    const synth = synthesizeResource(change, 'after', 'us-east-1');
+    expect(synth!.resource.type).toBe('elasticache_cluster');
+    expect(synth!.resource.instanceType).toBe('cache.r6g.large');
+    expect(synth!.resource.configuration['num_cache_nodes']).toBe(3);
+    expect(synth!.costStatus).toBe('known');
+  });
+
+  it('calculates total nodes from num_node_groups × (replicas_per_node_group + 1) in cluster mode', () => {
+    const change = makeChange({
+      address: 'aws_elasticache_replication_group.cluster',
+      type: 'aws_elasticache_replication_group',
+      change: {
+        actions: ['create'],
+        after: { node_type: 'cache.r6g.large', num_node_groups: 3, replicas_per_node_group: 2 },
+      },
+    });
+    const synth = synthesizeResource(change, 'after', 'us-east-1');
+    // 3 shards × (2 replicas + 1 primary) = 9 nodes
+    expect(synth!.resource.configuration['num_cache_nodes']).toBe(9);
+    expect(synth!.costStatus).toBe('known');
+  });
+
+  it('defaults to 1 node when num_cache_clusters is missing', () => {
+    const change = makeChange({
+      address: 'aws_elasticache_replication_group.single',
+      type: 'aws_elasticache_replication_group',
+      change: { actions: ['create'], after: { node_type: 'cache.t4g.micro' } },
+    });
+    const synth = synthesizeResource(change, 'after', 'us-east-1');
+    expect(synth!.resource.configuration['num_cache_nodes']).toBe(1);
+  });
+
+  it('marks unknown when node_type is masked', () => {
+    const change = makeChange({
+      address: 'aws_elasticache_replication_group.cache',
+      type: 'aws_elasticache_replication_group',
+      change: { actions: ['create'], after: { node_type: null }, after_unknown: { node_type: true } },
+    });
+    const synth = synthesizeResource(change, 'after', 'us-east-1');
+    expect(synth!.costStatus).toBe('unknown');
+  });
+});
+
+describe('synthesizeResource — Lambda architecture', () => {
+  it('sets architecture="arm64" when architectures=["arm64"]', () => {
+    const change = makeChange({
+      address: 'aws_lambda_function.fn',
+      type: 'aws_lambda_function',
+      change: {
+        actions: ['create'],
+        after: { memory_size: 512, architectures: ['arm64'] },
+      },
+    });
+    const synth = synthesizeResource(change, 'after', 'us-east-1');
+    expect(synth!.resource.configuration['architecture']).toBe('arm64');
+    expect(synth!.costStatus).toBe('variable');
+  });
+
+  it('defaults to x86_64 when architectures field is absent', () => {
+    const change = makeChange({
+      address: 'aws_lambda_function.fn',
+      type: 'aws_lambda_function',
+      change: { actions: ['create'], after: { memory_size: 256 } },
+    });
+    const synth = synthesizeResource(change, 'after', 'us-east-1');
+    expect(synth!.resource.configuration['architecture']).toBe('x86_64');
+  });
+
+  it('defaults to x86_64 when architectures=["x86_64"]', () => {
+    const change = makeChange({
+      address: 'aws_lambda_function.fn',
+      type: 'aws_lambda_function',
+      change: { actions: ['create'], after: { memory_size: 128, architectures: ['x86_64'] } },
+    });
+    const synth = synthesizeResource(change, 'after', 'us-east-1');
+    expect(synth!.resource.configuration['architecture']).toBe('x86_64');
   });
 });

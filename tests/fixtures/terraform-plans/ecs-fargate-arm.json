@@ -1,0 +1,38 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.6.0",
+  "resource_changes": [
+    {
+      "address": "aws_ecs_task_definition.api",
+      "type": "aws_ecs_task_definition",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "family": "api",
+          "cpu": "2048",
+          "memory": "4096",
+          "runtime_platform": [
+            { "cpu_architecture": "ARM64", "operating_system_family": "LINUX" }
+          ]
+        },
+        "after_unknown": { "id": true, "arn": true }
+      }
+    },
+    {
+      "address": "aws_ecs_service.api",
+      "type": "aws_ecs_service",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "desired_count": 10, "task_definition": "aws_ecs_task_definition.api" },
+        "after_unknown": {}
+      }
+    }
+  ],
+  "configuration": {
+    "provider_config": {
+      "aws": { "expressions": { "region": { "constant_value": "us-east-1" } } }
+    }
+  }
+}

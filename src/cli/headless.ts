@@ -209,6 +209,47 @@ function parseRegions(args: string[]): string[] {
   return regions;
 }
 
+type TfdirArgResult = { ok: true; absTfdir: string | undefined } | { ok: false; error: string };
+
+function parseTfdirArg(commandArgs: string[], cwd: string): TfdirArgResult {
+  const tfdirArg = parseArg(commandArgs, '--tfdir');
+  if (tfdirArg === null) return { ok: true, absTfdir: undefined };
+  const absTfdir = path.resolve(cwd, tfdirArg);
+  if (!absTfdir.startsWith(cwd + path.sep) && absTfdir !== cwd) {
+    return { ok: false, error: `--tfdir must stay within ${cwd}` };
+  }
+  if (!fs.existsSync(absTfdir) || !fs.statSync(absTfdir).isDirectory()) {
+    return { ok: false, error: `--tfdir not found or not a directory: ${absTfdir}` };
+  }
+  return { ok: true, absTfdir };
+}
+
+type DeltaThresholdResult = { ok: true; threshold: number | null } | { ok: false; error: string };
+
+function parseFailOnDeltaArg(commandArgs: string[]): DeltaThresholdResult {
+  const str = parseArg(commandArgs, '--fail-on-delta');
+  const flagIdx = commandArgs.indexOf('--fail-on-delta');
+  const equalsHit = commandArgs.find((a) => a.startsWith('--fail-on-delta='));
+  if (flagIdx < 0 && equalsHit === undefined) return { ok: true, threshold: null };
+
+  if (str === null) {
+    const rawNext = flagIdx >= 0 ? (commandArgs[flagIdx + 1] ?? '') : '';
+    const equalsVal = equalsHit !== undefined ? equalsHit.slice(equalsHit.indexOf('=') + 1) : '';
+    if (/^-\d/.test(rawNext) || /^-\d/.test(equalsVal)) {
+      return { ok: false, error: '--fail-on-delta must be >= 0; use 0 to fail on any non-zero delta' };
+    }
+    return { ok: false, error: '--fail-on-delta requires a numeric value (e.g. --fail-on-delta 500)' };
+  }
+  const parsed = parseFloat(str);
+  if (isNaN(parsed)) {
+    return { ok: false, error: `--fail-on-delta must be a number, got "${str}"` };
+  }
+  if (parsed < 0) {
+    return { ok: false, error: '--fail-on-delta must be >= 0; use 0 to fail on any non-zero delta' };
+  }
+  return { ok: true, threshold: parsed };
+}
+
 async function runSteps(
   steps: PipelineStep[],
   onStep?: (key: string) => void,
@@ -768,19 +809,12 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       process.exit(2);
     }
 
-    const tfdirArg = parseArg(commandArgs, '--tfdir');
-    let absTfdir: string | undefined;
-    if (tfdirArg !== null) {
-      absTfdir = path.resolve(cwd, tfdirArg);
-      if (!absTfdir.startsWith(cwd + path.sep) && absTfdir !== cwd) {
-        process.stderr.write(`Error: --tfdir must stay within ${cwd}\n`);
-        process.exit(2);
-      }
-      if (!fs.existsSync(absTfdir) || !fs.statSync(absTfdir).isDirectory()) {
-        process.stderr.write(`Error: --tfdir not found or not a directory: ${absTfdir}\n`);
-        process.exit(2);
-      }
+    const tfdirArgResult = parseTfdirArg(commandArgs, cwd);
+    if (!tfdirArgResult.ok) {
+      process.stderr.write(`Error: ${tfdirArgResult.error}\n`);
+      process.exit(2);
     }
+    const absTfdir = tfdirArgResult.absTfdir;
 
     let currency = 'USD';
     try {
@@ -801,9 +835,19 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     const criticalCount = impact.findings.filter((f) => f.severity === 'critical').length;
     const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
 
+    // Parse --fail-on-delta before the format branch so it applies with all formats.
+    const deltaResult = parseFailOnDeltaArg(commandArgs);
+    if (!deltaResult.ok) {
+      process.stderr.write(`Error: ${deltaResult.error}\n`);
+      process.exit(2);
+    }
+    const failOnDeltaThreshold = deltaResult.threshold;
+    const shouldFailOnDelta = failOnDeltaThreshold !== null &&
+      Math.abs(impact.summary.netDeltaMonthlyUsd) > failOnDeltaThreshold;
+
     const effectiveCiFmt = await resolveEffectiveFormat(rawCiFormat);
     if (effectiveCiFmt !== null) {
-      if (shouldFailOnCritical) process.exitCode = 1;
+      if (shouldFailOnCritical || shouldFailOnDelta) process.exitCode = 1;
       if (failOn === 'partial') {
         process.stderr.write('[korinfra] Warning: --fail-on partial is not applicable to cost-impact\n');
       }
@@ -843,32 +887,6 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       process.stdout.write(createFormatter(format).format(scanReport));
       return true;
     }
-
-    // --fail-on-delta: dollar-threshold CI gate
-    const failOnDeltaStr = parseArg(commandArgs, '--fail-on-delta');
-    const failOnDeltaFlagIdx = commandArgs.indexOf('--fail-on-delta');
-    const failOnDeltaEqualsHit = commandArgs.find((a) => a.startsWith('--fail-on-delta='));
-    const failOnDeltaPresent = failOnDeltaFlagIdx >= 0 || failOnDeltaEqualsHit !== undefined;
-    let failOnDeltaThreshold: number | null = null;
-    if (failOnDeltaPresent) {
-      if (failOnDeltaStr === null) {
-        const rawNext = failOnDeltaFlagIdx >= 0 ? (commandArgs[failOnDeltaFlagIdx + 1] ?? '') : '';
-        if (/^-\d/.test(rawNext)) {
-          process.stderr.write(`Error: --fail-on-delta must be >= 0; use 0 to fail on any non-zero delta\n`);
-          process.exit(2);
-        }
-        process.stderr.write(`Error: --fail-on-delta requires a numeric value (e.g. --fail-on-delta 500)\n`);
-        process.exit(2);
-      }
-      const parsed = parseFloat(failOnDeltaStr);
-      if (isNaN(parsed)) {
-        process.stderr.write(`Error: --fail-on-delta must be a number, got "${failOnDeltaStr}"\n`);
-        process.exit(2);
-      }
-      failOnDeltaThreshold = parsed;
-    }
-    const shouldFailOnDelta = failOnDeltaThreshold !== null &&
-      Math.abs(impact.summary.netDeltaMonthlyUsd) > failOnDeltaThreshold;
 
     const netLabel = impact.summary.netDeltaMonthlyUsd >= 0
       ? `+${formatMoney(impact.summary.netDeltaMonthlyUsd)}/mo`
@@ -931,7 +949,7 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     }
     if (shouldFailOnDelta) {
       lines.push('');
-      lines.push(`Exiting 1: net delta ${netLabel} exceeds --fail-on-delta threshold ${formatMoney(failOnDeltaThreshold!)}/mo.`);
+      lines.push(`Exiting 1: net delta ${netLabel} exceeds --fail-on-delta threshold ${formatMoney(failOnDeltaThreshold ?? 0)}/mo.`);
     }
     lines.push('');
     lines.push('Next:');
@@ -2644,63 +2662,19 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
       return 2;
     }
 
-    const tfdirArg = parseArg(commandArgs, '--tfdir');
-    let absTfdir: string | undefined;
-    if (tfdirArg !== null) {
-      absTfdir = path.resolve(cwd, tfdirArg);
-      if (!absTfdir.startsWith(cwd + path.sep) && absTfdir !== cwd) {
-        process.stdout.write(JSON.stringify({
-          command: 'cost-impact',
-          status: 'error',
-          error: `--tfdir must stay within ${cwd}`,
-        }, null, 2) + '\n');
-        return 2;
-      }
-      if (!fs.existsSync(absTfdir) || !fs.statSync(absTfdir).isDirectory()) {
-        process.stdout.write(JSON.stringify({
-          command: 'cost-impact',
-          status: 'error',
-          error: `--tfdir not found or not a directory: ${absTfdir}`,
-        }, null, 2) + '\n');
-        return 2;
-      }
+    const tfdirArgResult = parseTfdirArg(commandArgs, cwd);
+    if (!tfdirArgResult.ok) {
+      process.stdout.write(JSON.stringify({ command: 'cost-impact', status: 'error', error: tfdirArgResult.error }, null, 2) + '\n');
+      return 2;
     }
+    const absTfdir = tfdirArgResult.absTfdir;
 
-    // --fail-on-delta validation
-    const failOnDeltaStr = parseArg(commandArgs, '--fail-on-delta');
-    const failOnDeltaFlagIdx = commandArgs.indexOf('--fail-on-delta');
-    const failOnDeltaEqualsHit = commandArgs.find((a) => a.startsWith('--fail-on-delta='));
-    const failOnDeltaPresent = failOnDeltaFlagIdx >= 0 || failOnDeltaEqualsHit !== undefined;
-    let failOnDeltaThreshold: number | null = null;
-    if (failOnDeltaPresent) {
-      if (failOnDeltaStr === null) {
-        const rawNext = failOnDeltaFlagIdx >= 0 ? (commandArgs[failOnDeltaFlagIdx + 1] ?? '') : '';
-        if (/^-\d/.test(rawNext)) {
-          process.stdout.write(JSON.stringify({
-            command: 'cost-impact',
-            status: 'error',
-            error: '--fail-on-delta must be >= 0; use 0 to fail on any non-zero delta',
-          }, null, 2) + '\n');
-          return 2;
-        }
-        process.stdout.write(JSON.stringify({
-          command: 'cost-impact',
-          status: 'error',
-          error: '--fail-on-delta requires a numeric value (e.g. --fail-on-delta 500)',
-        }, null, 2) + '\n');
-        return 2;
-      }
-      const parsed = parseFloat(failOnDeltaStr);
-      if (isNaN(parsed)) {
-        process.stdout.write(JSON.stringify({
-          command: 'cost-impact',
-          status: 'error',
-          error: `--fail-on-delta must be a number, got "${failOnDeltaStr}"`,
-        }, null, 2) + '\n');
-        return 2;
-      }
-      failOnDeltaThreshold = parsed;
+    const deltaResult = parseFailOnDeltaArg(commandArgs);
+    if (!deltaResult.ok) {
+      process.stdout.write(JSON.stringify({ command: 'cost-impact', status: 'error', error: deltaResult.error }, null, 2) + '\n');
+      return 2;
     }
+    const failOnDeltaThreshold = deltaResult.threshold;
 
     let currency = 'USD';
     try {
