@@ -13,6 +13,7 @@ import { saveConfig } from '../../config/index.js';
 import { defaults } from '../../config/defaults.js';
 import { getDb } from '../../storage/db.js';
 import { logger } from '../../utils/logger.js';
+import { checkNoSymlink } from '../../utils/safe-fs.js';
 import { safeReadFile, safeWriteFile } from '../../utils/safe-fs.js';
 
 // ─── Profile detection ────────────────────────────────────────────────────────
@@ -138,6 +139,7 @@ export async function writekorinfraConfig(
       // Add sensitive files to .gitignore
       const gitignorePath = path.join(cwd, '.gitignore');
       const entriesToAdd = ['.korinfra/.env', '.korinfra/data.db'];
+      checkNoSymlink(gitignorePath);
       try {
         const existing = fs.readFileSync(gitignorePath, 'utf8');
         const lines = existing.split('\n').map((l) => l.trim());
@@ -146,7 +148,8 @@ export async function writekorinfraConfig(
           const suffix = existing.endsWith('\n') ? '' : '\n';
           fs.writeFileSync(gitignorePath, existing + suffix + missing.join('\n') + '\n', 'utf8');
         }
-      } catch {
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
         logger.debug({}, '[init] .gitignore not found, creating it');
         fs.writeFileSync(gitignorePath, entriesToAdd.join('\n') + '\n', 'utf8');
       }

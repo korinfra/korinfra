@@ -8,6 +8,7 @@ import { loadConfig, ConfigValidationError } from '../../config/index.js';
 import { EC2Client, DescribeRegionsCommand } from '@aws-sdk/client-ec2';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { defaultConfigDir } from '../../config/paths.js';
+import { checkNoSymlink } from '../../utils/safe-fs.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -190,6 +191,7 @@ async function checkAiProvider(_signal?: AbortSignal): Promise<CheckResult> {
 
   function isKeyInDotEnv(keyName: string): boolean {
     try {
+      checkNoSymlink(dotEnvPath);
       const contents = fs.readFileSync(dotEnvPath, 'utf8');
       return contents.split('\n').some((line) => line.startsWith(`${keyName}=`));
     } catch {

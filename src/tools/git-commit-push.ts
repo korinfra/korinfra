@@ -12,6 +12,7 @@ import { existsSync, readFileSync, appendFileSync, realpathSync } from 'node:fs'
 import path from 'node:path';
 import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition } from './types.js';
+import { checkNoSymlink } from '../utils/safe-fs.js';
 
 function run(args: string[], cwd: string): string {
   const result = spawnSync('git', args, { encoding: 'utf8', cwd, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -31,6 +32,7 @@ function ensureGitignore(cwd: string): void {
   }
   const gitignorePath = path.join(repoRoot, '.gitignore');
   const entry = '.korinfra/';
+  checkNoSymlink(gitignorePath);
   // Read without a prior existsSync check to avoid TOCTOU race condition.
   let existing = '';
   try {

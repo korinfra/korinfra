@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 
@@ -15,6 +14,7 @@ import { DEFAULT_MCP_PORT } from './config/types.js';
 import { runHeadlessTextCommand, runJsonCommand } from './cli/headless.js';
 import { redact, redactObject } from './redaction/redactor.js';
 import { closeDb, getDb } from './storage/db.js';
+import { safeReadFile } from './utils/safe-fs.js';
 
 // True system env vars that must never be overridden from .env files.
 // Credentials are intentionally excluded: the existing `if (value && !process.env[key])`
@@ -60,7 +60,7 @@ function suggestKnownCommand(input: string): string | null {
 function loadProjectEnv(): void {
   const envPath = path.join(process.cwd(), '.korinfra', '.env');
   try {
-    const content = fs.readFileSync(envPath, 'utf8');
+    const content = safeReadFile(envPath);
     for (const line of content.split('\n')) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#')) continue;
