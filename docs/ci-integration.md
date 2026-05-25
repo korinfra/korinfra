@@ -216,13 +216,12 @@ All headless commands accept `--format csv|html` (in addition to the default JSO
       --output reports/security.html
 
 - name: Cost-impact — CSV artifact
-  working-directory: terraform
   run: |
     korinfra cost-impact \
-      --plan-file plan.json \
+      --plan-file terraform/plan.json \
       --no-tui \
       --format csv \
-      --output ../reports/cost-impact.csv
+      --output reports/cost-impact.csv
 
 - name: Recommendations — CSV report
   run: |

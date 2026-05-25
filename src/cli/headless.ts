@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import yaml from 'js-yaml';
 
+import { safeWriteFile } from '../utils/safe-fs.js';
 import { loadConfig, findConfigPath, saveConfig } from '../config/index.js';
 import { ConfigSchema } from '../config/types.js';
 import { writekorinfraConfig, validateApiKey } from './commands/init-core.js';
@@ -338,6 +339,43 @@ async function resolveEffectiveFormat(rawFormat: string | null): Promise<string 
   return null;
 }
 
+// ─── Output helpers ──────────────────────────────────────────────────────────
+
+function resolveOutputArg(commandArgs: string[]): string | null {
+  const arg = parseArg(commandArgs, '--output', '-o');
+  return arg !== null ? path.resolve(process.cwd(), arg) : null;
+}
+
+function isWithinCwd(abs: string): boolean {
+  const cwd = process.cwd();
+  return abs === cwd || abs.startsWith(cwd + path.sep);
+}
+
+/** Write formatted content to file (text path). Returns true if an error occurred. */
+function writeFormattedText(content: string, format: ReportFormat, absPath: string): boolean {
+  try {
+    safeWriteFile(absPath, content, { mode: 0o600, dirMode: 0o700 });
+    process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${absPath}\n`);
+    return false;
+  } catch (err: unknown) {
+    process.stderr.write(`[korinfra] Failed to write output: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return true;
+  }
+}
+
+/** Write formatted content to file (JSON path). Returns exit code on error, null on success. */
+function writeFormattedJson(content: string, format: ReportFormat, absPath: string, command: string): number | null {
+  try {
+    safeWriteFile(absPath, content, { mode: 0o600, dirMode: 0o700 });
+    process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${absPath}\n`);
+    return null;
+  } catch (err: unknown) {
+    process.stdout.write(JSON.stringify({ command, status: 'error', error: `Failed to write output: ${err instanceof Error ? err.message : String(err)}` }) + '\n');
+    return 1;
+  }
+}
+
 // ─── Headless: text output ────────────────────────────────────────────────────
 
 export async function runHeadlessTextCommand(command: string, commandArgs: string[]): Promise<boolean> {
@@ -664,27 +702,15 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
           recommendationCount: findings.length,
         },
       };
-      const secOutputArg = parseArg(commandArgs, '--output', '-o');
-      let resolvedSecOutput: string | undefined;
-      if (secOutputArg !== null) {
-        const abs = path.resolve(process.cwd(), secOutputArg);
-        const cwd = process.cwd();
-        if (!abs.startsWith(cwd + path.sep) && abs !== cwd) {
-          process.stderr.write(`korinfra security: --output path must stay within the current directory\n`);
-          process.exitCode = 2;
-          return true;
-        }
-        resolvedSecOutput = abs;
+      const resolvedSecOutput = resolveOutputArg(commandArgs);
+      if (resolvedSecOutput !== null && !isWithinCwd(resolvedSecOutput)) {
+        process.stderr.write(`korinfra security: --output path must stay within the current directory\n`);
+        process.exitCode = 2;
+        return true;
       }
       const secFormatted = createFormatter(format).format(scanReport);
-      if (resolvedSecOutput !== undefined) {
-        try {
-          fs.writeFileSync(resolvedSecOutput, secFormatted);
-          process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${resolvedSecOutput}\n`);
-        } catch (err: unknown) {
-          process.stderr.write(`[korinfra] Failed to write output: ${err instanceof Error ? err.message : String(err)}\n`);
-          process.exitCode = 1;
-        }
+      if (resolvedSecOutput !== null) {
+        if (writeFormattedText(secFormatted, format, resolvedSecOutput)) return true;
       } else {
         process.stdout.write(secFormatted);
       }
@@ -850,27 +876,15 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
           recommendationCount: impact.findings.length,
         },
       };
-      const ciOutputArg = parseArg(commandArgs, '--output', '-o');
-      let resolvedCiOutput: string | undefined;
-      if (ciOutputArg !== null) {
-        const abs = path.resolve(process.cwd(), ciOutputArg);
-        const cwd = process.cwd();
-        if (!abs.startsWith(cwd + path.sep) && abs !== cwd) {
-          process.stderr.write(`korinfra cost-impact: --output path must stay within the current directory\n`);
-          process.exitCode = 2;
-          return true;
-        }
-        resolvedCiOutput = abs;
+      const resolvedCiOutput = resolveOutputArg(commandArgs);
+      if (resolvedCiOutput !== null && !isWithinCwd(resolvedCiOutput)) {
+        process.stderr.write(`korinfra cost-impact: --output path must stay within the current directory\n`);
+        process.exitCode = 2;
+        return true;
       }
       const ciFormatted = createFormatter(format).format(scanReport);
-      if (resolvedCiOutput !== undefined) {
-        try {
-          fs.writeFileSync(resolvedCiOutput, ciFormatted);
-          process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${resolvedCiOutput}\n`);
-        } catch (err: unknown) {
-          process.stderr.write(`[korinfra] Failed to write output: ${err instanceof Error ? err.message : String(err)}\n`);
-          process.exitCode = 1;
-        }
+      if (resolvedCiOutput !== null) {
+        if (writeFormattedText(ciFormatted, format, resolvedCiOutput)) return true;
       } else {
         process.stdout.write(ciFormatted);
       }
@@ -1118,27 +1132,15 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
             recommendationCount: recs.slice(0, 50).length,
           },
         };
-        const coOutputArg = parseArg(commandArgs, '--output', '-o');
-        let resolvedCoOutput: string | undefined;
-        if (coOutputArg !== null) {
-          const abs = path.resolve(process.cwd(), coOutputArg);
-          const cwd = process.cwd();
-          if (!abs.startsWith(cwd + path.sep) && abs !== cwd) {
-            process.stderr.write(`korinfra recommend: --output path must stay within the current directory\n`);
-            process.exitCode = 2;
-            return true;
-          }
-          resolvedCoOutput = abs;
+        const resolvedCoOutput = resolveOutputArg(commandArgs);
+        if (resolvedCoOutput !== null && !isWithinCwd(resolvedCoOutput)) {
+          process.stderr.write(`korinfra recommend: --output path must stay within the current directory\n`);
+          process.exitCode = 2;
+          return true;
         }
         const coFormatted = createFormatter(format).format(scanReport);
-        if (resolvedCoOutput !== undefined) {
-          try {
-            fs.writeFileSync(resolvedCoOutput, coFormatted);
-            process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${resolvedCoOutput}\n`);
-          } catch (err: unknown) {
-            process.stderr.write(`[korinfra] Failed to write output: ${err instanceof Error ? err.message : String(err)}\n`);
-            process.exitCode = 1;
-          }
+        if (resolvedCoOutput !== null) {
+          if (writeFormattedText(coFormatted, format, resolvedCoOutput)) return true;
         } else {
           process.stdout.write(coFormatted);
         }
@@ -1236,27 +1238,15 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
           recommendationCount: recs.length,
         },
       };
-      const recOutputArg = parseArg(commandArgs, '--output', '-o');
-      let resolvedRecOutput: string | undefined;
-      if (recOutputArg !== null) {
-        const abs = path.resolve(process.cwd(), recOutputArg);
-        const cwd = process.cwd();
-        if (!abs.startsWith(cwd + path.sep) && abs !== cwd) {
-          process.stderr.write(`korinfra recommend: --output path must stay within the current directory\n`);
-          process.exitCode = 2;
-          return true;
-        }
-        resolvedRecOutput = abs;
+      const resolvedRecOutput = resolveOutputArg(commandArgs);
+      if (resolvedRecOutput !== null && !isWithinCwd(resolvedRecOutput)) {
+        process.stderr.write(`korinfra recommend: --output path must stay within the current directory\n`);
+        process.exitCode = 2;
+        return true;
       }
       const recFormatted = createFormatter(format).format(scanReport);
-      if (resolvedRecOutput !== undefined) {
-        try {
-          fs.writeFileSync(resolvedRecOutput, recFormatted);
-          process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${resolvedRecOutput}\n`);
-        } catch (err: unknown) {
-          process.stderr.write(`[korinfra] Failed to write output: ${err instanceof Error ? err.message : String(err)}\n`);
-          process.exitCode = 1;
-        }
+      if (resolvedRecOutput !== null) {
+        if (writeFormattedText(recFormatted, format, resolvedRecOutput)) return true;
       } else {
         process.stdout.write(recFormatted);
       }
@@ -2239,26 +2229,15 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
             recommendationCount: recs.slice(0, 50).length,
           },
         };
-        const jsonCoOutArg = parseArg(commandArgs, '--output', '-o');
-        let resolvedJsonCoOutput: string | undefined;
-        if (jsonCoOutArg !== null) {
-          const abs = path.resolve(process.cwd(), jsonCoOutArg);
-          const cwd = process.cwd();
-          if (!abs.startsWith(cwd + path.sep) && abs !== cwd) {
-            process.stdout.write(JSON.stringify({ command: 'recommend', status: 'error', error: '--output path must stay within the current directory' }) + '\n');
-            return 2;
-          }
-          resolvedJsonCoOutput = abs;
+        const resolvedJsonCoOutput = resolveOutputArg(commandArgs);
+        if (resolvedJsonCoOutput !== null && !isWithinCwd(resolvedJsonCoOutput)) {
+          process.stdout.write(JSON.stringify({ command: 'recommend', status: 'error', error: '--output path must stay within the current directory' }) + '\n');
+          return 2;
         }
         const jsonCoFormatted = createFormatter(format).format(scanReport);
-        if (resolvedJsonCoOutput !== undefined) {
-          try {
-            fs.writeFileSync(resolvedJsonCoOutput, jsonCoFormatted);
-            process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${resolvedJsonCoOutput}\n`);
-          } catch (err: unknown) {
-            process.stdout.write(JSON.stringify({ command: 'recommend', status: 'error', error: `Failed to write output: ${err instanceof Error ? err.message : String(err)}` }) + '\n');
-            return 1;
-          }
+        if (resolvedJsonCoOutput !== null) {
+          const writeErr = writeFormattedJson(jsonCoFormatted, format, resolvedJsonCoOutput, 'recommend');
+          if (writeErr !== null) return writeErr;
         } else {
           process.stdout.write(jsonCoFormatted);
         }
@@ -2363,26 +2342,15 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
           recommendationCount: recs.length,
         },
       };
-      const jsonRecOutArg = parseArg(commandArgs, '--output', '-o');
-      let resolvedJsonRecOutput: string | undefined;
-      if (jsonRecOutArg !== null) {
-        const abs = path.resolve(process.cwd(), jsonRecOutArg);
-        const cwd = process.cwd();
-        if (!abs.startsWith(cwd + path.sep) && abs !== cwd) {
-          process.stdout.write(JSON.stringify({ command: 'recommend', status: 'error', error: '--output path must stay within the current directory' }) + '\n');
-          return 2;
-        }
-        resolvedJsonRecOutput = abs;
+      const resolvedJsonRecOutput = resolveOutputArg(commandArgs);
+      if (resolvedJsonRecOutput !== null && !isWithinCwd(resolvedJsonRecOutput)) {
+        process.stdout.write(JSON.stringify({ command: 'recommend', status: 'error', error: '--output path must stay within the current directory' }) + '\n');
+        return 2;
       }
       const jsonRecFormatted = createFormatter(format).format(scanReport);
-      if (resolvedJsonRecOutput !== undefined) {
-        try {
-          fs.writeFileSync(resolvedJsonRecOutput, jsonRecFormatted);
-          process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${resolvedJsonRecOutput}\n`);
-        } catch (err: unknown) {
-          process.stdout.write(JSON.stringify({ command: 'recommend', status: 'error', error: `Failed to write output: ${err instanceof Error ? err.message : String(err)}` }) + '\n');
-          return 1;
-        }
+      if (resolvedJsonRecOutput !== null) {
+        const writeErr = writeFormattedJson(jsonRecFormatted, format, resolvedJsonRecOutput, 'recommend');
+        if (writeErr !== null) return writeErr;
       } else {
         process.stdout.write(jsonRecFormatted);
       }
@@ -2639,26 +2607,15 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
           recommendationCount: securityResult.findings.length,
         },
       };
-      const jsonSecOutArg = parseArg(commandArgs, '--output', '-o');
-      let resolvedJsonSecOutput: string | undefined;
-      if (jsonSecOutArg !== null) {
-        const abs = path.resolve(process.cwd(), jsonSecOutArg);
-        const cwd = process.cwd();
-        if (!abs.startsWith(cwd + path.sep) && abs !== cwd) {
-          process.stdout.write(JSON.stringify({ command: 'security', status: 'error', error: '--output path must stay within the current directory' }) + '\n');
-          return 2;
-        }
-        resolvedJsonSecOutput = abs;
+      const resolvedJsonSecOutput = resolveOutputArg(commandArgs);
+      if (resolvedJsonSecOutput !== null && !isWithinCwd(resolvedJsonSecOutput)) {
+        process.stdout.write(JSON.stringify({ command: 'security', status: 'error', error: '--output path must stay within the current directory' }) + '\n');
+        return 2;
       }
       const jsonSecFormatted = createFormatter(format).format(scanReport);
-      if (resolvedJsonSecOutput !== undefined) {
-        try {
-          fs.writeFileSync(resolvedJsonSecOutput, jsonSecFormatted);
-          process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${resolvedJsonSecOutput}\n`);
-        } catch (err: unknown) {
-          process.stdout.write(JSON.stringify({ command: 'security', status: 'error', error: `Failed to write output: ${err instanceof Error ? err.message : String(err)}` }) + '\n');
-          return 1;
-        }
+      if (resolvedJsonSecOutput !== null) {
+        const writeErr = writeFormattedJson(jsonSecFormatted, format, resolvedJsonSecOutput, 'security');
+        if (writeErr !== null) return writeErr;
       } else {
         process.stdout.write(jsonSecFormatted);
       }
@@ -2806,26 +2763,15 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
           recommendationCount: impact.findings.length,
         },
       };
-      const jsonCiOutArg = parseArg(commandArgs, '--output', '-o');
-      let resolvedJsonCiOutput: string | undefined;
-      if (jsonCiOutArg !== null) {
-        const abs = path.resolve(process.cwd(), jsonCiOutArg);
-        const cwd = process.cwd();
-        if (!abs.startsWith(cwd + path.sep) && abs !== cwd) {
-          process.stdout.write(JSON.stringify({ command: 'cost-impact', status: 'error', error: '--output path must stay within the current directory' }) + '\n');
-          return 2;
-        }
-        resolvedJsonCiOutput = abs;
+      const resolvedJsonCiOutput = resolveOutputArg(commandArgs);
+      if (resolvedJsonCiOutput !== null && !isWithinCwd(resolvedJsonCiOutput)) {
+        process.stdout.write(JSON.stringify({ command: 'cost-impact', status: 'error', error: '--output path must stay within the current directory' }) + '\n');
+        return 2;
       }
       const jsonCiFormatted = createFormatter(format).format(scanReport);
-      if (resolvedJsonCiOutput !== undefined) {
-        try {
-          fs.writeFileSync(resolvedJsonCiOutput, jsonCiFormatted);
-          process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${resolvedJsonCiOutput}\n`);
-        } catch (err: unknown) {
-          process.stdout.write(JSON.stringify({ command: 'cost-impact', status: 'error', error: `Failed to write output: ${err instanceof Error ? err.message : String(err)}` }) + '\n');
-          return 1;
-        }
+      if (resolvedJsonCiOutput !== null) {
+        const writeErr = writeFormattedJson(jsonCiFormatted, format, resolvedJsonCiOutput, 'cost-impact');
+        if (writeErr !== null) return writeErr;
       } else {
         process.stdout.write(jsonCiFormatted);
       }
