@@ -84,6 +84,10 @@ describe('checkEC2001 — idle instance', () => {
     expect(rec!.impact).toBe('high');
     // Savings = monthlyCost − ebsMonthlyCost. No EBS volumes set → savings = full cost = 200.
     expect(rec!.estimatedSavings).toBeCloseTo(200, 2);
+    expect(rec!.currentConfig).toMatchObject({
+      state: 'running',
+      instance_type: expect.any(String),
+    });
   });
 
   it('does not fire when CPU >= threshold, no utilization data, wrong type, or 0 dataPoints', () => {
@@ -229,7 +233,11 @@ describe('checkEC2004 — oversized instance (CPU P95 < rightsizeCPUThreshold)',
     expect(rec!.impact).toBe('high');
     expect(rec!.suggestedConfig!.instance_type).toBe('m5.large');
     expect(rec!.currentConfig!.cpu_p95_pct).toBe(20);
-    expect(rec!.estimatedSavings).toBeGreaterThan(0);
+    expect(rec!.risk).toBe('low');
+    expect(rec!.suggestedAction).toContain('rightsize');
+    expect(rec!.suggestedConfig).toHaveProperty('instance_type');
+    // m5.xlarge (0.192/hr) → m5.large (0.096/hr): (0.096)*730 ≈ 70.08 USD/mo saved
+    expect(rec!.estimatedSavings).toBeCloseTo(70.08, 0);
   });
 
   it('does not fire when CPU P95 >= 30%, metal type, memory-bound, network-intensive, or IOPS-intensive', () => {
@@ -321,7 +329,8 @@ describe('checkEC2007 — t2 to t3 upgrade', () => {
     expect(rec!.ruleId).toBe('EC2-007');
     expect(rec!.suggestedConfig!.instance_type).toBe('t3.large');
     expect(rec!.currentConfig!.instance_type).toBe('t2.large');
-    expect(rec!.estimatedSavings).toBeGreaterThanOrEqual(0);
+    // t2.large not in pricing table → falls back to monthlyCost * ec2T2T3Multiplier = 80 * 0.10 = 8
+    expect(rec!.estimatedSavings).toBe(8);
 
     expect(checkEC2007(makeEC2({ instanceType: 't2.medium' }), cfg)!.suggestedConfig!.instance_type).toBe('t3.medium');
     expect(checkEC2007(makeEC2({ instanceType: 't2.xlarge' }), cfg)!.suggestedConfig!.instance_type).toBe('t3.xlarge');
@@ -504,9 +513,14 @@ describe('checkEC2012 — IMDSv2 not enforced', () => {
 
 describe('checkEC2013 — instance running more than 1 year', () => {
   it('fires for running instance older than 365 days', () => {
+    const launchTime = new Date(Date.now() - 400 * 86_400_000).toISOString();
+    const ageMs = Date.now() - new Date(launchTime).getTime();
+    const ageDays = ageMs / 86_400_000;
+    // Confirm the test resource is definitively above the 365-day boundary
+    expect(ageDays).toBeGreaterThan(365);
     const r = makeEC2({
       state: 'running',
-      launchTime: new Date(Date.now() - 400 * 86_400_000).toISOString(),
+      launchTime,
       configuration: { monthlyCost: 150 },
     });
     const rec = checkEC2013(r, cfg);
@@ -718,4 +732,94 @@ describe('suggestRDSRightsize / suggestCacheRightsize — early-return at minimu
     expect(result).not.toBe('db.m5.large');
     expect(result.startsWith('db.')).toBe(true);
   });
+});
+
+// ─── Boundary conditions for EC2-004 (oversized) ──────────────────────────────
+// Tests that guard-condition boundaries behave correctly (off-by-one safety).
+// EC2-004 guards use strict `>` comparisons (not `>=`), so at exactly the
+// threshold value the guard does NOT skip — the rule can still fire.
+
+describe('EC2-004 — exact boundary values for exclusion guards', () => {
+  // Hardcoded thresholds from the rule (not in THRESHOLDS config)
+  const MEMORY_BOUND_MB = 2000;
+  const NETWORK_BOUND_MB = 100_000;
+
+  function makeUtil30Low(overrides = {}) {
+    return {
+      period: '30d' as const,
+      cpuAverage: 5,
+      cpuMax: 12,
+      cpuP95: 10,
+      cpuP99: 15,
+      memoryAverage: 0,
+      memoryMax: 0,
+      memoryP95: 0,
+      networkInMB: 0,
+      networkOutMB: 0,
+      diskReadIOPS: 0,
+      diskWriteIOPS: 0,
+      connectionCount: 0,
+      connectionCountMax: 0,
+      dataPoints: 500,
+      dataGaps: 0,
+      freshnessHrs: 1,
+      ...overrides,
+    };
+  }
+
+  // Guards use strict `>`, so at exactly the threshold the guard does NOT skip.
+
+  it('skips (returns null) when memoryAverage is 1 above threshold', () => {
+    const r = makeEC2({ utilization: makeUtil30Low({ memoryAverage: MEMORY_BOUND_MB + 1 }) });
+    expect(checkEC2004(r, cfg)).toBeNull();
+  });
+
+  it('can fire when memoryAverage equals the threshold exactly (guard is >)', () => {
+    const r = makeEC2({
+      instanceType: 'm5.xlarge',
+      configuration: { monthlyCost: 150 },
+      utilization: makeUtil30Low({ memoryAverage: MEMORY_BOUND_MB }),
+    });
+    expect(checkEC2004(r, cfg)).not.toBeNull();
+  });
+
+  it('skips when networkOutMB is 1 above threshold', () => {
+    const r = makeEC2({ utilization: makeUtil30Low({ networkOutMB: NETWORK_BOUND_MB + 1 }) });
+    expect(checkEC2004(r, cfg)).toBeNull();
+  });
+
+  it('skips when combined IOPS exceeds 5000', () => {
+    const r = makeEC2({
+      utilization: makeUtil30Low({ diskReadIOPS: 2500, diskWriteIOPS: 2501 }),
+    });
+    expect(checkEC2004(r, cfg)).toBeNull();
+  });
+});
+
+// ─── estimatedSavings invariant ───────────────────────────────────────────────
+// All rules must emit non-negative savings. Negative values break cost aggregations.
+
+describe('estimatedSavings invariant — all EC2 rules must emit >= 0', () => {
+  const resources: Resource[] = [
+    makeEC2({ utilization: { period: '30d', cpuAverage: 1, cpuMax: 2, cpuP95: 1.5, cpuP99: 1.8, memoryAverage: 0, memoryMax: 0, memoryP95: 0, networkInMB: 0, networkOutMB: 0, diskReadIOPS: 0, diskWriteIOPS: 0, connectionCount: 0, connectionCountMax: 0, dataPoints: 500, dataGaps: 0, freshnessHrs: 1 }, configuration: { monthlyCost: 100 } }),
+    makeEC2({ state: 'stopped', launchTime: new Date(Date.now() - 10 * 86_400_000).toISOString(), configuration: { monthlyCost: 50 } }),
+    makeEC2({ instanceType: 'm3.large', configuration: { platform: 'Linux', monthlyCost: 80 } }),
+  ];
+
+  const ruleFns = [
+    checkEC2001, checkEC2002, checkEC2003, checkEC2004, checkEC2005,
+    checkEC2006, checkEC2007, checkEC2008,
+  ];
+
+  for (const r of resources) {
+    for (const fn of ruleFns) {
+      it(`${fn.name}(${r.instanceType}) → savings >= 0`, () => {
+        const rec = (fn as (r: Resource, cfg: typeof THRESHOLDS) => typeof rec)(r, cfg);
+        if (rec !== null) {
+          expect(rec.estimatedSavings).toBeGreaterThanOrEqual(0);
+          expect(Number.isFinite(rec.estimatedSavings)).toBe(true);
+        }
+      });
+    }
+  }
 });

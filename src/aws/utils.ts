@@ -30,7 +30,8 @@ function tagsToRecord<T extends Record<string, string | undefined>>(
   const map: Record<string, string> = {};
   for (const t of tags) {
     const k = t[keyField];
-    if (k) map[k] = t[valueField] ?? '';
+    const v = t[valueField];
+    if (k && v !== null && v !== undefined) map[k] = v;
   }
   return map;
 }
@@ -50,4 +51,3 @@ export function tagsToMap(tags: Array<{ Key?: string | undefined; Value?: string
 export function tagsToMapLower(tags: Array<{ key?: string | undefined; value?: string | undefined }> | undefined): Record<string, string> {
   return tagsToRecord(tags as Array<Record<string, string | undefined>>, 'key', 'value');
 }
-

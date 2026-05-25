@@ -162,6 +162,7 @@ function isConfigIndependentView(view: View): boolean {
     || view.kind === 'pricing'
     || view.kind === 'mcp'
     || view.kind === 'cost-impact'
+    || view.kind === 'rules'
     || view.kind === 'security'
     || view.kind === 'unknown';
 }

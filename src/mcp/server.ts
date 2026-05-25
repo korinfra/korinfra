@@ -218,7 +218,9 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
     const now = Date.now();
     for (const [id, s] of sessions) {
       if (now - s.lastActivityAt > SESSION_IDLE_TIMEOUT_MS) {
-        void s.transport.close();
+        void s.transport.close().catch((err: unknown) => {
+          logger.debug({ sessionId: id, error: String(err) }, '[mcp] Session close error (non-fatal)');
+        });
         sessions.delete(id);
       }
     }
@@ -441,7 +443,9 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
           }
           if (oldestId !== undefined) {
             const evicted = sessions.get(oldestId);
-            if (evicted) void evicted.transport.close();
+            if (evicted) void evicted.transport.close().catch((err: unknown) => {
+              logger.debug({ sessionId: oldestId, error: String(err) }, '[mcp] Evicted session close error (non-fatal)');
+            });
             sessions.delete(oldestId);
             logger.debug({ sessionId: oldestId }, '[mcp] Evicted oldest session (LRU)');
           }

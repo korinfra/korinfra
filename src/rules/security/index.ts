@@ -17,7 +17,6 @@ import { networkRules } from './network.js';
 import { lambdaRules } from './lambda.js';
 import { encryptionRules } from './encryption.js';
 import { miscRules } from './misc.js';
-import { ecsRules } from './ecs.js';
 
 
 /** All built-in security rules — mirrors Go builtinRules slice. */
@@ -30,7 +29,6 @@ export const allSecurityRules: SecurityRule[] = [
   ...lambdaRules,
   ...encryptionRules,
   ...miscRules,
-  ...ecsRules,
 ];
 
 /**

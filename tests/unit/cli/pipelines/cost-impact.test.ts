@@ -64,4 +64,56 @@ describe('extractCostImpact', () => {
     expect(view.changes).toEqual([]);
     expect(view.findings).toEqual([]);
   });
+
+  // ─── Immutability regression ────────────────────────────────────────────────
+  // extractCostImpact must return COPIES of the arrays stored in PipelineContext.
+  // A caller that mutates the returned arrays must not corrupt the cached result.
+
+  it('returns independent copies of arrays — caller mutations do not corrupt the cache', () => {
+    const finding = {
+      ruleId: 'RDS-002',
+      address: 'aws_db_instance.api',
+      severity: 'high',
+      title: 'No Multi-AZ',
+      description: 'desc',
+    };
+    const ctx = makeCtx({
+      cost_impact: {
+        summary: { netDeltaMonthlyUsd: 10 },
+        changes: [{ action: 'create', address: 'aws_instance.web', deltaUsd: 10 }],
+        findings: [finding],
+        warnings: ['warn-1'],
+      },
+    });
+
+    const view1 = extractCostImpact(ctx);
+    expect(view1.findings).toHaveLength(1);
+
+    // Mutate the returned arrays in-place
+    view1.findings.splice(0, 1);
+    view1.changes.push({ action: 'destroy', address: 'injected', deltaUsd: -99 } as never);
+    view1.warnings.push('injected-warning');
+
+    // Second call must return the original unmodified data
+    const view2 = extractCostImpact(ctx);
+    expect(view2.findings).toHaveLength(1);
+    expect(view2.findings[0]?.ruleId).toBe('RDS-002');
+    expect(view2.changes).toHaveLength(1);
+    expect(view2.warnings).toEqual(['warn-1']);
+  });
+
+  it('returned arrays are not reference-equal to stored arrays', () => {
+    const raw = {
+      summary: { netDeltaMonthlyUsd: 5 },
+      changes: [{ action: 'create', address: 'a', deltaUsd: 5 }],
+      findings: [] as unknown[],
+      warnings: [] as string[],
+    };
+    const ctx = makeCtx({ cost_impact: raw });
+
+    const view = extractCostImpact(ctx);
+    expect(view.changes).not.toBe(raw.changes);
+    expect(view.findings).not.toBe(raw.findings);
+    expect(view.warnings).not.toBe(raw.warnings);
+  });
 });

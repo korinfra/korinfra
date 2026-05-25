@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractNextToken, buildCmdOptions } from '../../../src/aws/utils.js';
+import { extractNextToken, buildCmdOptions, tagsToMap, tagsToMapLower } from '../../../src/aws/utils.js';
 
 // ─── extractNextToken ─────────────────────────────────────────────────────────
 
@@ -61,5 +61,83 @@ describe('buildCmdOptions', () => {
 
     expect(result).toEqual({ abortSignal: controller.signal });
     expect(result['abortSignal']?.aborted).toBe(true);
+  });
+});
+
+// ─── tagsToMap / tagsToMapLower ───────────────────────────────────────────────
+
+describe('tagsToMap', () => {
+  it('returns empty object for undefined input', () => {
+    expect(tagsToMap(undefined)).toEqual({});
+  });
+
+  it('returns empty object for empty array', () => {
+    expect(tagsToMap([])).toEqual({});
+  });
+
+  it('converts well-formed tags to a plain key-value map', () => {
+    expect(tagsToMap([
+      { Key: 'Env', Value: 'prod' },
+      { Key: 'Team', Value: 'platform' },
+    ])).toEqual({ Env: 'prod', Team: 'platform' });
+  });
+
+  it('skips tags with undefined Key', () => {
+    const result = tagsToMap([
+      { Key: undefined, Value: 'orphan' },
+      { Key: 'Name', Value: 'api' },
+    ]);
+    expect(result).toEqual({ Name: 'api' });
+    expect(Object.keys(result)).toHaveLength(1);
+  });
+
+  // ─── Null / undefined Value regression ─────────────────────────────────────
+  // AWS tags with a null or undefined Value must be OMITTED from the result map.
+  // Old code stored '' via `?? ''`, making `'Key' in tags` return true for
+  // tags that should be absent — hiding compliance violations.
+
+  it('omits tags with undefined Value (compliance fix)', () => {
+    const result = tagsToMap([{ Key: 'Environment', Value: undefined }]);
+    expect(result).toEqual({});
+    expect('Environment' in result).toBe(false);
+  });
+
+  it('omits tags with null Value (compliance fix)', () => {
+    // AWS can return null for tags on some resource types
+    const result = tagsToMap([{ Key: 'Environment', Value: null as unknown as undefined }]);
+    expect(result).toEqual({});
+    expect('Environment' in result).toBe(false);
+  });
+
+  it('omits undefined-Value tags but keeps tags with a real value', () => {
+    const result = tagsToMap([
+      { Key: 'MissingTag', Value: undefined },
+      { Key: 'PresentTag', Value: 'yes' },
+    ]);
+    expect(result).toEqual({ PresentTag: 'yes' });
+    expect('MissingTag' in result).toBe(false);
+  });
+
+  it('keeps tags whose Value is the empty string (explicitly set to "")', () => {
+    const result = tagsToMap([{ Key: 'AllowedEmpty', Value: '' }]);
+    expect(result).toEqual({ AllowedEmpty: '' });
+  });
+});
+
+describe('tagsToMapLower', () => {
+  it('converts lowercase-keyed tag objects', () => {
+    expect(tagsToMapLower([
+      { key: 'env', value: 'staging' },
+      { key: 'app', value: 'backend' },
+    ])).toEqual({ env: 'staging', app: 'backend' });
+  });
+
+  it('omits entries with undefined value (same rule as tagsToMap)', () => {
+    const result = tagsToMapLower([
+      { key: 'missing', value: undefined },
+      { key: 'present', value: 'ok' },
+    ]);
+    expect(result).toEqual({ present: 'ok' });
+    expect('missing' in result).toBe(false);
   });
 });

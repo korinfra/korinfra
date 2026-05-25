@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { checkECS001, checkECS002, checkECS003, checkECS004 } from '../../../../src/rules/cost/ecs.js';
 import { THRESHOLDS } from '../../../../src/rules/config.js';
+import { FARGATE_LINUX_VCPU_HOURLY, FARGATE_LINUX_MEMORY_HOURLY, HOURS_PER_MONTH } from '../../../../src/pricing/resources.js';
 import type { Resource } from '../../../../src/aws/types.js';
 
 const cfg = THRESHOLDS;
@@ -95,9 +96,9 @@ describe('checkECS002 — EC2 launch type', () => {
     const rec = checkECS002(r, cfg);
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('ECS-002');
-    // Savings = ec2Cost − fargateMonthlyCost. With cpu=1024 (1 vCPU), memory=2048 (2 GB),
-    // desired_count=4: fargate = (1*0.04048 + 2*0.004445)*730*4 ≈ 144.16 → savings ≈ 355.84
-    expect(rec!.estimatedSavings).toBeCloseTo(355.84, 0);
+    // Savings = ec2Cost − fargateMonthlyCost. With cpu=1024 (1 vCPU), memory=2048 (2 GB), desired_count=4:
+    const fargateMonthlyCost = (FARGATE_LINUX_VCPU_HOURLY + 2 * FARGATE_LINUX_MEMORY_HOURLY) * HOURS_PER_MONTH * 4;
+    expect(rec!.estimatedSavings).toBeCloseTo(500 - fargateMonthlyCost, 0);
     expect(rec!.suggestedAction).toBe('migrate_to_fargate');
     expect(rec!.confidence).toBe(0.7);
     expect(rec!.currentConfig).toMatchObject({ launch_type: 'EC2' });
@@ -150,7 +151,7 @@ describe('checkECS003 — over-provisioned ECS service', () => {
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('ECS-003');
     expect(rec!.impact).toBe('medium');
-    expect(rec!.estimatedSavings).toBeCloseTo(240);
+    expect(rec!.estimatedSavings).toBeCloseTo(800 * cfg.ecsOverProvisionedSavingsMultiplier);
 
     // halves desired_count
     const r2 = makeECSService({ utilization: makeUtil(5.0), configuration: { launch_type: 'FARGATE', desired_count: 8, running_count: 8, monthlyCost: 600 } });

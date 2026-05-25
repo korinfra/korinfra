@@ -53,7 +53,7 @@ describe('checkS3001 — no lifecycle policy', () => {
     expect(rec!.confidence).toBe(0.7);
     expect(rec!.impact).toBe('medium');
     expect(rec!.risk).toBe('low');
-    expect(rec!.estimatedSavings).toBeCloseTo(30);
+    expect(rec!.estimatedSavings).toBeCloseTo(200 * cfg.s3LifecycleSavingsMultiplier);
     const steps = rec!.implementationSteps.join(' ');
     expect(steps).toContain('STANDARD_IA');
     expect(steps).toContain('GLACIER');
@@ -84,7 +84,7 @@ describe('checkS3002 — missing Intelligent-Tiering', () => {
     expect(rec!.suggestedAction).toBe('add_intelligent_tiering');
     expect(rec!.suggestedConfig).toMatchObject({ storage_class: 'INTELLIGENT_TIERING' });
     expect(rec!.confidence).toBe(0.6);
-    expect(rec!.estimatedSavings).toBeCloseTo(30);
+    expect(rec!.estimatedSavings).toBeCloseTo(300 * cfg.s3IntelligentTieringSavingsMultiplier);
     expect(rec!.currentConfig).toMatchObject({ lifecycle_rules_count: 2, has_intelligent_tiering: false });
 
     // has_lifecycle=true with 0 count also fires

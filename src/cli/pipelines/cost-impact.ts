@@ -23,7 +23,6 @@ export type CostImpactFinding = AnalyzePlanFinding;
 interface CostImpactPipelineOptions {
   planFile: string;
   currency?: string;
-  tfdir?: string;
 }
 
 export function buildCostImpactPipelineSteps(opts: CostImpactPipelineOptions): PipelineStep[] {
@@ -47,7 +46,6 @@ export function buildCostImpactPipelineSteps(opts: CostImpactPipelineOptions): P
         const result = await analyzePlanTool.handler({
           planFile: opts.planFile,
           ...(opts.currency !== undefined ? { currency: opts.currency } : {}),
-          ...(opts.tfdir !== undefined ? { tfdir: opts.tfdir } : {}),
         });
         return parseToolResult(result);
       },
@@ -76,8 +74,8 @@ export function extractCostImpact(ctx: PipelineContext): CostImpactView {
   if (raw === null || raw === undefined) return { ...EMPTY_VIEW };
   return {
     summary: { ...EMPTY_VIEW.summary, ...(raw.summary ?? {}) },
-    changes: Array.isArray(raw.changes) ? raw.changes : [],
-    findings: Array.isArray(raw.findings) ? raw.findings : [],
-    warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
+    changes: Array.isArray(raw.changes) ? [...raw.changes] : [],
+    findings: Array.isArray(raw.findings) ? [...raw.findings] : [],
+    warnings: Array.isArray(raw.warnings) ? [...raw.warnings] : [],
   };
 }

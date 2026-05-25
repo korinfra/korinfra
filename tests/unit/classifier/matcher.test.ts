@@ -149,10 +149,10 @@ describe('classifyResources — matching passes', () => {
     });
     const tf = makeTF({ name: 'other', configuration: { instance_type: 't3.medium', ami: 'ami-12345678', subnet_id: 'subnet-abc' } });
     const result = classifyResources([aws], [tf]);
-    // Guard removed — fixture guarantees a fuzzy match
+    // configSimilarity = 3/3 = 1.0; confidence = min(1.0 * 0.42, 0.42) = exactly 0.42
     expect(result.matched.length).toBeGreaterThan(0);
     expect(result.matched[0].matchType).toBe('fuzzy');
-    expect(result.matched[0].confidence).toBeLessThanOrEqual(0.42);
+    expect(result.matched[0].confidence).toBe(0.42);
   });
 
   it('Pass 4: no match when no comparable fields are shared', () => {

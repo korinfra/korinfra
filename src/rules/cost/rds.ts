@@ -529,10 +529,10 @@ export function checkRDS012(r: Resource, cfg: Cfg): Recommendation | null {
 
   if (!isExtended) return null;
 
-  // AWS RDS Extended Support billing: per-vCPU-hour
-  // Year 1: $0.12/vCPU/hr, Year 2+: $0.24/vCPU/hr
-  const EXTENDED_SUPPORT_RATE_YR1 = 0.12;
-  const EXTENDED_SUPPORT_RATE_YR2 = 0.24;
+  // AWS RDS Extended Support billing: per-vCPU-hour (us-east-1)
+  // Year 1-2: $0.10/vCPU/hr, Year 3+: $0.20/vCPU/hr
+  const EXTENDED_SUPPORT_RATE_YR1 = 0.10;
+  const EXTENDED_SUPPORT_RATE_YR2 = 0.20;
   const HOURS_PER_MONTH = 730;
 
   // Determine which year of extended support based on when it started

@@ -60,6 +60,10 @@ describe('checkELC001 — overprovisioned ElastiCache', () => {
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('ELC-001');
     expect(rec!.impact).toBe('medium');
+    expect(rec!.risk).toBe('medium');
+    expect(rec!.suggestedAction).toContain('rightsize_to_');
+    // confidenceFromUtilization(0.80, {period:'14d', dp:288, dg:0, freshness:1}) → falls through to base = 0.80
+    expect(rec!.confidence).toBe(0.80);
     expect(rec!.estimatedSavings).toBeCloseTo(152.57 * 0.5);
 
     const r2 = makeElastiCache({ instanceType: 'cache.m5.xlarge', utilization: makeUtil(4, 3.0), configuration: { engine: 'memcached', num_cache_nodes: 2, monthlyCost: 185.42 } });
@@ -84,8 +88,11 @@ describe('checkELC002 — previous-gen ElastiCache node type', () => {
     const rec1 = checkELC002(r1, cfg);
     expect(rec1).not.toBeNull();
     expect(rec1!.ruleId).toBe('ELC-002');
+    expect(rec1!.risk).toBe('low');
+    expect(rec1!.suggestedAction).toContain('upgrade_to_');
+    expect(rec1!.confidence).toBe(0.80); // CONF_COST_OPT
     expect(rec1!.suggestedConfig).toMatchObject({ node_type: 'cache.r7g.large' });
-    expect(rec1!.estimatedSavings).toBeCloseTo(9);
+    expect(rec1!.estimatedSavings).toBeCloseTo(180 * cfg.elastiCacheGravitonMultiplier);
 
     // m5 → m7g
     const r2 = makeElastiCache({ instanceType: 'cache.m5.xlarge', configuration: { engine: 'redis', monthlyCost: 185.42 } });
@@ -98,7 +105,7 @@ describe('checkELC002 — previous-gen ElastiCache node type', () => {
 
     // multi-node — savings on total cost
     const r4 = makeElastiCache({ instanceType: 'cache.r5.large', configuration: { engine: 'redis', num_cache_nodes: 3, monthlyCost: 540 } });
-    expect(checkELC002(r4, cfg)!.estimatedSavings).toBeCloseTo(27);
+    expect(checkELC002(r4, cfg)!.estimatedSavings).toBeCloseTo(540 * cfg.elastiCacheGravitonMultiplier);
   });
 
   it('does not fire for Graviton types, empty instanceType, or wrong resource type', () => {
@@ -126,6 +133,7 @@ describe('checkELC003 — idle ElastiCache cluster', () => {
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('ELC-003');
     expect(rec!.impact).toBe('high');
+    expect(rec!.risk).toBe('medium');
     expect(rec!.suggestedAction).toBe('delete');
     expect(rec!.confidence).toBe(0.85);
     expect(rec!.estimatedSavings).toBeCloseTo(11.17, 1);

@@ -98,6 +98,7 @@ export function purgeExpired(db: Driver): number {
 }
 
 export function getCacheStats(db: Driver): CacheStats {
+  const now = new Date().toISOString();
   const row = db.prepare(`
     SELECT
       COUNT(*) AS count,
@@ -105,7 +106,8 @@ export function getCacheStats(db: Driver): CacheStats {
       MIN(fetched_at) AS oldest_entry,
       MAX(fetched_at) AS newest_entry
     FROM pricing_cache
-  `).get() as Record<string, unknown>;
+    WHERE expires_at > ?
+  `).get(now) as Record<string, unknown>;
 
   return {
     count: (row['count'] as number) ?? 0,

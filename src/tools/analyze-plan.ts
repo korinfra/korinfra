@@ -7,8 +7,8 @@
  * would trigger after apply.
  */
 
-import { existsSync, statSync } from 'node:fs';
-import path, { resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import type { Resource } from '../aws/types.js';
 import { estimateMonthlyCost } from '../pricing/engine.js';
@@ -25,7 +25,7 @@ import {
   type NormalizedAction,
   type TaskDefIndex,
 } from '../terraform/plan-resource.js';
-import { normalizeResourceType, parseTerraformDir } from '../terraform/parser.js';
+import { normalizeResourceType } from '../terraform/parser.js';
 import type { TerraformResource } from '../terraform/types.js';
 import { logger } from '../utils/logger.js';
 
@@ -48,7 +48,6 @@ export interface AnalyzePlanChangeRow {
   deltaUsd: number;
   costStatus: CostStatus;
   triggeredRuleIds: string[];
-  filePath?: string;
 }
 
 export interface AnalyzePlanFinding {
@@ -58,7 +57,6 @@ export interface AnalyzePlanFinding {
   title: string;
   description: string;
   suggestedAction?: string;
-  filePath?: string;
 }
 
 export interface AnalyzePlanResult {
@@ -133,41 +131,20 @@ async function costForChange(
 export async function runAnalyzePlan(
   planFile: string,
   currency = 'USD',
-  options?: { tfdirPath?: string },
 ): Promise<AnalyzePlanResult> {
   const plan = await parsePlanFile(planFile);
   const planRegion = extractDefaultRegion(plan);
   const defaultRegion = planRegion ?? 'us-east-1';
-  const planWarnings: string[] = [];
   if (planRegion === null) {
     logger.debug({ planFile, defaultRegion }, 'Plan has no provider region — defaulting');
-    planWarnings.push(
-      'No AWS region found in plan provider config — defaulting to us-east-1. ' +
-      'Set a provider region block to avoid mispriced resources in non-US regions.',
-    );
   }
 
   const taskDefIndex = buildTaskDefIndex(plan.resource_changes);
 
-  // Build filePath index from --tfdir if provided
-  const filePathByAddress = new Map<string, string>();
   const changes: AnalyzePlanChangeRow[] = [];
   const afterResources: Resource[] = [];
   const afterTfResources: TerraformResource[] = [];
-
-  if (options?.tfdirPath !== undefined) {
-    try {
-      const tfResources = await parseTerraformDir(options.tfdirPath);
-      const cwd = process.cwd();
-      for (const r of tfResources) {
-        if (r.filePath !== '' && r.type !== 'module' && r.type !== 'variable' && r.type !== 'local') {
-          filePathByAddress.set(r.address, path.relative(cwd, r.filePath));
-        }
-      }
-    } catch (err) {
-      planWarnings.push(`--tfdir scan failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  const planWarnings: string[] = [];
 
   let createCount = 0;
   let updateCount = 0;
@@ -258,42 +235,6 @@ export async function runAnalyzePlan(
     });
   }
 
-  // Annotate synthesized resources with file paths when --tfdir was provided.
-  if (filePathByAddress.size > 0) {
-    const unmatchedModule: string[] = [];
-    const unmatchedRoot: string[] = [];
-    for (const res of afterResources) {
-      const fp = filePathByAddress.get(res.id);
-      if (fp !== undefined) {
-        res.configuration['file_path'] = fp; // consumed by cost rules via strConfig
-      } else if (res.id.startsWith('module.')) {
-        unmatchedModule.push(res.id);
-      } else {
-        unmatchedRoot.push(res.id);
-      }
-    }
-    for (const tfRes of afterTfResources) {
-      const fp = filePathByAddress.get(tfRes.address);
-      if (fp !== undefined) tfRes.filePath = fp; // consumed by security rule engine
-    }
-    // Populate filePath on change rows for display/downstream tooling.
-    for (const row of changes) {
-      const fp = filePathByAddress.get(row.address);
-      if (fp !== undefined) row.filePath = fp;
-    }
-    if (unmatchedModule.length > 0) {
-      planWarnings.push(
-        `${unmatchedModule.length} module resource(s) not matched in --tfdir ` +
-        `(module paths are not scanned): ${unmatchedModule.join(', ')}`,
-      );
-    }
-    if (unmatchedRoot.length > 0) {
-      planWarnings.push(
-        `${unmatchedRoot.length} resource(s) not matched in --tfdir: ${unmatchedRoot.join(', ')}`,
-      );
-    }
-  }
-
   // Run both rule engines over the post-apply state.
   const { recommendations: costRecs, warnings: costWarnings } = evaluateRules(
     afterResources,
@@ -311,7 +252,6 @@ export async function runAnalyzePlan(
     const key = `${ruleId}::${rec.resourceId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const fp = filePathByAddress.get(rec.resourceId);
     findings.push({
       ruleId,
       address: rec.resourceId,
@@ -319,14 +259,12 @@ export async function runAnalyzePlan(
       title: rec.title,
       description: rec.description,
       ...(rec.suggestedAction !== undefined ? { suggestedAction: rec.suggestedAction } : {}),
-      ...(fp !== undefined ? { filePath: fp } : {}),
     });
   }
   for (const f of securityFindings) {
     const key = `${f.ruleId}::${f.resource}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const fp = filePathByAddress.get(f.resource);
     findings.push({
       ruleId: f.ruleId,
       address: f.resource,
@@ -334,7 +272,6 @@ export async function runAnalyzePlan(
       title: f.title,
       description: f.description,
       ...(f.recommendation !== '' ? { suggestedAction: f.recommendation } : {}),
-      ...(fp !== undefined ? { filePath: fp } : {}),
     });
   }
 
@@ -406,11 +343,6 @@ export const analyzePlanTool: ToolDefinition = {
         type: 'string',
         description: 'Currency code for reasoning text in findings (default "USD").',
       },
-      tfdir: {
-        type: 'string',
-        description:
-          'Optional path to the Terraform source directory (.tf files). When supplied, findings include filePath for each matched resource address.',
-      },
     },
     required: ['planFile'],
     additionalProperties: false,
@@ -426,28 +358,27 @@ export const analyzePlanTool: ToolDefinition = {
         ? args['currency']
         : 'USD';
       const abs = resolve(planFile);
-      assertInsideRoot(abs, 'planFile');
+      // Check extension and containment on the unresolved path first so
+      // callers get the right error even when the file doesn't exist yet.
       if (!abs.toLowerCase().endsWith('.json')) {
         return errorResult(
           `planFile must be a .json file (terraform show -json output): ${abs}`,
         );
       }
-      if (!existsSync(abs)) {
-        return errorResult(`planFile does not exist: ${abs}`);
+      try { assertInsideRoot(abs, 'planFile'); }
+      catch (e) { return errorResult(e instanceof Error ? e.message : String(e)); }
+      // Resolve symlinks and re-validate containment to prevent traversal.
+      let realPlan: string;
+      try {
+        realPlan = realpathSync(abs);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT')
+          return errorResult(`planFile does not exist: ${abs}`);
+        return errorResult(`planFile symlink resolution failed: ${e instanceof Error ? e.message : String(e)}`);
       }
-
-      let tfdirPath: string | undefined;
-      const tfdirArg = args['tfdir'];
-      if (typeof tfdirArg === 'string' && tfdirArg !== '') {
-        const absTfdir = resolve(tfdirArg);
-        assertInsideRoot(absTfdir, 'tfdir');
-        if (!existsSync(absTfdir) || !statSync(absTfdir).isDirectory()) {
-          return errorResult(`tfdir does not exist or is not a directory: ${absTfdir}`);
-        }
-        tfdirPath = absTfdir;
-      }
-
-      const result = await runAnalyzePlan(abs, currency, ...(tfdirPath !== undefined ? [{ tfdirPath }] : []));
+      try { assertInsideRoot(realPlan, 'planFile'); }
+      catch (e) { return errorResult(e instanceof Error ? e.message : String(e)); }
+      const result = await runAnalyzePlan(realPlan, currency);
       return jsonResult(redactObject(result, 'moderate'));
     } catch (err) {
       return errorResult(err);

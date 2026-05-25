@@ -22,9 +22,9 @@ describe('stringWidth', () => {
     expect(stringWidth(ansi)).toBe(3);
   });
 
-  it('measures emoji as wider than 1', () => {
-    // emoji like 🎉 are usually width 2
-    expect(stringWidth('🎉')).toBeGreaterThanOrEqual(1);
+  it('measures emoji as width 2', () => {
+    // party popper emoji is deterministically width 2 in terminal rendering
+    expect(stringWidth('🎉')).toBe(2);
   });
 });
 

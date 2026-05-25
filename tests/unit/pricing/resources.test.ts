@@ -1,19 +1,25 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   estimateEC2Cost,
+  estimateEC2CostSync,
   estimateEBSCost,
   estimateS3Cost,
   estimateLambdaCost,
   estimateNATGatewayCost,
   estimateEIPCost,
   estimateRDSCost,
+  estimateRDSCostSync,
   estimateELBCost,
   estimateECSCost,
+  estimateDynamoDBCost,
+  estimateElastiCacheCost,
+  FALLBACK_EC2_PRICES,
+  FALLBACK_RDS_PRICES,
   FARGATE_LINUX_VCPU_HOURLY,
   FARGATE_LINUX_MEMORY_HOURLY,
-  FARGATE_ARM_VCPU_HOURLY,
-  FARGATE_ARM_MEMORY_HOURLY,
   HOURS_PER_MONTH,
+  DYNAMO_FREE_STORAGE_GB,
+  DYNAMO_STORAGE_PER_GB,
 } from '../../../src/pricing/resources.js';
 
 // ─── EC2 ─────────────────────────────────────────────────────────────────────
@@ -88,10 +94,9 @@ describe('estimateLambdaCost', () => {
     expect(estimateLambdaCost(512, 100, 0)).toBe(0);
     expect(estimateLambdaCost(512, 100, 1_000_000)).toBe(0); // both tiers in free tier
 
-    // 2M requests: 1M billable
+    // 2M requests: 1M billable at $0.20/1M; duration well under 400k GB-s free tier → $0.20 exactly
     const twoMillion = estimateLambdaCost(512, 1, 2_000_000);
-    expect(twoMillion).toBeGreaterThan(0.19);
-    expect(twoMillion).toBeLessThan(0.25);
+    expect(twoMillion).toBe(0.20);
 
     // 1GB * 1s * 1M - 400k free = 600k billable GB-s
     const gbSeconds = estimateLambdaCost(1024, 1000, 1_000_000);
@@ -100,66 +105,6 @@ describe('estimateLambdaCost', () => {
     // High traffic: request + duration costs accumulate
     const highTraffic = estimateLambdaCost(512, 200, 10_000_000);
     expect(highTraffic).toBeCloseTo(1.80 + 600_000 * 0.0000166667, 1);
-  });
-});
-
-// ─── Lambda arm64 ─────────────────────────────────────────────────────────────
-
-describe('estimateLambdaCost — arm64 vs x86_64', () => {
-  it('arm64 costs ~20% less than x86_64 for identical usage above free tier', () => {
-    const invocations = 10_000_000; // 9M billable
-    const durationMs = 500;
-    const memoryMB = 512;
-
-    const x86Cost = estimateLambdaCost(memoryMB, durationMs, invocations, 'x86_64');
-    const armCost = estimateLambdaCost(memoryMB, durationMs, invocations, 'arm64');
-
-    expect(armCost).toBeGreaterThan(0);
-    expect(armCost).toBeLessThan(x86Cost);
-    // arm64 GB-second price is 0.0000133334 vs 0.0000166667 = 20% cheaper
-    const ratio = armCost / x86Cost;
-    expect(ratio).toBeGreaterThan(0.75);
-    expect(ratio).toBeLessThan(0.90);
-  });
-
-  it('arm64 GB-second price is exactly $0.0000133334', () => {
-    // 1024 MB = 1 GB; 1000ms = 1s; 1M invocations (all in free request tier)
-    // GB-seconds = 1 * 1 * 1,000,000 = 1,000,000; billable = 1,000,000 - 400,000 = 600,000
-    const cost = estimateLambdaCost(1024, 1000, 1_000_000, 'arm64');
-    // No request cost (1M ≤ free tier); only duration cost
-    expect(cost).toBeCloseTo(600_000 * 0.0000133334, 4);
-  });
-});
-
-// ─── ECS Fargate ARM ──────────────────────────────────────────────────────────
-
-describe('estimateECSCost — ARM vs x86_64', () => {
-  it('ARM Fargate costs ~20% less than x86 for identical vCPU/memory', () => {
-    const cpuVcpus = 2;
-    const memoryGB = 4;
-
-    const x86Cost = estimateECSCost(cpuVcpus, memoryGB, 'X86_64');
-    const armCost = estimateECSCost(cpuVcpus, memoryGB, 'ARM64');
-
-    expect(armCost).toBeGreaterThan(0);
-    expect(armCost).toBeLessThan(x86Cost);
-    const ratio = armCost / x86Cost;
-    expect(ratio).toBeGreaterThan(0.75);
-    expect(ratio).toBeLessThan(0.90);
-  });
-
-  it('x86_64 cost matches FARGATE_LINUX constants', () => {
-    const cost = estimateECSCost(1, 2, 'X86_64');
-    expect(cost).toBeCloseTo((FARGATE_LINUX_VCPU_HOURLY + 2 * FARGATE_LINUX_MEMORY_HOURLY) * HOURS_PER_MONTH, 4);
-  });
-
-  it('ARM64 cost matches FARGATE_ARM constants', () => {
-    const cost = estimateECSCost(1, 2, 'ARM64');
-    expect(cost).toBeCloseTo((FARGATE_ARM_VCPU_HOURLY + 2 * FARGATE_ARM_MEMORY_HOURLY) * HOURS_PER_MONTH, 4);
-  });
-
-  it('defaults to x86_64 when architecture is omitted', () => {
-    expect(estimateECSCost(1, 2)).toBeCloseTo(estimateECSCost(1, 2, 'X86_64'), 6);
   });
 });
 
@@ -183,7 +128,7 @@ describe('estimateEIPCost', () => {
 describe('estimateRDSCost', () => {
   it('prices single-AZ, multi-AZ (2x), storage surcharge, and returns 0 for empty class', async () => {
     const singleAZ = await estimateRDSCost(null, 'db.t3.medium', 'mysql', false, 0, 'us-east-1');
-    expect(singleAZ).toBeCloseTo(0.072 * 730, 2);
+    expect(singleAZ).toBeCloseTo(0.068 * 730, 2);
 
     const multiAZ = await estimateRDSCost(null, 'db.t3.medium', 'mysql', true, 0, 'us-east-1');
     expect(multiAZ).toBeCloseTo(singleAZ * 2, 2);
@@ -246,9 +191,9 @@ describe('estimateRDSCost with live pricing client (multiAZ doubling fix)', () =
       0,
     );
 
-    // Fallback price for db.m5.large is 0.178, doubled to 0.356 for multiAZ
-    // Expected: 0.178 * 2 * 730 + 100 * 0.115
-    expect(cost).toBeCloseTo(0.178 * 2 * 730 + 100 * 0.115, 1);
+    // Fallback price for db.m5.large is 0.171, doubled to 0.342 for multiAZ
+    // Expected: 0.171 * 2 * 730 + 100 * 0.115
+    expect(cost).toBeCloseTo(0.171 * 2 * 730 + 100 * 0.115, 1);
   });
 
   it('does not apply doubling when multiAZ=false, regardless of client', async () => {
@@ -267,9 +212,9 @@ describe('estimateRDSCost with live pricing client (multiAZ doubling fix)', () =
       0,
     );
 
-    // Fallback price is 0.178, no doubling because multiAZ=false
-    // Expected: 0.178 * 730 + 100 * 0.115
-    expect(cost).toBeCloseTo(0.178 * 730 + 100 * 0.115, 1);
+    // Fallback price is 0.171, no doubling because multiAZ=false
+    // Expected: 0.171 * 730 + 100 * 0.115
+    expect(cost).toBeCloseTo(0.171 * 730 + 100 * 0.115, 1);
   });
 
   it('correctly uses cache key with multiAZ flag when querying client', async () => {
@@ -293,5 +238,68 @@ describe('estimateRDSCost with live pricing client (multiAZ doubling fix)', () =
       'us-east-1',
       true,
     );
+  });
+});
+
+// ─── estimateEC2CostSync ──────────────────────────────────────────────────────
+
+describe('estimateEC2CostSync', () => {
+  it('returns hourly * 730 for a known instance type', () => {
+    expect(estimateEC2CostSync('t3.large', 'us-east-1')).toBeCloseTo(FALLBACK_EC2_PRICES['t3.large']! * HOURS_PER_MONTH, 4);
+  });
+
+  it('returns 0 for an unknown instance type', () => {
+    expect(estimateEC2CostSync('x9.superlarge', 'us-east-1')).toBe(0);
+  });
+});
+
+// ─── estimateRDSCostSync ──────────────────────────────────────────────────────
+
+describe('estimateRDSCostSync', () => {
+  it('returns hourly * 730 for a known instance type', () => {
+    expect(estimateRDSCostSync('db.r6g.large', 'us-east-1')).toBeCloseTo(FALLBACK_RDS_PRICES['db.r6g.large']! * HOURS_PER_MONTH, 4);
+  });
+
+  it('returns 0 for an unknown instance type', () => {
+    expect(estimateRDSCostSync('db.z9.unknown', 'us-east-1')).toBe(0);
+  });
+});
+
+// ─── estimateECSCost ──────────────────────────────────────────────────────────
+
+describe('estimateECSCost', () => {
+  it('computes vCPU + memory Fargate cost for 0.25 vCPU / 0.5 GB', () => {
+    const expected = FARGATE_LINUX_VCPU_HOURLY * 0.25 * HOURS_PER_MONTH + FARGATE_LINUX_MEMORY_HOURLY * 0.5 * HOURS_PER_MONTH;
+    expect(estimateECSCost(0.25, 0.5)).toBeCloseTo(expected, 4);
+  });
+
+  it('1 vCPU / 2 GB is proportionally larger than 0.25 vCPU / 0.5 GB', () => {
+    expect(estimateECSCost(1, 2)).toBeGreaterThan(estimateECSCost(0.25, 0.5));
+  });
+});
+
+// ─── estimateDynamoDBCost — Cost Explorer path ────────────────────────────────
+
+describe('estimateDynamoDBCost — ceActualMonthlyUsd', () => {
+  it('returns ceActualMonthlyUsd directly when PAY_PER_REQUEST and no storage', async () => {
+    expect(await estimateDynamoDBCost(null, 'us-east-1', 'PAY_PER_REQUEST', 0, 0, 0, 50.0)).toBeCloseTo(50.0, 4);
+  });
+
+  it('returns 0 when PAY_PER_REQUEST and ceActualMonthlyUsd = 0', async () => {
+    expect(await estimateDynamoDBCost(null, 'us-east-1', 'PAY_PER_REQUEST', 0, 0, 0, 0)).toBe(0);
+  });
+
+  it('adds storage cost above free tier on top of CE cost', async () => {
+    const storageGB = DYNAMO_FREE_STORAGE_GB + 10;
+    const expected = 50.0 + 10 * DYNAMO_STORAGE_PER_GB;
+    expect(await estimateDynamoDBCost(null, 'us-east-1', 'PAY_PER_REQUEST', 0, 0, storageGB, 50.0)).toBeCloseTo(expected, 4);
+  });
+});
+
+// ─── estimateElastiCacheCost — unknown node type ──────────────────────────────
+
+describe('estimateElastiCacheCost — unknown node type', () => {
+  it('returns 0 for an unknown nodeType not in the fallback table', async () => {
+    expect(await estimateElastiCacheCost(null, 'cache.xxx.unknown', 1, 'us-east-1')).toBe(0);
   });
 });

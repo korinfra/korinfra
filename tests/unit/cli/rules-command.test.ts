@@ -49,7 +49,9 @@ describe('rules list — text output', () => {
     const handled = await runHeadlessTextCommand('rules', ['list', '--filter', 'ec2']);
     expect(handled).toBe(true);
     expect(captured).toContain('EC2-001');
-    expect(captured).not.toMatch(/RDS-\d+/);
+    expect(captured).not.toContain('RDS-');
+    expect(captured).not.toContain('EBS-');
+    expect(captured).toContain('EC2-');
     expect(captured).toContain('filter=ec2');
   });
 
@@ -187,10 +189,10 @@ describe('rules list — JSON output', () => {
       summary: { total: number; totalAllRules: number };
       rules: { category: string }[];
     };
+    const rdsRulesCount = ruleRegistry.filter((r) => r.category === 'rds').length;
     expect(parsed.filter).toBe('rds');
     expect(parsed.summary.totalAllRules).toBe(ruleRegistry.length);
-    expect(parsed.summary.total).toBeGreaterThan(0);
-    expect(parsed.summary.total).toBeLessThan(ruleRegistry.length);
+    expect(parsed.summary.total).toBe(rdsRulesCount);
     for (const rule of parsed.rules) {
       expect(rule.category).toBe('rds');
     }
@@ -284,5 +286,54 @@ describe('rules list — JSON output', () => {
     const parsed = JSON.parse(captured) as { status: string; error: string };
     expect(parsed.status).toBe('error');
     expect(parsed.error).toContain('--risk requires a value');
+  });
+});
+
+// ─── isRulesHeadless: flags must not force headless mode in text mode ─────────
+// Regression for: `korinfra rules --filter ec2` in a TTY was forced into headless
+// mode because isRulesHeadless checked args[1] !== undefined (any arg, including
+// flags). The fix restricts it to known subcommands only.
+//
+// runHeadlessTextCommand IS the headless path — so these tests confirm that the
+// headless text handler correctly handles flags as top-level args (not just when
+// called with 'list' subcommand).
+
+describe('rules — flags passed without subcommand', () => {
+  let stdoutSpy2: ReturnType<typeof vi.spyOn>;
+  let captured2: string;
+
+  beforeEach(() => {
+    captured2 = '';
+    stdoutSpy2 = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      captured2 += String(chunk);
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    stdoutSpy2.mockRestore();
+    process.exitCode = undefined;
+  });
+
+  it('--filter without subcommand returns filtered results (not an error)', async () => {
+    const handled = await runHeadlessTextCommand('rules', ['--filter', 'rds']);
+    expect(handled).toBe(true);
+    expect(captured2).toMatch(/RDS-\d+/);
+    expect(captured2).not.toContain('EC2-001');
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('--impact without subcommand filters by impact level', async () => {
+    const handled = await runHeadlessTextCommand('rules', ['--impact', 'high']);
+    expect(handled).toBe(true);
+    expect(captured2).toMatch(/EC2-001|EBS-001/);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('--filter and --impact combined without subcommand', async () => {
+    const handled = await runHeadlessTextCommand('rules', ['--filter', 'ec2', '--impact', 'high']);
+    expect(handled).toBe(true);
+    expect(captured2).toContain('EC2');
+    expect(process.exitCode).toBeUndefined();
   });
 });

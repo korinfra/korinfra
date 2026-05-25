@@ -43,6 +43,8 @@ describe('checkDDB001 — switch DynamoDB provisioned to on-demand', () => {
     const rec1 = checkDDB001(r1, cfg);
     expect(rec1).not.toBeNull();
     expect(rec1!.ruleId).toBe('DDB-001');
+    expect(rec1!.risk).toBe('high');
+    expect(rec1!.suggestedAction).toBe('switch_to_on_demand');
     expect(rec1!.confidence).toBe(0.55);
     expect(rec1!.suggestedConfig).toMatchObject({ billing_mode: 'PAY_PER_REQUEST' });
 
@@ -106,6 +108,10 @@ describe('checkDDB002 — DynamoDB provisioned without auto-scaling', () => {
     const rec = checkDDB002(r, cfg);
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('DDB-002');
+    expect(rec!.risk).toBe('low');
+    expect(rec!.suggestedAction).toBe('enable_auto_scaling');
+    // confidenceFromUtilization(0.80, undefined) → base = 0.80 (no utilization data)
+    expect(rec!.confidence).toBe(0.80);
     expect(rec!.suggestedConfig).toMatchObject({ auto_scaling_enabled: true });
     expect(rec!.estimatedSavings).toBe(60);
 

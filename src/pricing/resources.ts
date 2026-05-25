@@ -38,17 +38,9 @@ const S3_REDUCED_REDUNDANCY_PER_GB = 0.024;
 // ─── Lambda pricing constants ─────────────────────────────────────────────────
 
 const LAMBDA_REQUEST_PRICE_PER_1M = 0.20;
-const LAMBDA_GB_SECOND_PRICE = 0.0000166667;      // x86_64
-const LAMBDA_ARM_GB_SECOND_PRICE = 0.0000133334;  // arm64 / Graviton2 — 20% cheaper
+const LAMBDA_GB_SECOND_PRICE = 0.0000166667;
 const LAMBDA_FREE_REQUESTS = 1_000_000;
 const LAMBDA_FREE_GB_SECONDS = 400_000;
-
-// ─── Architecture string constants ────────────────────────────────────────────
-// Values match the Terraform provider's enum: Lambda uses lowercase, ECS uppercase.
-export const LAMBDA_ARCH_X86 = 'x86_64';   // aws_lambda_function architectures[0]
-export const LAMBDA_ARCH_ARM = 'arm64';     // aws_lambda_function architectures[0]
-export const ECS_ARCH_X86 = 'X86_64';      // runtime_platform.cpu_architecture
-export const ECS_ARCH_ARM = 'ARM64';        // runtime_platform.cpu_architecture
 
 // ─── ELB pricing constants (per hour) ────────────────────────────────────────
 
@@ -76,30 +68,23 @@ export const NAT_GATEWAY_PER_GB = 0.045;
 
 export const FARGATE_LINUX_VCPU_HOURLY = 0.04048;
 export const FARGATE_LINUX_MEMORY_HOURLY = 0.004445;
-// ARM/Graviton2 Fargate — ~20% cheaper than x86 (us-east-1, AWS pricing page May 2026)
-export const FARGATE_ARM_VCPU_HOURLY = 0.032380;
-export const FARGATE_ARM_MEMORY_HOURLY = 0.003560;
 const FARGATE_DEFAULT_VCPU = 0.25;
 const FARGATE_DEFAULT_MEMORY_GB = 0.5;
-
-// ─── Aurora Serverless v2 pricing constants ───────────────────────────────────
-
-export const AURORA_SV2_ACU_HOURLY = 0.12; // per ACU-hour, us-east-1
 
 // ─── Elastic IP pricing constants ─────────────────────────────────────────────
 
 // Since Feb 2024, AWS charges $0.005/hr for ALL public IPv4 addresses (attached or not).
 export const EIP_HOURLY = 0.005;
 
-// ─── RDS storage ──────────────────────────────────────────────────────────────
+// ─── RDS storage (us-east-1 on-demand prices) ─────────────────────────────────
 
-export const RDS_GP2_STORAGE_PER_GB = 0.138;
+export const RDS_GP2_STORAGE_PER_GB = 0.115;
 export const RDS_GP3_STORAGE_PER_GB = 0.115;
 export const RDS_IO1_STORAGE_PER_GB = 0.125;
 const RDS_IO1_IOPS_PER_IOPS = 0.065;
 export const RDS_IO2_STORAGE_PER_GB = 0.125;
 
-// ─── Fallback prices ──────────────────────────────────────────────────────────
+// ─── EC2 fallback prices (us-east-1, Linux on-demand, per-hour) ──────────────
 
 export const FALLBACK_EC2_PRICES: Record<string, number> = {
   't3.nano': 0.0052,
@@ -212,101 +197,69 @@ export const FALLBACK_EC2_PRICES: Record<string, number> = {
   'm4.xlarge': 0.20,
 };
 
-// Prices confirmed against AWS RDS MySQL Single-AZ us-east-1 on-demand (May 2026).
-// estimateRDSCost() doubles these for Multi-AZ when the pricing API is unavailable.
 export const FALLBACK_RDS_PRICES: Record<string, number> = {
-  // t3 — corrected May 2026
-  'db.t3.micro': 0.018,
-  'db.t3.small': 0.036,
-  'db.t3.medium': 0.072,
-  'db.t3.large': 0.145,
-  'db.t3.xlarge': 0.290,
-  'db.t3.2xlarge': 0.580,
-  // t4g Graviton2
+  'db.t3.micro': 0.017,
+  'db.t3.small': 0.034,
+  'db.t3.medium': 0.068,
+  'db.t3.large': 0.136,
+  'db.t3.xlarge': 0.272,
+  'db.r5.large': 0.24,
+  'db.r5.xlarge': 0.48,
+  'db.r5.2xlarge': 0.96,
+  'db.m5.large': 0.171,
+  'db.m5.xlarge': 0.342,
+  'db.m5.2xlarge': 0.684,
+  'db.r6g.large': 0.218,
+  'db.r6g.xlarge': 0.436,
+  'db.m6g.large': 0.155,
+  'db.m6g.xlarge': 0.310,
+  'db.m7g.large': 0.163,
+  'db.m7g.xlarge': 0.326,
+  'db.r7g.large': 0.229,
+  'db.r7g.xlarge': 0.458,
+  'db.m6i.large': 0.171,
+  'db.m6i.xlarge': 0.342,
+  'db.r6i.large': 0.24,
+  'db.r6i.xlarge': 0.48,
   'db.t4g.micro': 0.016,
   'db.t4g.small': 0.032,
   'db.t4g.medium': 0.065,
   'db.t4g.large': 0.129,
-  'db.t4g.xlarge': 0.258,
-  'db.t4g.2xlarge': 0.516,
-  // r5 — corrected May 2026
-  'db.r5.large': 0.250,
-  'db.r5.xlarge': 0.500,
-  'db.r5.2xlarge': 1.000,
-  'db.r5.4xlarge': 2.000,
-  // m5 — corrected May 2026
-  'db.m5.large': 0.178,
-  'db.m5.xlarge': 0.356,
-  'db.m5.2xlarge': 0.712,
-  'db.m5.4xlarge': 1.424,
-  // r6g Graviton2
-  'db.r6g.large': 0.225,
-  'db.r6g.xlarge': 0.450,
-  'db.r6g.2xlarge': 0.900,
-  // m6g Graviton2
-  'db.m6g.large': 0.159,
-  'db.m6g.xlarge': 0.318,
-  'db.m6g.2xlarge': 0.636,
-  // m6i Intel
-  'db.m6i.large': 0.178,
-  'db.m6i.xlarge': 0.356,
-  'db.m6i.2xlarge': 0.712,
-  // r6i Intel
-  'db.r6i.large': 0.252,
-  'db.r6i.xlarge': 0.504,
-  'db.r6i.2xlarge': 1.008,
-  // m7g Graviton3
-  'db.m7g.large': 0.163,
-  'db.m7g.xlarge': 0.326,
-  'db.m7g.2xlarge': 0.652,
-  // r7g Graviton3
-  'db.r7g.large': 0.229,
-  'db.r7g.xlarge': 0.458,
-  'db.r7g.2xlarge': 0.916,
-  // m7i Intel 4th gen
   'db.m7i.large': 0.178,
   'db.m7i.xlarge': 0.356,
-  'db.m7i.2xlarge': 0.712,
-  // r7i Intel 4th gen
   'db.r7i.large': 0.252,
   'db.r7i.xlarge': 0.504,
-  'db.r7i.2xlarge': 1.008,
-  // c7i Intel
   'db.c7i.large': 0.170,
   'db.c7i.xlarge': 0.340,
-  // m8g Graviton4
-  'db.m8g.large': 0.168,
-  'db.m8g.xlarge': 0.336,
-  'db.m8g.2xlarge': 0.672,
-  // r8g Graviton4
-  'db.r8g.large': 0.239,
-  'db.r8g.xlarge': 0.478,
-  'db.r8g.2xlarge': 0.956,
-  // c8g Graviton4
+  'db.m8g.large': 0.155,
+  'db.m8g.xlarge': 0.310,
+  'db.r8g.large': 0.218,
+  'db.r8g.xlarge': 0.436,
   'db.c8g.large': 0.153,
   'db.c8g.xlarge': 0.306,
 };
 
+// ─── ElastiCache fallback prices (us-east-1, per-hour on-demand) ─────────────
 export const FALLBACK_ELASTICACHE_PRICES: Record<string, number> = {
   'cache.t3.micro': 0.017,
   'cache.t3.small': 0.034,
   'cache.t3.medium': 0.068,
-  'cache.r5.large': 0.166,
-  'cache.r5.xlarge': 0.332,
-  'cache.r6g.large': 0.150,
-  'cache.r6g.xlarge': 0.300,
-  'cache.r6g.2xlarge': 0.600,
-  'cache.m5.large': 0.142,
-  'cache.m5.xlarge': 0.284,
+  'cache.r5.large': 0.216,
+  'cache.r5.xlarge': 0.431,
+  'cache.r6g.large': 0.206,
+  'cache.r6g.xlarge': 0.411,
+  'cache.r6g.2xlarge': 0.821,
+  'cache.m5.large': 0.156,
+  'cache.m5.xlarge': 0.311,
   'cache.t4g.micro': 0.016,
   'cache.t4g.small': 0.032,
   'cache.t4g.medium': 0.065,
-  'cache.r7g.large': 0.166,
-  'cache.r7g.xlarge': 0.332,
-  'cache.m6g.large': 0.128,
-  'cache.m6g.xlarge': 0.256,
-  'cache.m7g.large': 0.135,
-  'cache.m7g.xlarge': 0.270,
+  'cache.r7g.large': 0.219,
+  'cache.r7g.xlarge': 0.437,
+  'cache.m6g.large': 0.149,
+  'cache.m6g.xlarge': 0.297,
+  'cache.m7g.large': 0.158,
+  'cache.m7g.xlarge': 0.315,
   'cache.r8g.large': 0.150,
   'cache.r8g.xlarge': 0.300,
   'cache.m8g.large': 0.128,
@@ -497,7 +450,6 @@ export function estimateLambdaCost(
   memoryMB: number,
   avgDurationMs: number,
   invocationsPerMonth: number,
-  architecture = LAMBDA_ARCH_X86,
 ): number {
   if (invocationsPerMonth === 0) return 0;
 
@@ -508,41 +460,18 @@ export function estimateLambdaCost(
       ((invocationsPerMonth - LAMBDA_FREE_REQUESTS) / 1_000_000) * LAMBDA_REQUEST_PRICE_PER_1M;
   }
 
-  // Duration cost — arm64/Graviton2 is 20% cheaper per GB-second; first 400,000 GB-seconds free
-  const gbSecondPrice = architecture === LAMBDA_ARCH_ARM ? LAMBDA_ARM_GB_SECOND_PRICE : LAMBDA_GB_SECOND_PRICE;
+  // Duration cost — first 400,000 GB-seconds free
   const gbSeconds = (memoryMB / 1024) * (avgDurationMs / 1000) * invocationsPerMonth;
   const billableGBSeconds = Math.max(0, gbSeconds - LAMBDA_FREE_GB_SECONDS);
-  const durationCost = billableGBSeconds * gbSecondPrice;
+  const durationCost = billableGBSeconds * LAMBDA_GB_SECOND_PRICE;
 
   return requestCost + durationCost;
 }
 
 // ─── ECS/Fargate ──────────────────────────────────────────────────────────────
 
-export function estimateECSCost(
-  cpuVcpus = FARGATE_DEFAULT_VCPU,
-  memoryGB = FARGATE_DEFAULT_MEMORY_GB,
-  architecture = ECS_ARCH_X86,
-): number {
-  const vcpuHourly = architecture === ECS_ARCH_ARM ? FARGATE_ARM_VCPU_HOURLY : FARGATE_LINUX_VCPU_HOURLY;
-  const memHourly = architecture === ECS_ARCH_ARM ? FARGATE_ARM_MEMORY_HOURLY : FARGATE_LINUX_MEMORY_HOURLY;
-  return (cpuVcpus * vcpuHourly + memoryGB * memHourly) * HOURS_PER_MONTH;
-}
-
-// ─── Aurora Serverless v2 ─────────────────────────────────────────────────────
-
-/**
- * Estimates monthly cost for Aurora Serverless v2 based on min/max capacity.
- * Uses the midpoint of [minCapacity, maxCapacity] as a representative load.
- * Returns 0 when minCapacity is 0 (cluster is paused/unconfigured).
- */
-export function estimateAuroraServerlessV2Cost(minCapacity: number, maxCapacity: number): number {
-  if (minCapacity <= 0) return 0;
-  // Use midpoint of [min, max] as a representative load. Guard against inverted
-  // inputs (max < min) by taking Math.max so we never underestimate relative to min.
-  const effectiveMax = Math.max(minCapacity, maxCapacity);
-  const estimatedACU = (minCapacity + effectiveMax) / 2;
-  return estimatedACU * AURORA_SV2_ACU_HOURLY * HOURS_PER_MONTH;
+export function estimateECSCost(cpuVcpus = FARGATE_DEFAULT_VCPU, memoryGB = FARGATE_DEFAULT_MEMORY_GB): number {
+  return (cpuVcpus * FARGATE_LINUX_VCPU_HOURLY + memoryGB * FARGATE_LINUX_MEMORY_HOURLY) * HOURS_PER_MONTH;
 }
 
 // ─── ELB ──────────────────────────────────────────────────────────────────────

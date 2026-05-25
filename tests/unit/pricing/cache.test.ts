@@ -102,4 +102,29 @@ describe('PricingCache — TTL, purge, and stats', () => {
     cache.setCachedPrice('AmazonEC2', 'm5.large:Linux', 'us-east-1', 0.100);
     expect(cache.getCacheStats().count).toBe(3);
   });
+
+  it('getCacheStats excludes expired entries from count (regression)', () => {
+    // Insert 2 fresh entries (7-day TTL) and 3 expired entries (0-day TTL).
+    // getCacheStats must count only the 2 live entries.
+    cache.setCachedPrice('AmazonEC2', 'fresh-a:Linux', 'us-east-1', 0.096, null, 7);
+    cache.setCachedPrice('AmazonEC2', 'fresh-b:Linux', 'us-east-1', 0.192, null, 7);
+    cache.setCachedPrice('AmazonEC2', 'expired-a:Linux', 'us-east-1', 0.050, null, 0);
+    cache.setCachedPrice('AmazonEC2', 'expired-b:Linux', 'us-east-1', 0.060, null, 0);
+    cache.setCachedPrice('AmazonRDS', 'expired-c:MySQL', 'us-east-1', 0.070, null, 0);
+
+    const stats = cache.getCacheStats();
+    expect(stats.count).toBe(2); // only the 2 fresh entries
+  });
+
+  it('getCacheStats count matches purgeExpired count when all expired', () => {
+    cache.setCachedPrice('AmazonEC2', 'ex-1:Linux', 'us-east-1', 0.050, null, 0);
+    cache.setCachedPrice('AmazonEC2', 'ex-2:Linux', 'us-east-1', 0.060, null, 0);
+    cache.setCachedPrice('AmazonEC2', 'live-1:Linux', 'us-east-1', 0.096, null, 7);
+
+    expect(cache.getCacheStats().count).toBe(1); // only live entry counted
+
+    const purged = cache.purgeExpired();
+    expect(purged).toBe(2); // 2 expired rows removed
+    expect(cache.getCacheStats().count).toBe(1); // live entry survives
+  });
 });

@@ -106,6 +106,9 @@ describe('checkEBS007 — gp3 over-provisioned IOPS', () => {
     expect(rec!.ruleId).toBe('EBS-007');
     // excess = 3000, savings = 3000 * 0.005 = 15
     expect(rec!.estimatedSavings).toBeCloseTo(15, 2);
+    expect(rec!.suggestedAction).toBeDefined();
+    expect(typeof rec!.suggestedAction).toBe('string');
+    expect(rec!.suggestedConfig).toHaveProperty('iops');
     expect(rec!.suggestedConfig!.iops).toBe(3000);
 
     const r2 = makeGP3WithUtil(5000, 30, 40);

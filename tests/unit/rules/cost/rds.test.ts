@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   checkRDS001, checkRDS002, checkRDS003, checkRDS004, checkRDS005, checkRDS006, checkRDS007, checkRDS008, checkRDS009, checkRDS010, checkRDS011, checkRDS012, checkRDS013, checkRDS014,
 } from '../../../../src/rules/cost/rds.js';
@@ -67,6 +67,8 @@ describe('checkRDS001 — idle RDS instance', () => {
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('RDS-001');
     expect(rec!.impact).toBe('high');
+    expect(rec!.risk).toBe('medium');
+    expect(rec!.suggestedAction).toBe('stop_or_delete');
     expect(rec!.estimatedSavings).toBeCloseTo(180, 2);
     // confidenceFromUtilization(0.85, util) with period='7d' applies 0.9× penalty → 0.765
     expect(rec!.confidence).toBeCloseTo(0.765);
@@ -86,12 +88,11 @@ describe('checkRDS001 — idle RDS instance', () => {
 
   // Issue #37 regression — confidence never exceeds 1.0 even when base × 1.05 is hit
   it('confidence is always clamped to [0,1] regardless of multipliers', () => {
-    // Base 0.99 × 1.05 = 1.0395 would have leaked through before; now clamped
+    // RDS-001 uses base 0.85; with period='30d' + full coverage: 0.85 × 1.05 = 0.8925
     const r = makeRDS({ utilization: makeUtil(0.1, 1, '30d') });
     const rec = checkRDS001(r, cfg);
     expect(rec).not.toBeNull();
-    expect(rec!.confidence).toBeGreaterThanOrEqual(0);
-    expect(rec!.confidence).toBeLessThanOrEqual(1);
+    expect(rec!.confidence).toBeCloseTo(0.8925, 3);
   });
 
   // Strict cost gating — RDS-001 returns null when monthly_cost is missing/invalid
@@ -119,8 +120,12 @@ describe('checkRDS003 — oversized RDS instance', () => {
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('RDS-003');
     expect(rec!.impact).toBe('high');
-    // Real pricing delta: db.m5.xlarge (0.356/hr) → db.m5.large (0.178/hr): 0.178*730 ≈ 129.94
-    expect(rec!.estimatedSavings).toBeCloseTo(129.94, 1);
+    expect(rec!.risk).toBe('medium');
+    expect(rec!.suggestedAction).toContain('rightsize_to_');
+    // confidenceFromUtilization(0.80, {period:'7d', dp:200}) → 0.80 * 0.90 = 0.72; connectionCount=2 < 10 → no penalty
+    expect(rec!.confidence).toBeCloseTo(0.72, 2);
+    // Real pricing delta: db.m5.xlarge (0.342/hr) → db.m5.large (0.171/hr): 0.171*730 ≈ 124.83
+    expect(rec!.estimatedSavings).toBeCloseTo(124.83, 1);
   });
 
   it('does not fire when CPU >= threshold, no utilization, wrong type, or already smallest', () => {
@@ -161,6 +166,8 @@ describe('checkRDS002 — Production RDS without Multi-AZ', () => {
     expect(rec!.ruleId).toBe('RDS-002');
     expect(rec!.impact).toBe('high');
     expect(rec!.risk).toBe('low');
+    expect(rec!.suggestedAction).toBe('enable_multi_az');
+    expect(rec!.confidence).toBe(0.90); // CONF_LIKELY
     expect(rec!.estimatedSavings).toBe(0);
   });
 
@@ -185,6 +192,9 @@ describe('checkRDS007 — Multi-AZ in non-production environment', () => {
     }), cfg);
     expect(stagingRec!.ruleId).toBe('RDS-007');
     expect(stagingRec!.impact).toBe('high');
+    expect(stagingRec!.risk).toBe('low');
+    expect(stagingRec!.suggestedAction).toBe('disable_multi_az_non_prod');
+    expect(stagingRec!.confidence).toBe(0.85); // CONF_PROBABLE
     expect(stagingRec!.estimatedSavings).toBeCloseTo(150, 2);
   });
 
@@ -255,6 +265,7 @@ describe('checkRDS006 — gp2 to gp3 migration', () => {
     expect(rec!.ruleId).toBe('RDS-006');
     expect(rec!.impact).toBe('medium');
     expect(rec!.risk).toBe('low');
+    expect(rec!.suggestedAction).toBe('migrate_storage_to_gp3');
     expect(rec!.confidence).toBe(0.95);
     expect(rec!.estimatedSavings).toBeCloseTo(20, 2);
   });
@@ -283,7 +294,8 @@ describe('checkRDS008 — Graviton migration', () => {
     const rec = checkRDS008(r, cfg);
     expect(rec).not.toBeNull();
     expect(rec!.ruleId).toBe('RDS-008');
-    expect(rec!.confidence).toBeGreaterThanOrEqual(0.65);
+    // db.t3.medium and db.t4g.medium both in pricing table → confidence = 0.85
+    expect(rec!.confidence).toBe(0.85);
     expect(rec!.impact).toBe('medium');
     expect(rec!.risk).toBe('low');
   });
@@ -335,7 +347,8 @@ describe('checkRDS009 — idle by connection count', () => {
     });
     const rec = checkRDS009(r, cfg);
     expect(rec).not.toBeNull();
-    expect(rec!.confidence).toBeLessThanOrEqual(0.60);
+    // connectionCountMax=10 > connectionCount(0.5)*5=2.5 → confidence capped at 0.60
+    expect(rec!.confidence).toBe(0.60);
   });
 });
 
@@ -447,7 +460,8 @@ describe('checkRDS013 — low storage utilization', () => {
     expect(rec!.ruleId).toBe('RDS-013');
     expect(rec!.impact).toBe('medium');
     expect(rec!.risk).toBe('low');
-    expect(rec!.estimatedSavings).toBeGreaterThanOrEqual(0);
+    // used=50GB, suggested=50*1.30=65GB, savings=(500-65)*$0.115/GB≈50.03
+    expect(rec!.estimatedSavings).toBeCloseTo(50.03, 1);
   });
 
   it('does not fire when free storage is low, allocated storage is minimal, or free > allocated (stale)', () => {
@@ -465,18 +479,39 @@ describe('checkRDS013 — low storage utilization', () => {
 });
 
 // ─── RDS-014: Proactive EOL warning ────────────────────────────────────────────
+// Uses vi.setSystemTime() to freeze the clock so the test is not date-dependent.
+// PG 15 EOL: 2027-10-01. Test sets clock to 2027-09-01 (30 days before EOL).
 
 describe('checkRDS014 — proactive EOL warning', () => {
-  it('fires for PostgreSQL 15 or earlier approaching EOL (< 180 days)', () => {
-    // Note: This test depends on current date. Use a recent version to ensure < 180 days to EOL.
-    // PG 15 EOL: Oct 2027 — currently (April 2026) is ~540 days away, too far.
-    // Skip specific date test; instead test the logic structure.
+  beforeEach(() => {
+    // 30 days before PG 15 EOL → within the 180-day warning window
+    vi.setSystemTime(new Date('2027-09-01T00:00:00Z'));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('fires for PostgreSQL 15 when within 180 days of EOL', () => {
+    const r = makeRDS({
+      instanceType: 'db.r6g.xlarge', // 4 vCPUs
+      configuration: { engine: 'postgres', engine_version: '15.5' },
+    });
+    const rec = checkRDS014(r, cfg);
+    expect(rec).not.toBeNull();
+    expect(rec!.ruleId).toBe('RDS-014');
+    expect(rec!.impact).toBe('medium');
+    // Clock frozen at 2027-09-01; PG 15 EOL = 2027-10-01 → exactly 30 days
+    expect(rec!.currentConfig!['days_until_eol']).toBe(30);
+  });
+
+  it('does not fire when more than 180 days remain', () => {
+    // Set clock 400 days before PG 15 EOL
+    vi.setSystemTime(new Date('2026-09-01T00:00:00Z'));
     const r = makeRDS({
       instanceType: 'db.t3.medium',
       configuration: { engine: 'postgres', engine_version: '15.5' },
     });
-    // May not fire depending on current date; just ensure no crash
-    expect(() => checkRDS014(r, cfg)).not.toThrow();
+    expect(checkRDS014(r, cfg)).toBeNull();
   });
 
   it('does not fire for versions far from EOL or unrecognized', () => {
@@ -484,5 +519,15 @@ describe('checkRDS014 — proactive EOL warning', () => {
       instanceType: 'db.t3.medium',
       configuration: { engine: 'mysql', engine_version: '8.0.28' },
     }), cfg)).toBeNull();
+  });
+
+  it('does not fire when EOL date has already passed', () => {
+    // Set clock 10 days after EOL
+    vi.setSystemTime(new Date('2027-10-11T00:00:00Z'));
+    const r = makeRDS({
+      instanceType: 'db.t3.medium',
+      configuration: { engine: 'postgres', engine_version: '15.5' },
+    });
+    expect(checkRDS014(r, cfg)).toBeNull();
   });
 });
