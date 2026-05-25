@@ -28,7 +28,7 @@ import { buildSecurityPipelineSteps, extractSecurityFindings } from './pipelines
 import { buildCostImpactPipelineSteps, extractCostImpact } from './pipelines/cost-impact.js';
 import { buildTagsPipelineSteps, extractTagCompliance } from './pipelines/tags.js';
 import { createFormatter, type ScanReport } from '../output/formatter.js';
-import { buildRecommendAnalysisPrompt, buildSecurityAnalysisPrompt } from './pipelines/analysis.js';
+import { buildCostImpactAnalysisPrompt, buildRecommendAnalysisPrompt, buildSecurityAnalysisPrompt } from './pipelines/analysis.js';
 import { getAnalysisPrompt, getPrompt } from '../agent/prompts.js';
 import { createAgentProvider } from '../agent/index.js';
 import { runHeadlessAgent } from './headless-agent.js';
@@ -944,9 +944,29 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     }
     lines.push('');
     lines.push('Next:');
-    lines.push('- korinfra cost-impact --plan-file plan.json --json     (machine-readable)');
-    lines.push('- korinfra security --dir ./terraform                   (post-apply security review)');
+    lines.push('- korinfra cost-impact --plan-file plan.json --json              (machine-readable)');
+    if (!hasFlag(commandArgs, '--analyze')) {
+      lines.push('- korinfra cost-impact --plan-file plan.json --no-tui --analyze  (AI analysis)');
+    }
+    lines.push('- korinfra security --dir ./terraform                            (post-apply security review)');
     writeLines(lines);
+
+    // --analyze: stream AI analysis after printing deterministic findings
+    if (hasFlag(commandArgs, '--analyze')) {
+      const provider = await createHeadlessProvider();
+      if (provider === null) {
+        process.stderr.write('[korinfra] AI provider not configured — skipping analysis. Run `korinfra init` to configure.\n');
+      } else {
+        process.stderr.write('[korinfra] running AI analysis…\n');
+        const analysisPrompt = buildCostImpactAnalysisPrompt(context);
+        await runHeadlessAgent(
+          analysisPrompt,
+          provider,
+          { systemPrompt: getAnalysisPrompt('cost-impact') },
+          'text',
+        );
+      }
+    }
 
     if (shouldFailOnCritical) process.exit(1);
     return true;
@@ -2702,9 +2722,11 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     // wired up. The flag is parsed and ignored.
     const tfdirIgnored = parseArg(commandArgs, '--tfdir') !== null;
     let currency = 'USD';
+    let aiProviderConfigured = false;
     try {
       const cfg = await loadConfig();
       currency = cfg.output.currency;
+      aiProviderConfigured = cfg.ai?.provider !== undefined && cfg.ai.provider !== 'none';
     } catch {
       // No config — fall back to USD.
     }
@@ -2790,6 +2812,9 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
       next: [
         { label: 'generate report', command: 'korinfra report --format html --output reports/cost-impact.html' },
         { label: 'review post-apply security rules', command: 'korinfra security --dir ./terraform' },
+        ...(aiProviderConfigured && !hasFlag(commandArgs, '--analyze')
+          ? [{ label: 'analyze with AI', command: `korinfra cost-impact --plan-file ${planFile} --analyze` }]
+          : []),
       ],
     };
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');

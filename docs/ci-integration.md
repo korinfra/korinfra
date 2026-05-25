@@ -114,6 +114,33 @@ Notes:
 - No AWS credentials are required for `cost-impact` — pricing is computed
   from static tables.
 
+### AI narrative analysis with `--analyze`
+
+When an AI provider is configured (see `korinfra init`), pass `--analyze` to
+stream a free-form narrative on top of the deterministic findings. The AI layer
+explains the *intent* of the change, groups findings by deployment risk, and
+flags when multiple findings compose to a larger concern:
+
+```bash
+korinfra cost-impact \
+  --plan-file plan.json \
+  --no-tui \
+  --analyze \
+  | tee impact-analysis.md
+```
+
+When no AI provider is configured the deterministic summary is printed as
+normal and a note is written to stderr:
+
+```
+[korinfra] AI provider not configured — skipping analysis. Run `korinfra init` to configure.
+```
+
+The `--analyze` flag never changes the exit code — `--fail-on critical` and
+other exit-code flags still apply normally. In CI, the JSON output's `next[]`
+array includes an `"analyze with AI"` entry automatically when a provider is
+available and `--analyze` was not already passed.
+
 ## 2. Terraform security scanning
 
 ```yaml

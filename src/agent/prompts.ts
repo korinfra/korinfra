@@ -280,6 +280,15 @@ Analyze these recommendations. Focus on:
 3. Strategic recommendations (higher risk but significant savings)
 4. Implementation priority order`;
 
+const COST_IMPACT_ANALYSIS_PROMPT = `${ANALYSIS_BASE}
+
+Analyze this Terraform plan cost-impact result. Focus on:
+1. Explain the intent of the change — what the engineer appears to be trying to do based on the resource diff.
+2. Surface non-obvious tradeoffs (e.g. Multi-AZ vs single-AZ, generation upgrade, reserved vs on-demand).
+3. Group findings by deployment risk (security regression, reliability concern, cost optimization), not just severity.
+4. Note when findings compose to a larger concern (e.g. a resource loses both encryption and Multi-AZ simultaneously).
+5. Separate safe optimizations from risky changes — help the reviewer decide what to approve as-is vs split into a separate PR.`;
+
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
@@ -305,6 +314,7 @@ const analysisPrompts = {
   history: HISTORY_ANALYSIS_PROMPT,
   report: REPORT_ANALYSIS_PROMPT,
   recommend: RECOMMEND_ANALYSIS_PROMPT,
+  'cost-impact': COST_IMPACT_ANALYSIS_PROMPT,
 } as const;
 
 type AnalysisPromptKey = keyof typeof analysisPrompts;

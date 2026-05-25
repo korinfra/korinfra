@@ -1,21 +1,27 @@
 /**
- * CostImpactCommand — Terraform plan cost-impact analysis (deterministic, no AI).
+ * CostImpactCommand — Terraform plan cost-impact analysis.
  *
  * Layout:
  *   - Summary line: net monthly delta, annualized, counts by action.
  *   - DataTable: ACTION | ADDRESS | TYPE | DELTA | STATUS.
  *   - Findings inline list: SEV · RULE · ADDRESS · TITLE — top 5.
  *   - ActionBar: p report, r run again.
+ *
+ * When an AgentProvider is present the view switches to HybridPipeline so the
+ * AI analysis tab is reachable via the standard tab keybind.
  */
 
 import React, { useMemo, useState } from 'react';
 import { Box, Text } from 'ink';
 
+import type { AgentProvider } from '../../agent/types.js';
+import { getAnalysisPrompt } from '../../agent/prompts.js';
 import { CommandHeader } from '../components/CommandHeader.js';
 import { DataTable } from '../components/DataTable.js';
 import type { ColumnDef } from '../components/DataTable.js';
 import { DirectPipeline } from '../components/DirectPipeline.js';
 import type { CommandResultView, PipelineContext } from '../components/DirectPipeline.js';
+import { HybridPipeline } from '../components/HybridPipeline.js';
 import { EmptyState } from '../components/EmptyState.js';
 import { ErrorBox } from '../components/ErrorBox.js';
 import { InteractionHints, IH_BACK, IH_COMMAND, IH_HELP, IH_QUIT } from '../components/InteractionHints.js';
@@ -26,6 +32,7 @@ import {
   type CostImpactFinding,
   type CostImpactRow,
 } from '../pipelines/cost-impact.js';
+import { buildCostImpactAnalysisPrompt } from '../pipelines/analysis.js';
 import { semanticColors } from '../theme.js';
 import { GAP_AFTER_HEADER, GAP_BETWEEN_SECTIONS, MARGIN_LEFT_CONTENT } from '../ui/spacing.js';
 import { DOT_SEP, SEVERITY_LABELS } from '../ui/text.js';
@@ -246,12 +253,13 @@ function makeRenderResult(
 
 interface CostImpactCommandProps {
   args: string[];
+  provider?: AgentProvider | null;
   onRunAgain?: () => void;
   onBack?: () => void;
   onAction?: (action: TuiAction) => void;
 }
 
-export function CostImpactCommand({ args, onRunAgain, onBack, onAction }: CostImpactCommandProps): React.JSX.Element {
+export function CostImpactCommand({ args, provider = null, onRunAgain, onBack, onAction }: CostImpactCommandProps): React.JSX.Element {
   const planFile = parseArg(args, '--plan-file', '-f');
   const [headerScope, setHeaderScope] = useState<string | undefined>(undefined);
   const [pipelineHasError, setPipelineHasError] = useState(false);
@@ -303,14 +311,31 @@ export function CostImpactCommand({ args, onRunAgain, onBack, onAction }: CostIm
         />
       )}
     >
-      <DirectPipeline
-        steps={pipelineSteps}
-        renderResult={renderResult}
-        onRunAgain={onRunAgain}
-        onBack={onBack}
-        onAction={onAction}
-        onError={setPipelineHasError}
-      />
+      {provider !== null ? (
+        <HybridPipeline
+          steps={pipelineSteps}
+          provider={provider}
+          buildAnalysisPrompt={buildCostImpactAnalysisPrompt}
+          systemPrompt={getAnalysisPrompt('cost-impact')}
+          renderResult={renderResult}
+          renderFallback={renderResult}
+          onRunAgain={onRunAgain}
+          onBack={onBack}
+          onAction={onAction}
+          onError={setPipelineHasError}
+          allowFollowUp
+          followUpContextSource="cost impact"
+        />
+      ) : (
+        <DirectPipeline
+          steps={pipelineSteps}
+          renderResult={renderResult}
+          onRunAgain={onRunAgain}
+          onBack={onBack}
+          onAction={onAction}
+          onError={setPipelineHasError}
+        />
+      )}
     </ScreenShell>
   );
 }
