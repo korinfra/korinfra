@@ -109,7 +109,8 @@ describe('cost-impact text mode — argument validation', () => {
 
   it('rejects a symlink pointing outside cwd', async () => {
     // Create a real .json file outside tmpDir, then symlink to it from inside
-    const outsideFile = path.join(os.tmpdir(), `korinfra-outside-${Date.now()}.json`);
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'korinfra-outside-'));
+    const outsideFile = path.join(outsideDir, 'outside.json');
     fs.writeFileSync(outsideFile, '{}');
     const symlink = path.join(tmpDir, 'escape.json');
     fs.symlinkSync(outsideFile, symlink);
@@ -122,6 +123,7 @@ describe('cost-impact text mode — argument validation', () => {
       void runHeadlessTextCommand('cost-impact', ['--plan-file', symlink]).catch(() => resolve(false));
     });
     fs.unlinkSync(outsideFile);
+    fs.rmdirSync(outsideDir);
     expect(exited).toBe(true);
     expect(capture.stderr).toContain('must be inside');
   });
