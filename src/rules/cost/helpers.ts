@@ -6,15 +6,7 @@
 import type { Resource } from '../../aws/types.js';
 import type { RuleContext } from '../types.js';
 import { clampConfidence, guardCost } from '../../utils/numeric-guards.js';
-
-/** Parse "7d" → 7, "14d" → 14, "30d" → 30. Returns 30 for unrecognized formats. */
-function parsePeriodDays(period: string): number {
-  const known: Record<string, number> = { '7d': 7, '14d': 14, '30d': 30 };
-  if (period in known) return known[period] ?? 30;
-  // Fallback: parse numeric prefix (e.g. "1d" → 1) for backward compatibility
-  const n = parseInt(period, 10);
-  return Number.isFinite(n) && n > 0 ? n : 30;
-}
+import { parsePeriodDays } from '../../utils/period.js';
 
 /** Normalize a raw metric count to a monthly rate using the collection period. */
 export function normalizeToMonth(rawCount: number, period: string): number {

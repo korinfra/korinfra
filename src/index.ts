@@ -37,6 +37,8 @@ const SYSTEM_PROTECTED_ENV_KEYS = new Set([
   'NODE_DEBUG', 'NODE_PATH', 'LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH',
 ]);
 
+const RULES_SUBCOMMANDS = new Set(['list']);
+
 const KNOWN_COMMANDS = [
   'scan', 'resources', 'costs', 'recommend', 'history', 'changes', 'config', 'doctor', 'mcp',
   'fix', 'tags', 'pricing', 'report', 'security', 'cost-impact', 'init', 'serve', 'rules',
@@ -265,7 +267,7 @@ async function main(): Promise<void> {
   const outputEnv = process.env['KORINFRA_OUTPUT']; // 'json' | 'text' | undefined
   const isJson = args.includes('--json') || outputEnv === 'json';
   const isMcpTokenCmd = command === 'mcp' && args[1] === 'token';
-  const isRulesHeadless = command === 'rules' && args[1] !== undefined;
+  const isRulesHeadless = command === 'rules' && RULES_SUBCOMMANDS.has(args[1] as string);
   const headless = [
     args.includes('--no-tui'),
     isJson,
@@ -291,15 +293,12 @@ async function main(): Promise<void> {
           status: 'error',
           message: getUnsupportedCommandGuidance(command),
         }, null, 2) + '\n');
-        process.exit(1);
+        process.exit(2);
       } else {
         const handled = await runHeadlessCommand(command, cleanArgs);
-        // Honor process.exitCode if a handler set it (usage / validation errors).
-        // Calling process.exit(0) directly would override it; process.exit() with
-        // no arg uses process.exitCode if set, else 0.
         if (handled) process.exit();
         process.stderr.write(getUnsupportedCommandGuidance(command) + '\n');
-        process.exit(1);
+        process.exit(2);
       }
     }
     if (isJson) {
