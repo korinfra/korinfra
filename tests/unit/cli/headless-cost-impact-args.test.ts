@@ -159,13 +159,15 @@ describe('cost-impact JSON mode — argument validation', () => {
   });
 
   it('returns 2 and writes JSON error when symlink escapes cwd', async () => {
-    const outsideFile = path.join(os.tmpdir(), `korinfra-outside-json-${Date.now()}.json`);
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'korinfra-outside-json-'));
+    const outsideFile = path.join(outsideDir, 'outside.json');
     fs.writeFileSync(outsideFile, '{}');
     const symlink = path.join(tmpDir, 'escape.json');
     fs.symlinkSync(outsideFile, symlink);
 
     const code = await runJsonCommand('cost-impact', ['--plan-file', symlink]);
     fs.unlinkSync(outsideFile);
+    fs.rmdirSync(outsideDir);
     expect(code).toBe(2);
     const json = JSON.parse(capture.stdout);
     expect(json.status).toBe('error');
