@@ -10,6 +10,7 @@ import {
 } from '../config/paths.js';
 import { openDriver } from './drivers/node.js';
 import type { Driver } from './drivers/node.js';
+import { checkNoSymlink } from '../utils/safe-fs.js';
 
 // ─── Migration loader ─────────────────────────────────────────────────────────
 
@@ -472,6 +473,8 @@ export function getDb(dbPath?: string, retentionDays = 365): Driver {
 
   // Ensure parent directory exists
   const dir = path.dirname(resolvedPath);
+  checkNoSymlink(dir);
+  checkNoSymlink(resolvedPath);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   try { fs.chmodSync(dir, 0o700); } catch { /* windows */ }
 
