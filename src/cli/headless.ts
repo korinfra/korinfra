@@ -376,7 +376,9 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       if (resolvedOutput !== undefined) {
         const cwd = process.cwd();
         if (!resolvedOutput.startsWith(cwd + path.sep) && resolvedOutput !== cwd) {
-          throw new Error(`Output path must stay within ${cwd}`);
+          process.stderr.write(`korinfra scan: --output path must stay within the current directory\n`);
+          process.exitCode = 2;
+          return true;
         }
       }
       try {
@@ -499,7 +501,9 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     if (resolvedOutput !== undefined) {
       const cwd = process.cwd();
       if (!resolvedOutput.startsWith(cwd + path.sep) && resolvedOutput !== cwd) {
-        throw new Error(`Output path must stay within ${cwd}`);
+        process.stderr.write(`korinfra report: --output path must stay within the current directory\n`);
+        process.exitCode = 2;
+        return true;
       }
     }
     const context = await runSteps(buildReportPipelineSteps({
@@ -1785,7 +1789,8 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
       if (resolvedOutput !== undefined) {
         const cwd = process.cwd();
         if (!resolvedOutput.startsWith(cwd + path.sep) && resolvedOutput !== cwd) {
-          throw new Error(`Output path must stay within ${cwd}`);
+          process.stdout.write(JSON.stringify({ command: 'scan', status: 'error', error: '--output path must stay within the current directory' }) + '\n');
+          return 2;
         }
       }
       try {
@@ -1918,7 +1923,8 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
     if (resolvedOutput !== undefined) {
       const cwd = process.cwd();
       if (!resolvedOutput.startsWith(cwd + path.sep) && resolvedOutput !== cwd) {
-        throw new Error(`Output path must stay within ${cwd}`);
+        process.stdout.write(JSON.stringify({ command: 'report', status: 'error', error: '--output path must stay within the current directory' }) + '\n');
+        return 2;
       }
     }
     const context = await runSteps(buildReportPipelineSteps({
