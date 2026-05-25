@@ -105,14 +105,80 @@ jobs:
 
 Notes:
 
-- `cost-impact` exits `0` on success, `1` when `--fail-on critical` matches,
-  `2` on user error (missing `--plan-file`, path outside cwd, wrong file
-  extension). The `continue-on-error: true` lets the workflow post the summary
-  before failing the step.
+- `cost-impact` exits `0` on success, `1` when `--fail-on critical` or
+  `--fail-on-delta` matches, `2` on user error (missing `--plan-file`, path
+  outside cwd, wrong file extension). The `continue-on-error: true` lets
+  the workflow post the summary before failing the step.
 - The `--plan-file` value is resolved relative to the current directory and
   must stay inside the working directory.
 - No AWS credentials are required for `cost-impact` — pricing is computed
   from static tables.
+
+### Dollar-threshold gating (`--fail-on-delta`)
+
+To fail when the plan's net monthly cost delta exceeds a dollar amount:
+
+```yaml
+- name: Run cost-impact with dollar gate
+  run: |
+    korinfra cost-impact \
+      --plan-file terraform/plan.json \
+      --json \
+      --fail-on critical \
+      --fail-on-delta ${{ vars.MAX_DELTA_USD }}
+```
+
+Both flags compose with **OR** semantics: the step fails when *either* gate
+fires. Set `MAX_DELTA_USD` as a repository or environment variable — tighter
+thresholds for `production`, looser for `staging`.
+
+The threshold is an **absolute value**: a `+$600/mo` create and a `-$600/mo`
+destroy both fire a `--fail-on-delta 500` gate. Use `--fail-on-delta 0` to
+fail on any non-zero net delta.
+
+When `--fail-on-delta` is supplied, the JSON `summary` gains two extra fields:
+
+```json
+"summary": {
+  "netDeltaMonthlyUsd": 612.50,
+  "failOnDeltaTriggered": true,
+  "failOnDeltaThresholdUsd": 500
+}
+```
+
+### Populating `filePath` with `--tfdir`
+
+When `--tfdir` is passed alongside `--plan-file`, `cost-impact` parses the
+`.tf` files in that directory and annotates each finding with the file where
+the resource is defined:
+
+```bash
+korinfra cost-impact \
+  --plan-file plan.json \
+  --tfdir ./terraform \
+  --json \
+  > impact.json
+```
+
+Findings in `impact.json` will include `"filePath": "terraform/rds.tf"` for
+every resource address that matches a parsed `.tf` file. Resources defined
+outside the scanned directory (remote modules, or resources in sub-modules
+not under `--tfdir`) will be listed in `warnings[]` as unmatched.
+
+Once you have a `impact.json` with `filePath` populated, the
+`korinfra fix --from` flow can apply suggested patches directly:
+
+```bash
+# CI step: generate findings
+terraform plan -out=plan.tfplan
+terraform show -json plan.tfplan > plan.json
+korinfra cost-impact --plan-file plan.json --tfdir ./terraform --json > impact.json
+
+# Developer step: apply patches locally
+korinfra fix --from impact.json
+```
+
+This is the same pipeline as `korinfra security → korinfra fix`.
 
 ## 2. Terraform security scanning
 
@@ -172,7 +238,8 @@ plan` step required.
       "afterUsd": 487.00,
       "deltaUsd": 487.00,
       "costStatus": "known",
-      "triggeredRuleIds": ["RDS-002"]
+      "triggeredRuleIds": ["RDS-002"],
+      "filePath": "terraform/rds.tf"
     }
   ],
   "findings": [
@@ -181,7 +248,8 @@ plan` step required.
       "address": "aws_db_instance.api",
       "severity": "high",
       "title": "Production RDS without Multi-AZ",
-      "description": "Single-AZ RDS has no automatic failover on hardware failure"
+      "description": "Single-AZ RDS has no automatic failover on hardware failure",
+      "filePath": "terraform/rds.tf"
     }
   ],
   "warnings": [],
@@ -201,6 +269,19 @@ plan` step required.
 | `unknown` | A pricing-critical field (e.g. `instance_type`) is computed at apply time. `deltaUsd` is `0` and the row is excluded from net total. |
 | `variable` | Usage-dependent resource (Lambda, S3 storage, DynamoDB on-demand). Fixed-cost floor is included in net total. |
 | `unpriced` | Resource type not in the pricing engine. Row is shown for review but excluded from net total. |
+
+The `filePath` field is populated on both `findings[]` and `changes[]` entries when `--tfdir` is supplied and the resource address matches a parsed `.tf` file. Resources defined in external modules (not under `--tfdir`) appear in `warnings[]` as unmatched.
+
+### Region defaulting
+
+When the plan has no explicit AWS provider region, `cost-impact` defaults to `us-east-1` and adds a warning:
+
+```
+No AWS region found in plan provider config — defaulting to us-east-1.
+Set a provider region block to avoid mispriced resources in non-US regions.
+```
+
+To suppress this, ensure your Terraform provider block includes a `region` argument (or use a variable bound at plan time).
 
 ## OpenTofu
 

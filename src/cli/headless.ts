@@ -753,12 +753,6 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       process.stderr.write('Hint: terraform show -json plan.tfplan > plan.json\n');
       process.exit(2);
     }
-    // `--tfdir` is accepted for forward-compat with the documented invocation
-    // in issue #40, but the cross-reference to .tf source files is not yet
-    // wired up. Warn so users know the flag is currently a no-op.
-    if (parseArg(commandArgs, '--tfdir') !== null) {
-      process.stderr.write('[korinfra] note: --tfdir is accepted but not yet used; plan parsing reads only --plan-file.\n');
-    }
     const absPlan = path.resolve(process.cwd(), planFile);
     const cwd = process.cwd();
     if (!absPlan.startsWith(cwd + path.sep) && absPlan !== cwd) {
@@ -773,6 +767,21 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       process.stderr.write(`Error: plan file not found: ${absPlan}\n`);
       process.exit(2);
     }
+
+    const tfdirArg = parseArg(commandArgs, '--tfdir');
+    let absTfdir: string | undefined;
+    if (tfdirArg !== null) {
+      absTfdir = path.resolve(cwd, tfdirArg);
+      if (!absTfdir.startsWith(cwd + path.sep) && absTfdir !== cwd) {
+        process.stderr.write(`Error: --tfdir must stay within ${cwd}\n`);
+        process.exit(2);
+      }
+      if (!fs.existsSync(absTfdir) || !fs.statSync(absTfdir).isDirectory()) {
+        process.stderr.write(`Error: --tfdir not found or not a directory: ${absTfdir}\n`);
+        process.exit(2);
+      }
+    }
+
     let currency = 'USD';
     try {
       const cfg = await loadConfig();
@@ -782,7 +791,7 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     }
     let context;
     try {
-      context = await runSteps(buildCostImpactPipelineSteps({ planFile: absPlan, currency }));
+      context = await runSteps(buildCostImpactPipelineSteps({ planFile: absPlan, currency, ...(absTfdir !== undefined ? { tfdir: absTfdir } : {}) }));
     } catch (e) {
       process.stderr.write(`Error: ${e instanceof Error ? e.message : String(e)}\n`);
       process.exit(1);
@@ -835,6 +844,32 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       return true;
     }
 
+    // --fail-on-delta: dollar-threshold CI gate
+    const failOnDeltaStr = parseArg(commandArgs, '--fail-on-delta');
+    const failOnDeltaFlagIdx = commandArgs.indexOf('--fail-on-delta');
+    const failOnDeltaEqualsHit = commandArgs.find((a) => a.startsWith('--fail-on-delta='));
+    const failOnDeltaPresent = failOnDeltaFlagIdx >= 0 || failOnDeltaEqualsHit !== undefined;
+    let failOnDeltaThreshold: number | null = null;
+    if (failOnDeltaPresent) {
+      if (failOnDeltaStr === null) {
+        const rawNext = failOnDeltaFlagIdx >= 0 ? (commandArgs[failOnDeltaFlagIdx + 1] ?? '') : '';
+        if (/^-\d/.test(rawNext)) {
+          process.stderr.write(`Error: --fail-on-delta must be >= 0; use 0 to fail on any non-zero delta\n`);
+          process.exit(2);
+        }
+        process.stderr.write(`Error: --fail-on-delta requires a numeric value (e.g. --fail-on-delta 500)\n`);
+        process.exit(2);
+      }
+      const parsed = parseFloat(failOnDeltaStr);
+      if (isNaN(parsed)) {
+        process.stderr.write(`Error: --fail-on-delta must be a number, got "${failOnDeltaStr}"\n`);
+        process.exit(2);
+      }
+      failOnDeltaThreshold = parsed;
+    }
+    const shouldFailOnDelta = failOnDeltaThreshold !== null &&
+      Math.abs(impact.summary.netDeltaMonthlyUsd) > failOnDeltaThreshold;
+
     const netLabel = impact.summary.netDeltaMonthlyUsd >= 0
       ? `+${formatMoney(impact.summary.netDeltaMonthlyUsd)}/mo`
       : `-${formatMoney(Math.abs(impact.summary.netDeltaMonthlyUsd))}/mo`;
@@ -880,11 +915,23 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
         (a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity),
       );
       for (const f of sortedFindings.slice(0, 10)) {
-        lines.push(`  [${SEVERITY_LABELS[f.severity] ?? f.severity.toUpperCase()}] ${f.ruleId} @ ${stripAnsi(f.address)} — ${stripAnsi(f.title)}`);
+        const fpSuffix = f.filePath !== undefined ? ` (${f.filePath})` : '';
+        lines.push(`  [${SEVERITY_LABELS[f.severity] ?? f.severity.toUpperCase()}] ${f.ruleId} @ ${stripAnsi(f.address)}${fpSuffix} — ${stripAnsi(f.title)}`);
       }
       if (sortedFindings.length > 10) {
         lines.push(`  ... ${sortedFindings.length - 10} more (run with --json for the full list)`);
       }
+    }
+    if (impact.warnings.length > 0) {
+      lines.push('');
+      lines.push('Warnings:');
+      for (const w of impact.warnings) {
+        lines.push(`  ${w}`);
+      }
+    }
+    if (shouldFailOnDelta) {
+      lines.push('');
+      lines.push(`Exiting 1: net delta ${netLabel} exceeds --fail-on-delta threshold ${formatMoney(failOnDeltaThreshold!)}/mo.`);
     }
     lines.push('');
     lines.push('Next:');
@@ -892,7 +939,7 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     lines.push('- korinfra security --dir ./terraform                   (post-apply security review)');
     writeLines(lines);
 
-    if (shouldFailOnCritical) process.exit(1);
+    if (shouldFailOnCritical || shouldFailOnDelta) process.exit(1);
     return true;
   }
 
@@ -2596,10 +2643,65 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
       }, null, 2) + '\n');
       return 2;
     }
-    // `--tfdir` is accepted for forward-compat with the documented invocation
-    // in issue #40, but the cross-reference to .tf source files is not yet
-    // wired up. The flag is parsed and ignored.
-    const tfdirIgnored = parseArg(commandArgs, '--tfdir') !== null;
+
+    const tfdirArg = parseArg(commandArgs, '--tfdir');
+    let absTfdir: string | undefined;
+    if (tfdirArg !== null) {
+      absTfdir = path.resolve(cwd, tfdirArg);
+      if (!absTfdir.startsWith(cwd + path.sep) && absTfdir !== cwd) {
+        process.stdout.write(JSON.stringify({
+          command: 'cost-impact',
+          status: 'error',
+          error: `--tfdir must stay within ${cwd}`,
+        }, null, 2) + '\n');
+        return 2;
+      }
+      if (!fs.existsSync(absTfdir) || !fs.statSync(absTfdir).isDirectory()) {
+        process.stdout.write(JSON.stringify({
+          command: 'cost-impact',
+          status: 'error',
+          error: `--tfdir not found or not a directory: ${absTfdir}`,
+        }, null, 2) + '\n');
+        return 2;
+      }
+    }
+
+    // --fail-on-delta validation
+    const failOnDeltaStr = parseArg(commandArgs, '--fail-on-delta');
+    const failOnDeltaFlagIdx = commandArgs.indexOf('--fail-on-delta');
+    const failOnDeltaEqualsHit = commandArgs.find((a) => a.startsWith('--fail-on-delta='));
+    const failOnDeltaPresent = failOnDeltaFlagIdx >= 0 || failOnDeltaEqualsHit !== undefined;
+    let failOnDeltaThreshold: number | null = null;
+    if (failOnDeltaPresent) {
+      if (failOnDeltaStr === null) {
+        const rawNext = failOnDeltaFlagIdx >= 0 ? (commandArgs[failOnDeltaFlagIdx + 1] ?? '') : '';
+        if (/^-\d/.test(rawNext)) {
+          process.stdout.write(JSON.stringify({
+            command: 'cost-impact',
+            status: 'error',
+            error: '--fail-on-delta must be >= 0; use 0 to fail on any non-zero delta',
+          }, null, 2) + '\n');
+          return 2;
+        }
+        process.stdout.write(JSON.stringify({
+          command: 'cost-impact',
+          status: 'error',
+          error: '--fail-on-delta requires a numeric value (e.g. --fail-on-delta 500)',
+        }, null, 2) + '\n');
+        return 2;
+      }
+      const parsed = parseFloat(failOnDeltaStr);
+      if (isNaN(parsed)) {
+        process.stdout.write(JSON.stringify({
+          command: 'cost-impact',
+          status: 'error',
+          error: `--fail-on-delta must be a number, got "${failOnDeltaStr}"`,
+        }, null, 2) + '\n');
+        return 2;
+      }
+      failOnDeltaThreshold = parsed;
+    }
+
     let currency = 'USD';
     try {
       const cfg = await loadConfig();
@@ -2609,7 +2711,7 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     }
     let context;
     try {
-      context = await runSteps(buildCostImpactPipelineSteps({ planFile: absPlan, currency }));
+      context = await runSteps(buildCostImpactPipelineSteps({ planFile: absPlan, currency, ...(absTfdir !== undefined ? { tfdir: absTfdir } : {}) }));
     } catch (e) {
       process.stdout.write(JSON.stringify({
         command: 'cost-impact',
@@ -2622,7 +2724,8 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     const failOn = parseArg(commandArgs, '--fail-on');
     const criticalCount = impact.findings.filter((f) => f.severity === 'critical').length;
     const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
-    const failExitCodeCi = shouldFailOnCritical ? 1 : 0;
+    const shouldFailOnDelta = failOnDeltaThreshold !== null &&
+      Math.abs(impact.summary.netDeltaMonthlyUsd) > failOnDeltaThreshold;
 
     const effectiveJsonCiFmt = await resolveEffectiveFormat(rawJsonCiFmt);
     if (effectiveJsonCiFmt !== null) {
@@ -2663,25 +2766,29 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
         },
       };
       process.stdout.write(createFormatter(format).format(scanReport));
-      return failExitCodeCi;
+      return (shouldFailOnCritical || shouldFailOnDelta) ? 1 : 0;
     }
 
     const out = {
       command: 'cost-impact',
       status: 'completed',
-      summary: impact.summary,
+      summary: {
+        ...impact.summary,
+        ...(failOnDeltaThreshold !== null ? {
+          failOnDeltaTriggered: shouldFailOnDelta,
+          failOnDeltaThresholdUsd: failOnDeltaThreshold,
+        } : {}),
+      },
       changes: impact.changes,
       findings: impact.findings,
-      warnings: tfdirIgnored
-        ? [...impact.warnings, '--tfdir is accepted but not yet used; cross-referencing to .tf source files is planned for a future release']
-        : impact.warnings,
+      warnings: impact.warnings,
       next: [
         { label: 'generate report', command: 'korinfra report --format html --output reports/cost-impact.html' },
         { label: 'review post-apply security rules', command: 'korinfra security --dir ./terraform' },
       ],
     };
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
-    return failExitCodeCi;
+    return (shouldFailOnCritical || shouldFailOnDelta) ? 1 : 0;
   }
 
   if (command === 'doctor') {

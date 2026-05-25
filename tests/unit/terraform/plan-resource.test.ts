@@ -478,10 +478,10 @@ describe('synthesizeResource — aws_ecs_service', () => {
       }),
     ]);
     // Bare family key must be absent — resolution would be ambiguous.
-    expect(index.has('api')).toBe(false);
+    expect(index.byKey.has('api')).toBe(false);
     // Per-revision keys must still be present and correct.
-    expect(index.get('api:1')?.cpuUnits).toBe(512);
-    expect(index.get('api:2')?.cpuUnits).toBe(2048);
+    expect(index.byKey.get('api:1')?.cpu).toBe(512);
+    expect(index.byKey.get('api:2')?.cpu).toBe(2048);
     // Service referencing bare "api" must get a warning, not silently pick the wrong one.
     const serviceChange = makeChange({
       address: 'aws_ecs_service.app',
@@ -726,5 +726,123 @@ describe('buildTaskDefIndex — ambiguous family handling', () => {
     expect(index.has('svc:1')).toBe(true);
     expect(index.has('svc:2')).toBe(true);
     expect(index.has('svc:3')).toBe(true);
+  });
+});
+
+describe('synthesizeResource — ECS task def resolved via index', () => {
+  function makeTaskDefChange(opts: {
+    address: string;
+    cpu: string;
+    memory: string;
+    family: string;
+    arn?: string;
+    moduleAddress?: string;
+    arnUnknown?: boolean;
+  }): TerraformResourceChange {
+    return makeChange({
+      address: opts.address,
+      type: 'aws_ecs_task_definition',
+      ...(opts.moduleAddress !== undefined ? { module_address: opts.moduleAddress } : {}),
+      change: {
+        actions: ['create'],
+        after: {
+          family: opts.family,
+          cpu: opts.cpu,
+          memory: opts.memory,
+          ...(opts.arn !== undefined ? { arn: opts.arn } : {}),
+        },
+        ...(opts.arnUnknown ? { after_unknown: { arn: true } } : {}),
+      },
+    });
+  }
+
+  it('resolves task def by plan address, sets task_cpu/task_memory, costStatus=known', () => {
+    const taskDef = makeTaskDefChange({ address: 'aws_ecs_task_definition.api', cpu: '2048', memory: '4096', family: 'api', arnUnknown: true });
+    const index = buildTaskDefIndex([taskDef]);
+    const svc = makeChange({
+      address: 'aws_ecs_service.api',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: { desired_count: 10, task_definition: 'aws_ecs_task_definition.api' },
+      },
+    });
+    const synth = synthesizeResource(svc, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('known');
+    expect(synth!.resource.configuration['task_cpu']).toBe(2); // 2048 / 1024
+    expect(synth!.resource.configuration['task_memory']).toBe(4096);
+  });
+
+  it('resolves task def by ARN (already-deployed family:revision)', () => {
+    const taskDef = makeTaskDefChange({
+      address: 'aws_ecs_task_definition.api',
+      cpu: '4096',
+      memory: '8192',
+      family: 'api',
+      arn: 'arn:aws:ecs:us-east-1:123456789012:task-definition/api:3',
+    });
+    const index = buildTaskDefIndex([taskDef]);
+    const svc = makeChange({
+      address: 'aws_ecs_service.api',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: { desired_count: 5, task_definition: 'arn:aws:ecs:us-east-1:123456789012:task-definition/api:3' },
+      },
+    });
+    const synth = synthesizeResource(svc, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('known');
+    expect(synth!.resource.configuration['task_cpu']).toBe(4); // 4096 / 1024
+  });
+
+  it('falls back to partial-unknown when external ARN is not in index', () => {
+    const index = buildTaskDefIndex([]); // empty — no task defs in plan
+    const svc = makeChange({
+      address: 'aws_ecs_service.api',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: {
+          desired_count: 3,
+          task_definition: 'arn:aws:ecs:us-east-1:123456789012:task-definition/external:42',
+        },
+      },
+    });
+    const synth = synthesizeResource(svc, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('partial-unknown');
+  });
+
+  it('resolves via byModule fallback when task_definition is after_unknown and single task def in same module', () => {
+    const taskDef = makeTaskDefChange({ address: 'aws_ecs_task_definition.api', cpu: '1024', memory: '2048', family: 'api', arnUnknown: true });
+    const index = buildTaskDefIndex([taskDef]);
+    const svc = makeChange({
+      address: 'aws_ecs_service.api',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: { desired_count: 2, task_definition: null },
+        after_unknown: { task_definition: true },
+      },
+    });
+    const synth = synthesizeResource(svc, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('known');
+    expect(synth!.resource.configuration['task_cpu']).toBe(1); // 1024 / 1024
+  });
+
+  it('keeps partial-unknown when task_definition is after_unknown and multiple task defs in same module (ambiguous)', () => {
+    const td1 = makeTaskDefChange({ address: 'aws_ecs_task_definition.api', cpu: '1024', memory: '2048', family: 'api', arnUnknown: true });
+    const td2 = makeTaskDefChange({ address: 'aws_ecs_task_definition.worker', cpu: '512', memory: '1024', family: 'worker', arnUnknown: true });
+    const index = buildTaskDefIndex([td1, td2]);
+    const svc = makeChange({
+      address: 'aws_ecs_service.api',
+      type: 'aws_ecs_service',
+      change: {
+        actions: ['create'],
+        after: { desired_count: 1, task_definition: null },
+        after_unknown: { task_definition: true },
+      },
+    });
+    const synth = synthesizeResource(svc, 'after', 'us-east-1', index);
+    expect(synth!.costStatus).toBe('partial-unknown');
   });
 });
