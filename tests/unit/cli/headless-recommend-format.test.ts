@@ -7,6 +7,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // ─── DB query mock ────────────────────────────────────────────────────────────
 
@@ -155,11 +157,25 @@ describe('runHeadlessTextCommand("recommend", --format)', () => {
     expect(stdoutBuf).not.toContain('korinfra recommend');
   });
 
-  it('--output flag emits warning to stderr and still writes to stdout', async () => {
+  it('--format csv --output <within-cwd> writes CSV to file and confirms on stderr', async () => {
+    const outPath = path.join(process.cwd(), 'rec-test-output.csv');
+    try {
+      const result = await runHeadlessTextCommand('recommend', ['--format', 'csv', '--output', outPath]);
+      expect(result).toBe(true);
+      expect(stdoutBuf).toBe('');
+      expect(stderrBuf).toContain('CSV report written to');
+      expect(fs.readFileSync(outPath, 'utf8')).toContain('rec-001');
+    } finally {
+      try { fs.unlinkSync(outPath); } catch { /* already gone */ }
+    }
+  });
+
+  it('--output outside cwd sets exitCode 2 and writes error to stderr', async () => {
     const result = await runHeadlessTextCommand('recommend', ['--format', 'csv', '--output', '/tmp/out.csv']);
     expect(result).toBe(true);
-    expect(stderrBuf).toContain('--output is not yet supported for recommend');
-    expect(stdoutBuf).toContain('rec-001');
+    expect(process.exitCode).toBe(2);
+    expect(stderrBuf).toContain('must stay within the current directory');
+    expect(stdoutBuf).toBe('');
   });
 
   it('--fail-on partial emits warning to stderr (not applicable to recommend)', async () => {
@@ -267,11 +283,26 @@ describe('runJsonCommand("recommend", --format)', () => {
     expect(stdoutBuf).toContain('<!DOCTYPE html>');
   });
 
-  it('--output flag emits warning to stderr in JSON mode', async () => {
+  it('--format csv --output <within-cwd> writes CSV to file and returns 0', async () => {
+    const outPath = path.join(process.cwd(), 'json-rec-test-output.csv');
+    try {
+      const code = await runJsonCommand('recommend', ['--format', 'csv', '--output', outPath]);
+      expect(code).toBe(0);
+      expect(stdoutBuf).toBe('');
+      expect(stderrBuf).toContain('CSV report written to');
+      expect(fs.readFileSync(outPath, 'utf8')).toContain('rec-001');
+    } finally {
+      try { fs.unlinkSync(outPath); } catch { /* already gone */ }
+    }
+  });
+
+  it('--output outside cwd returns 2 with JSON error', async () => {
     const code = await runJsonCommand('recommend', ['--format', 'csv', '--output', '/tmp/out.csv']);
-    expect(code).toBe(0);
-    expect(stderrBuf).toContain('--output is not yet supported for recommend');
-    expect(stdoutBuf).toContain('rec-001');
+    expect(code).toBe(2);
+    const parsed = JSON.parse(stdoutBuf) as { command: string; status: string; error: string };
+    expect(parsed.command).toBe('recommend');
+    expect(parsed.status).toBe('error');
+    expect(parsed.error).toContain('must stay within the current directory');
   });
 
   it('--fail-on partial emits warning to stderr in JSON mode', async () => {

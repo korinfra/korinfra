@@ -202,6 +202,48 @@ plan` step required.
 | `variable` | Usage-dependent resource (Lambda, S3 storage, DynamoDB on-demand). Fixed-cost floor is included in net total. |
 | `unpriced` | Resource type not in the pricing engine. Row is shown for review but excluded from net total. |
 
+## 3. Generating CSV and HTML compliance artifacts
+
+All headless commands accept `--format csv|html` (in addition to the default JSON). Use `--output <file>` to write directly to a file — the path must stay within the working directory. Without `--output`, formatted output goes to stdout and can be redirected with `>`.
+
+```yaml
+- name: Security scan — HTML report
+  run: |
+    korinfra security \
+      --dir terraform \
+      --no-tui \
+      --format html \
+      --output reports/security.html
+
+- name: Cost-impact — CSV artifact
+  working-directory: terraform
+  run: |
+    korinfra cost-impact \
+      --plan-file plan.json \
+      --no-tui \
+      --format csv \
+      --output ../reports/cost-impact.csv
+
+- name: Recommendations — CSV report
+  run: |
+    korinfra recommend \
+      --no-tui \
+      --format csv \
+      --output reports/recommendations.csv
+```
+
+Upload reports as workflow artifacts:
+
+```yaml
+- uses: actions/upload-artifact@v4
+  if: always()
+  with:
+    name: korinfra-reports
+    path: reports/
+```
+
+The `-f` flag is a short alias for `--format` on all commands except `cost-impact` (where `-f` is reserved for `--plan-file`).
+
 ## OpenTofu
 
 `terraform show -json` and the OpenTofu equivalent (`tofu show -json`) emit
