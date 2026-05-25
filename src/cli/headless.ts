@@ -26,6 +26,7 @@ import { stripAnsi, SEVERITY_LABELS } from './ui/text.js';
 import { buildSecurityPipelineSteps, extractSecurityFindings } from './pipelines/security.js';
 import { buildCostImpactPipelineSteps, extractCostImpact } from './pipelines/cost-impact.js';
 import { buildTagsPipelineSteps, extractTagCompliance } from './pipelines/tags.js';
+import { createFormatter, type ScanReport } from '../output/formatter.js';
 import { buildRecommendAnalysisPrompt, buildSecurityAnalysisPrompt } from './pipelines/analysis.js';
 import { getAnalysisPrompt, getPrompt } from '../agent/prompts.js';
 import { createAgentProvider } from '../agent/index.js';
@@ -308,10 +309,45 @@ function describeActiveFilters(filters: RulesFilters): string[] {
   return parts;
 }
 
+// ─── Format resolution helper ─────────────────────────────────────────────────
+
+/**
+ * Resolves the effective output format for a headless command.
+ *
+ * Rules:
+ *  - If `rawFormat` is explicitly provided AND is not 'json' → use it.
+ *  - If `rawFormat` is 'json' → return null (falls through to native output).
+ *  - If `rawFormat` is null → check `output.default_format` in config; use it
+ *    only if it is 'csv' or 'html' (json default has no effect on headless paths).
+ *  - Config errors other than ENOENT are surfaced as a stderr warning.
+ */
+async function resolveEffectiveFormat(rawFormat: string | null): Promise<string | null> {
+  if (rawFormat !== null) {
+    return rawFormat === 'json' ? null : rawFormat;
+  }
+  try {
+    const cfg = await loadConfig();
+    const cfgFmt = cfg.output.default_format;
+    if (cfgFmt === 'csv' || cfgFmt === 'html') return cfgFmt;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      process.stderr.write(`[korinfra] Warning: could not read config: ${String(err)}\n`);
+    }
+  }
+  return null;
+}
+
 // ─── Headless: text output ────────────────────────────────────────────────────
 
 export async function runHeadlessTextCommand(command: string, commandArgs: string[]): Promise<boolean> {
   if (command === 'scan') {
+    const rawFormat = parseArg(commandArgs, '--format', '-f')?.toLowerCase() ?? null;
+    if (rawFormat !== null && !['json', 'csv', 'html'].includes(rawFormat)) {
+      process.stderr.write(`korinfra scan: Unknown format "${rawFormat}"\n\nUse --format json|csv|html\n`);
+      process.exitCode = 2;
+      return true;
+    }
+
     const context = await runSteps(buildScanPipelineSteps({
       regions: parseRegions(commandArgs),
       profile: parseArg(commandArgs, '--profile', '-p'),
@@ -319,11 +355,51 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       skipMetrics: hasFlag(commandArgs, '--skip-metrics'),
     }));
     const summary = extractScanSummary(context);
+
+    const effectiveFormat = await resolveEffectiveFormat(rawFormat);
+
     const recs = extractRecommendations(context);
     const collectResult = context.results.get('collect') as {
       errors?: CollectError[];
     } | undefined;
     const collectErrors = collectResult?.errors ?? [];
+
+    if (effectiveFormat !== null) {
+      const failOn = parseArg(commandArgs, '--fail-on');
+      const criticalCount = recs.filter((r) => r.impact === 'critical').length;
+      if (failOn === 'critical' && criticalCount > 0) process.exitCode = 1;
+      if (failOn === 'partial' && collectErrors.length > 0) process.exitCode = 1;
+
+      const format = effectiveFormat as ReportFormat;
+      const outputArg = parseArg(commandArgs, '--output', '-o');
+      const resolvedOutput = outputArg !== null ? path.resolve(process.cwd(), outputArg) : undefined;
+      if (resolvedOutput !== undefined) {
+        const cwd = process.cwd();
+        if (!resolvedOutput.startsWith(cwd + path.sep) && resolvedOutput !== cwd) {
+          throw new Error(`Output path must stay within ${cwd}`);
+        }
+      }
+      try {
+        const reportContext = await runSteps(buildReportPipelineSteps({
+          format,
+          outputPath: resolvedOutput,
+          scanId: summary.scanId,
+        }));
+        const result = extractReportResult(reportContext);
+        if (result.written && result.outputPath) {
+          process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${result.outputPath}\n`);
+        } else if (result.content !== undefined) {
+          process.stdout.write(result.content);
+        } else {
+          process.stderr.write('[korinfra] Warning: formatter produced no output\n');
+        }
+      } catch (err: unknown) {
+        process.stderr.write(`[korinfra] Report generation failed: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
+      }
+      return true;
+    }
+
     const scanId = summary.scanId ?? '';
     const warningLines: string[] = collectErrors.length > 0
       ? [
@@ -523,6 +599,16 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
   }
 
   if (command === 'security') {
+    const rawFormat = parseArg(commandArgs, '--format')?.toLowerCase() ?? null;
+    if (rawFormat !== null && !['json', 'csv', 'html'].includes(rawFormat)) {
+      process.stderr.write(`korinfra security: Unknown format "${rawFormat}"\n\nUse --format json|csv|html\n`);
+      process.exitCode = 2;
+      return true;
+    }
+    const outputArg = parseArg(commandArgs, '--output', '-o');
+    if (outputArg !== null) {
+      process.stderr.write('[korinfra] Warning: --output is not yet supported for security; pipe stdout to a file instead\n');
+    }
     const terraformDir = parseArg(commandArgs, '--dir', '-d');
     const severity = parseArg(commandArgs, '--severity');
     let context;
@@ -542,6 +628,44 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     const highCount = bySeverity['high'] ?? 0;
     const mediumCount = bySeverity['medium'] ?? 0;
     const severityOrder = ['critical', 'high', 'medium', 'low'] as const;
+
+    const effectiveSecFmt = await resolveEffectiveFormat(rawFormat);
+    if (effectiveSecFmt !== null) {
+      const failOn = parseArg(commandArgs, '--fail-on');
+      if (failOn === 'critical' && criticalCount > 0) process.exitCode = 1;
+      if (failOn === 'partial') {
+        process.stderr.write('[korinfra] Warning: --fail-on partial is not applicable to security\n');
+      }
+      const format = effectiveSecFmt as ReportFormat;
+      const secScanId = (context?.results.get('save_security') as { scan_id?: string } | undefined)?.scan_id ?? '';
+      const scanReport: ScanReport = {
+        scanId: secScanId,
+        timestamp: new Date().toISOString(),
+        resources: [],
+        recommendations: findings.map((f) => ({
+          id: f.id,
+          resourceId: f.resource,
+          type: f.id,
+          title: f.title,
+          description: f.description,
+          estimatedSavings: 0,
+          confidence: 1.0,
+          impact: f.severity,
+          risk: f.severity,
+          status: 'open',
+          implementationSteps: f.remediation ? [f.remediation] : null,
+        })),
+        costs: [],
+        summary: {
+          totalResources: 0,
+          totalMonthlyCost: 0,
+          potentialSavings: 0,
+          recommendationCount: findings.length,
+        },
+      };
+      process.stdout.write(createFormatter(format).format(scanReport));
+      return true;
+    }
 
     const summaryParts: string[] = [];
     if (criticalCount > 0) summaryParts.push(`${criticalCount} critical`);
@@ -609,6 +733,16 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
   }
 
   if (command === 'cost-impact') {
+    const rawCiFormat = parseArg(commandArgs, '--format')?.toLowerCase() ?? null;
+    if (rawCiFormat !== null && !['json', 'csv', 'html'].includes(rawCiFormat)) {
+      process.stderr.write(`korinfra cost-impact: Unknown format "${rawCiFormat}"\n\nUse --format json|csv|html\n`);
+      process.exitCode = 2;
+      return true;
+    }
+    const ciOutputArg = parseArg(commandArgs, '--output', '-o');
+    if (ciOutputArg !== null) {
+      process.stderr.write('[korinfra] Warning: --output is not yet supported for cost-impact; pipe stdout to a file instead\n');
+    }
     const planFile = parseArg(commandArgs, '--plan-file', '-f');
     if (planFile === null) {
       process.stderr.write('Error: --plan-file <path> is required.\n');
@@ -653,6 +787,49 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     const failOn = parseArg(commandArgs, '--fail-on');
     const criticalCount = impact.findings.filter((f) => f.severity === 'critical').length;
     const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
+
+    const effectiveCiFmt = await resolveEffectiveFormat(rawCiFormat);
+    if (effectiveCiFmt !== null) {
+      if (shouldFailOnCritical) process.exitCode = 1;
+      if (failOn === 'partial') {
+        process.stderr.write('[korinfra] Warning: --fail-on partial is not applicable to cost-impact\n');
+      }
+      const format = effectiveCiFmt as ReportFormat;
+      const scanReport: ScanReport = {
+        scanId: '',
+        timestamp: new Date().toISOString(),
+        resources: impact.changes.map((c) => ({
+          id: c.address,
+          type: c.resourceType,
+          name: c.address,
+          region: '',
+          state: c.action,
+          monthlyCost: Math.abs(c.deltaUsd),
+          monthlyCostSource: null,
+        })),
+        recommendations: impact.findings.map((f) => ({
+          id: f.ruleId,
+          resourceId: f.address,
+          type: f.ruleId,
+          title: f.title,
+          description: f.description,
+          estimatedSavings: 0,
+          confidence: 1.0,
+          impact: f.severity,
+          risk: f.severity,
+          status: 'open',
+        })),
+        costs: [],
+        summary: {
+          totalResources: impact.changes.length,
+          totalMonthlyCost: impact.summary.netDeltaMonthlyUsd,
+          potentialSavings: 0,
+          recommendationCount: impact.findings.length,
+        },
+      };
+      process.stdout.write(createFormatter(format).format(scanReport));
+      return true;
+    }
 
     const netLabel = impact.summary.netDeltaMonthlyUsd >= 0
       ? `+${formatMoney(impact.summary.netDeltaMonthlyUsd)}/mo`
@@ -781,6 +958,16 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
   }
 
   if (command === 'recommend') {
+    const rawRecFormat = parseArg(commandArgs, '--format')?.toLowerCase() ?? null;
+    if (rawRecFormat !== null && !['json', 'csv', 'html'].includes(rawRecFormat)) {
+      process.stderr.write(`korinfra recommend: Unknown format "${rawRecFormat}"\n\nUse --format json|csv|html\n`);
+      process.exitCode = 2;
+      return true;
+    }
+    const recOutputArg = parseArg(commandArgs, '--output', '-o');
+    if (recOutputArg !== null) {
+      process.stderr.write('[korinfra] Warning: --output is not yet supported for recommend; pipe stdout to a file instead\n');
+    }
     const source = parseArg(commandArgs, '--source');
     if (source !== null && source !== 'compute-optimizer') {
       writeLines([
@@ -856,6 +1043,43 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       const recs = parsed.recommendations ?? [];
       const total = parsed.summary?.total ?? recs.length;
       const totalSavings = parsed.summary?.estimatedMonthlySavingsUsd ?? 0;
+
+      const effectiveCoFmt = await resolveEffectiveFormat(rawRecFormat);
+      if (effectiveCoFmt !== null) {
+        const coTextFailOn = parseArg(commandArgs, '--fail-on');
+        if (coTextFailOn === 'partial') {
+          process.stderr.write('[korinfra] Warning: --fail-on partial is not applicable to recommend\n');
+        }
+        const format = effectiveCoFmt as ReportFormat;
+        const scanReport: ScanReport = {
+          scanId: '',
+          timestamp: new Date().toISOString(),
+          resources: [],
+          recommendations: recs.slice(0, 50).map((r, i) => ({
+            id: String(i),
+            resourceId: r.resourceArn ?? '',
+            type: r.resourceType ?? '',
+            title: r.finding ?? 'Optimization recommendation',
+            estimatedSavings: r.estimatedMonthlySavingsUsd ?? 0,
+            confidence: 1.0,
+            impact: (r.estimatedMonthlySavingsUsd ?? 0) >= 100 ? 'critical'
+              : (r.estimatedMonthlySavingsUsd ?? 0) >= 50 ? 'high'
+              : (r.estimatedMonthlySavingsUsd ?? 0) >= 10 ? 'medium' : 'low',
+            risk: 'low',
+            status: 'open',
+          })),
+          costs: [],
+          summary: {
+            totalResources: 0,
+            totalMonthlyCost: 0,
+            potentialSavings: totalSavings,
+            recommendationCount: recs.slice(0, 50).length,
+          },
+        };
+        process.stdout.write(createFormatter(format).format(scanReport));
+        return true;
+      }
+
       writeLines([
         '[Source: AWS Compute Optimizer]',
         ...(parsed.status === 'partial'
@@ -875,6 +1099,9 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       return true;
     }
     const isRefresh = hasFlag(commandArgs, '--refresh');
+    if (isRefresh && rawRecFormat !== null) {
+      process.stderr.write('[korinfra] Warning: --format is not supported with --refresh; use without --refresh to format cached recommendations\n');
+    }
     if (isRefresh) {
       const provider = await createHeadlessProvider();
       if (provider === null) {
@@ -912,6 +1139,42 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     const db = getDb();
     const recs = listPendingRecommendations(db, 50);
     const totalSavings = recs.reduce((s, r) => s + (r.estimated_savings ?? 0), 0);
+
+    const effectiveRecFmt = await resolveEffectiveFormat(rawRecFormat);
+    if (effectiveRecFmt !== null) {
+      const recDbFailOn = parseArg(commandArgs, '--fail-on');
+      if (recDbFailOn === 'partial') {
+        process.stderr.write('[korinfra] Warning: --fail-on partial is not applicable to recommend\n');
+      }
+      const format = effectiveRecFmt as ReportFormat;
+      const scanReport: ScanReport = {
+        scanId: '',
+        timestamp: new Date().toISOString(),
+        resources: [],
+        recommendations: recs.slice(0, 50).map((r) => ({
+          id: r.id,
+          resourceId: r.resource_id ?? '',
+          type: r.type ?? '',
+          title: r.title,
+          ...(r.description !== null && r.description !== undefined ? { description: r.description } : {}),
+          estimatedSavings: r.estimated_savings ?? 0,
+          confidence: r.confidence ?? 0,
+          impact: r.impact ?? 'medium',
+          risk: r.risk ?? 'low',
+          status: r.status ?? 'open',
+        })),
+        costs: [],
+        summary: {
+          totalResources: 0,
+          totalMonthlyCost: 0,
+          potentialSavings: totalSavings,
+          recommendationCount: recs.length,
+        },
+      };
+      process.stdout.write(createFormatter(format).format(scanReport));
+      return true;
+    }
+
     writeLines([
       'korinfra recommend',
       `Recommendations: ${recs.length}`,
@@ -1483,6 +1746,17 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
 
 export async function runJsonCommand(command: string, commandArgs: string[]): Promise<number | false> {
   if (command === 'scan') {
+    const rawFormat = parseArg(commandArgs, '--format', '-f')?.toLowerCase() ?? null;
+    if (rawFormat !== null && !['json', 'csv', 'html'].includes(rawFormat)) {
+      process.stdout.write(JSON.stringify({
+        command: 'scan',
+        status: 'error',
+        error: `Unknown format "${rawFormat}"`,
+        hint: 'Use --format json|csv|html',
+      }) + '\n');
+      return 2;
+    }
+
     const context = await runSteps(buildScanPipelineSteps({
       regions: parseRegions(commandArgs),
       profile: parseArg(commandArgs, '--profile', '-p'),
@@ -1496,10 +1770,45 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
     } | undefined;
     const collectErrors = collectResult?.errors ?? [];
     const scanId = summary.scanId ?? '';
-    const criticalCount = recs.filter(r => r.impact === 'critical').length;
+    const criticalCount = recs.filter((r) => r.impact === 'critical').length;
     const failOn = parseArg(commandArgs, '--fail-on');
     const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
     const shouldFailOnPartial = failOn === 'partial' && collectErrors.length > 0;
+    const failExitCode = (shouldFailOnCritical || shouldFailOnPartial) ? 1 : 0;
+
+    const effectiveFormat = await resolveEffectiveFormat(rawFormat);
+
+    if (effectiveFormat !== null) {
+      const format = effectiveFormat as ReportFormat;
+      const outputArg = parseArg(commandArgs, '--output', '-o');
+      const resolvedOutput = outputArg !== null ? path.resolve(process.cwd(), outputArg) : undefined;
+      if (resolvedOutput !== undefined) {
+        const cwd = process.cwd();
+        if (!resolvedOutput.startsWith(cwd + path.sep) && resolvedOutput !== cwd) {
+          throw new Error(`Output path must stay within ${cwd}`);
+        }
+      }
+      try {
+        const reportContext = await runSteps(buildReportPipelineSteps({
+          format,
+          outputPath: resolvedOutput,
+          scanId: summary.scanId,
+        }));
+        const result = extractReportResult(reportContext);
+        if (result.written && result.outputPath) {
+          process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${result.outputPath}\n`);
+        } else if (result.content !== undefined) {
+          process.stdout.write(result.content);
+        } else {
+          process.stderr.write('[korinfra] Warning: formatter produced no output\n');
+        }
+      } catch (err: unknown) {
+        process.stderr.write(`[korinfra] Report generation failed: ${err instanceof Error ? err.message : String(err)}\n`);
+        return 1;
+      }
+      return failExitCode;
+    }
+
     const out = {
       command: 'scan',
       status: 'completed',
@@ -1534,7 +1843,7 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
       ],
     };
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
-    return (shouldFailOnCritical || shouldFailOnPartial) ? 1 : 0;
+    return failExitCode;
   }
 
   if (command === 'costs') {
@@ -1736,6 +2045,15 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
   }
 
   if (command === 'recommend') {
+    const rawJsonRecFmt = parseArg(commandArgs, '--format')?.toLowerCase() ?? null;
+    if (rawJsonRecFmt !== null && !['json', 'csv', 'html'].includes(rawJsonRecFmt)) {
+      process.stdout.write(JSON.stringify({ command: 'recommend', status: 'error', error: `Unknown format "${rawJsonRecFmt}"`, hint: 'Use --format json|csv|html' }) + '\n');
+      return 2;
+    }
+    const jsonRecOutputArg = parseArg(commandArgs, '--output', '-o');
+    if (jsonRecOutputArg !== null) {
+      process.stderr.write('[korinfra] Warning: --output is not yet supported for recommend; pipe stdout to a file instead\n');
+    }
     const source = parseArg(commandArgs, '--source');
     if (source !== null && source !== 'compute-optimizer') {
       process.stdout.write(JSON.stringify({
@@ -1795,21 +2113,63 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
       // performanceRisk is the risk of a recommendation being wrong (application risk),
       // not the severity of the wastage — so savings amount is the correct signal for --fail-on.
       const recs = parsed.recommendations ?? [];
+      const totalCoSavings = parsed.summary?.estimatedMonthlySavingsUsd ?? 0;
+      const totalCoCount = parsed.summary?.total ?? recs.length;
       const critical = recs.filter((r) => (r.estimatedMonthlySavingsUsd ?? 0) >= 100).length;
       const high = recs.filter((r) => { const s = r.estimatedMonthlySavingsUsd ?? 0; return s >= 50 && s < 100; }).length;
       const medium = recs.filter((r) => { const s = r.estimatedMonthlySavingsUsd ?? 0; return s >= 10 && s < 50; }).length;
       const low = recs.filter((r) => (r.estimatedMonthlySavingsUsd ?? 0) < 10).length;
+      const coFailOn = parseArg(commandArgs, '--fail-on');
+      const coFailExitCode = coFailOn === 'critical' && critical > 0 ? 1 : 0;
+
+      const effectiveJsonCoFmt = await resolveEffectiveFormat(rawJsonRecFmt);
+      if (effectiveJsonCoFmt !== null) {
+        if (coFailOn === 'partial') {
+          process.stderr.write('[korinfra] Warning: --fail-on partial is not applicable to recommend\n');
+        }
+        const format = effectiveJsonCoFmt as ReportFormat;
+        const scanReport: ScanReport = {
+          scanId: '',
+          timestamp: new Date().toISOString(),
+          resources: [],
+          recommendations: recs.slice(0, 50).map((r, i) => ({
+            id: String(i),
+            resourceId: (r as { resourceArn?: string }).resourceArn ?? '',
+            type: (r as { resourceType?: string }).resourceType ?? '',
+            title: (r as { finding?: string }).finding ?? 'Optimization recommendation',
+            estimatedSavings: r.estimatedMonthlySavingsUsd ?? 0,
+            confidence: 1.0,
+            impact: (r.estimatedMonthlySavingsUsd ?? 0) >= 100 ? 'critical'
+              : (r.estimatedMonthlySavingsUsd ?? 0) >= 50 ? 'high'
+              : (r.estimatedMonthlySavingsUsd ?? 0) >= 10 ? 'medium' : 'low',
+            risk: 'low',
+            status: 'open',
+          })),
+          costs: [],
+          summary: {
+            totalResources: 0,
+            totalMonthlyCost: 0,
+            potentialSavings: totalCoSavings,
+            recommendationCount: recs.slice(0, 50).length,
+          },
+        };
+        process.stdout.write(createFormatter(format).format(scanReport));
+        // partial_failure → exit 1 even for formatted output (no data arrived)
+        if (parsed.status === 'partial_failure') return 1;
+        return coFailExitCode;
+      }
+
       const out = {
         command: 'recommend',
         source: 'compute-optimizer',
         status: parsed.status ?? 'completed',
         summary: {
-          total: parsed.summary?.total ?? 0,
+          total: totalCoCount,
           critical,
           high,
           medium,
           low,
-          estimatedMonthlySavingsUsd: parsed.summary?.estimatedMonthlySavingsUsd ?? 0,
+          estimatedMonthlySavingsUsd: totalCoSavings,
           byType: parsed.summary?.byType ?? {},
         },
         recommendations: recs,
@@ -1820,8 +2180,7 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
       // partial_failure → exit 1 (nothing came back). partial → exit 0 (some data
       // arrived; consumer can branch on the status field).
       if (parsed.status === 'partial_failure') return 1;
-      const failOn = parseArg(commandArgs, '--fail-on');
-      return failOn === 'critical' && critical > 0 ? 1 : 0;
+      return coFailExitCode;
     }
     const isRefresh = hasFlag(commandArgs, '--refresh');
     if (isRefresh) {
@@ -1863,6 +2222,43 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
     const failOn = parseArg(commandArgs, '--fail-on');
     const criticalCount = recs.filter(r => r.impact === 'critical').length;
     const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
+    const recFailExitCode = shouldFailOnCritical ? 1 : 0;
+    const totalDbSavings = recs.reduce((sum, r) => sum + (r.estimated_savings ?? 0), 0);
+
+    const effectiveJsonRecFmt = await resolveEffectiveFormat(rawJsonRecFmt);
+    if (effectiveJsonRecFmt !== null) {
+      if (failOn === 'partial') {
+        process.stderr.write('[korinfra] Warning: --fail-on partial is not applicable to recommend\n');
+      }
+      const format = effectiveJsonRecFmt as ReportFormat;
+      const scanReport: ScanReport = {
+        scanId: '',
+        timestamp: new Date().toISOString(),
+        resources: [],
+        recommendations: recs.slice(0, 50).map((r) => ({
+          id: r.id,
+          resourceId: r.resource_id ?? '',
+          type: r.type ?? '',
+          title: r.title,
+          ...(r.description !== null && r.description !== undefined ? { description: r.description } : {}),
+          estimatedSavings: r.estimated_savings ?? 0,
+          confidence: r.confidence ?? 0,
+          impact: r.impact ?? 'medium',
+          risk: r.risk ?? 'low',
+          status: r.status ?? 'open',
+        })),
+        costs: [],
+        summary: {
+          totalResources: 0,
+          totalMonthlyCost: 0,
+          potentialSavings: totalDbSavings,
+          recommendationCount: recs.length,
+        },
+      };
+      process.stdout.write(createFormatter(format).format(scanReport));
+      return recFailExitCode;
+    }
+
     const out = {
       command: 'recommend',
       status: 'completed',
@@ -1872,7 +2268,7 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
         high: recs.filter(r => r.impact === 'high').length,
         medium: recs.filter(r => r.impact === 'medium').length,
         low: recs.filter(r => r.impact === 'low').length,
-        estimatedMonthlySavingsUsd: recs.reduce((sum, r) => sum + (r.estimated_savings ?? 0), 0),
+        estimatedMonthlySavingsUsd: totalDbSavings,
       },
       recommendations: recs.slice(0, 50).map((r) => ({
         id: r.id,
@@ -1894,7 +2290,7 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
       ],
     };
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
-    return shouldFailOnCritical ? 1 : 0;
+    return recFailExitCode;
   }
 
   if (command === 'tags') {
@@ -2058,6 +2454,15 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
   }
 
   if (command === 'security') {
+    const rawJsonSecFmt = parseArg(commandArgs, '--format')?.toLowerCase() ?? null;
+    if (rawJsonSecFmt !== null && !['json', 'csv', 'html'].includes(rawJsonSecFmt)) {
+      process.stdout.write(JSON.stringify({ command: 'security', status: 'error', error: `Unknown format "${rawJsonSecFmt}"`, hint: 'Use --format json|csv|html' }) + '\n');
+      return 2;
+    }
+    const jsonSecOutputArg = parseArg(commandArgs, '--output', '-o');
+    if (jsonSecOutputArg !== null) {
+      process.stderr.write('[korinfra] Warning: --output is not yet supported for security; pipe stdout to a file instead\n');
+    }
     const terraformDir = parseArg(commandArgs, '--dir', '-d');
     const severity = parseArg(commandArgs, '--severity');
     let context;
@@ -2074,6 +2479,44 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     const failOn = parseArg(commandArgs, '--fail-on');
     const criticalCount = securityResult.bySeverity['critical'] ?? 0;
     const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
+    const failExitCode = shouldFailOnCritical ? 1 : 0;
+
+    const effectiveJsonSecFmt = await resolveEffectiveFormat(rawJsonSecFmt);
+    if (effectiveJsonSecFmt !== null) {
+      if (failOn === 'partial') {
+        process.stderr.write('[korinfra] Warning: --fail-on partial is not applicable to security\n');
+      }
+      const format = effectiveJsonSecFmt as ReportFormat;
+      const jsonSecScanId = (context?.results.get('save_security') as { scan_id?: string } | undefined)?.scan_id ?? '';
+      const scanReport: ScanReport = {
+        scanId: jsonSecScanId,
+        timestamp: new Date().toISOString(),
+        resources: [],
+        recommendations: securityResult.findings.map((f) => ({
+          id: f.id,
+          resourceId: f.resource,
+          type: f.id,
+          title: f.title,
+          description: f.description,
+          estimatedSavings: 0,
+          confidence: 1.0,
+          impact: f.severity,
+          risk: f.severity,
+          status: 'open',
+          implementationSteps: f.remediation ? [f.remediation] : null,
+        })),
+        costs: [],
+        summary: {
+          totalResources: 0,
+          totalMonthlyCost: 0,
+          potentialSavings: 0,
+          recommendationCount: securityResult.findings.length,
+        },
+      };
+      process.stdout.write(createFormatter(format).format(scanReport));
+      return failExitCode;
+    }
+
     const out = {
       command: 'security',
       status: 'completed',
@@ -2098,10 +2541,19 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
       ],
     };
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
-    return shouldFailOnCritical ? 1 : 0;
+    return failExitCode;
   }
 
   if (command === 'cost-impact') {
+    const rawJsonCiFmt = parseArg(commandArgs, '--format')?.toLowerCase() ?? null;
+    if (rawJsonCiFmt !== null && !['json', 'csv', 'html'].includes(rawJsonCiFmt)) {
+      process.stdout.write(JSON.stringify({ command: 'cost-impact', status: 'error', error: `Unknown format "${rawJsonCiFmt}"`, hint: 'Use --format json|csv|html' }) + '\n');
+      return 2;
+    }
+    const jsonCiOutputArg = parseArg(commandArgs, '--output', '-o');
+    if (jsonCiOutputArg !== null) {
+      process.stderr.write('[korinfra] Warning: --output is not yet supported for cost-impact; pipe stdout to a file instead\n');
+    }
     const planFile = parseArg(commandArgs, '--plan-file', '-f');
     if (planFile === null) {
       process.stdout.write(JSON.stringify({
@@ -2164,6 +2616,50 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
     const failOn = parseArg(commandArgs, '--fail-on');
     const criticalCount = impact.findings.filter((f) => f.severity === 'critical').length;
     const shouldFailOnCritical = failOn === 'critical' && criticalCount > 0;
+    const failExitCodeCi = shouldFailOnCritical ? 1 : 0;
+
+    const effectiveJsonCiFmt = await resolveEffectiveFormat(rawJsonCiFmt);
+    if (effectiveJsonCiFmt !== null) {
+      if (failOn === 'partial') {
+        process.stderr.write('[korinfra] Warning: --fail-on partial is not applicable to cost-impact\n');
+      }
+      const format = effectiveJsonCiFmt as ReportFormat;
+      const scanReport: ScanReport = {
+        scanId: '',
+        timestamp: new Date().toISOString(),
+        resources: impact.changes.map((c) => ({
+          id: c.address,
+          type: c.resourceType,
+          name: c.address,
+          region: '',
+          state: c.action,
+          monthlyCost: Math.abs(c.deltaUsd),
+          monthlyCostSource: null,
+        })),
+        recommendations: impact.findings.map((f) => ({
+          id: f.ruleId,
+          resourceId: f.address,
+          type: f.ruleId,
+          title: f.title,
+          description: f.description,
+          estimatedSavings: 0,
+          confidence: 1.0,
+          impact: f.severity,
+          risk: f.severity,
+          status: 'open',
+        })),
+        costs: [],
+        summary: {
+          totalResources: impact.changes.length,
+          totalMonthlyCost: impact.summary.netDeltaMonthlyUsd,
+          potentialSavings: 0,
+          recommendationCount: impact.findings.length,
+        },
+      };
+      process.stdout.write(createFormatter(format).format(scanReport));
+      return failExitCodeCi;
+    }
+
     const out = {
       command: 'cost-impact',
       status: 'completed',
@@ -2179,7 +2675,7 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
       ],
     };
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
-    return shouldFailOnCritical ? 1 : 0;
+    return failExitCodeCi;
   }
 
   if (command === 'doctor') {
