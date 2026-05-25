@@ -897,6 +897,7 @@ export function App({ args, provider = null }: AppProps): React.JSX.Element {
       <CostImpactCommand
         key={runAgainKey}
         args={view.args}
+        provider={resolvedProvider}
         onRunAgain={onRunAgain}
         onBack={goBack}
         onAction={handleAction}
