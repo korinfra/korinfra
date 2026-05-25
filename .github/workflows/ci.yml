@@ -72,6 +72,12 @@ jobs:
       - name: Lint secrets
         run: npm run lint:secrets
 
+      - name: Socket.dev supply chain analysis
+        run: npx --yes @socketsecurity/cli@1.1.102 check --strict
+        continue-on-error: true
+        env:
+          SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
+
       - name: Check (lint:md sequentially, then typecheck/lint/test in parallel)
         run: npm run check
 

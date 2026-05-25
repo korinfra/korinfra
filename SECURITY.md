@@ -42,6 +42,49 @@ We follow coordinated disclosure. If 90 days passes without a fix, you may discl
 
 ---
 
+## AWS Credential Best Practices
+
+### Preferred: Short-Lived Credentials via AWS IAM Identity Center (SSO)
+
+Use `aws sso login` (AWS IAM Identity Center / SSO) instead of long-lived IAM access keys wherever possible. Short-lived credentials expire automatically (typically after 1–8 hours) and drastically reduce the blast radius of a leaked credential.
+
+```bash
+# Set up a profile once
+aws configure sso
+
+# Log in before running korinfra (refreshes credentials — valid for 1–8 hours)
+aws sso login --profile my-profile
+
+# Use the profile with korinfra
+AWS_PROFILE=my-profile korinfra scan
+```
+
+korinfra uses AWS SDK's `fromNodeProviderChain()` and automatically picks up SSO credentials from the credential chain — no configuration changes needed inside korinfra.
+
+### Alternative: Encrypted Keystore via `credential_process`
+
+For enterprise environments where SSO is not available, use `credential_process` in `~/.aws/config` to fetch credentials from an encrypted secret store (macOS Keychain, Linux Secret Service / pass, HashiCorp Vault):
+
+```ini
+# ~/.aws/config
+[profile my-profile]
+credential_process = /usr/local/bin/aws-vault exec my-profile --json
+```
+
+This ensures no plaintext credentials are stored on disk. Tools like [aws-vault](https://github.com/99designs/aws-vault) and [chamber](https://github.com/segmentio/chamber) implement this pattern.
+
+### Avoid: Long-Lived Static Keys in Environment Variables
+
+Static `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` values in `.env` files or shell profiles:
+
+- **Do not expire** — leaked credentials remain valid indefinitely until manually rotated
+- **Have broad scope** — typically attached to an IAM user with more permissions than needed
+- **Are easily leaked** — `.env` files, shell history, process listings, CI logs, container images
+
+If you must use static keys (e.g., CI/CD environments without OIDC support), scope them to a dedicated IAM role with minimum permissions and rotate every 90 days.
+
+---
+
 ## Sensitive Environment Variables
 
 The following environment variables contain credentials and must never be logged, committed, or exposed to untrusted processes:
@@ -132,8 +175,9 @@ korinfra logs a warning if it detects proxy environment variables set at the OS 
 
 - **Compromised AWS account** — korinfra is a read-only analysis tool. If your AWS credentials are already compromised, korinfra cannot detect or prevent abuse at the AWS level.
 - **Malicious local user** — if an attacker has shell access to the machine running korinfra, they can read the SQLite database and config files directly. korinfra is a single-user local tool; it has no multi-tenant isolation.
-- **npm supply chain attacks** — korinfra uses ~100 npm dependencies. A compromised transitive dependency is out of scope here; report it to the dependency maintainer. We run `npm audit` and dependabot weekly to reduce exposure.
-- **Prompt injection via AWS resource data** — resource names, tags, and descriptions from AWS are sent (redacted) to Claude. A malicious actor who can write arbitrary resource names in your AWS account could theoretically craft prompt injection payloads. The redaction layer strips credentials and IPs but does not sanitize free-form text.
+- **npm supply chain attacks** — korinfra uses ~100 npm dependencies. A compromised transitive dependency is out of scope here; report it to the dependency maintainer. We run `npm audit`, Socket.dev analysis, and dependabot monthly to reduce exposure. CI checks enforce exact-version pinning for the two AI SDK packages and verify lockfile integrity on every run.
+- **Prompt injection via AWS resource data** — resource names, tags, and descriptions from AWS are sent through the redaction pipeline before reaching Claude. The redaction layer strips credentials, IPs, and structured secrets, and the system prompt instructs Claude to treat `<aws-data>` content as untrusted. However, free-form text fields (EC2 `Name` tags, RDS cluster identifiers, Lambda function names, S3 bucket names) that do not contain redactable patterns pass through. A malicious actor with write access to your AWS account could craft resource names to attempt prompt injection.
+- **MCP HTTP server session budget abuse** — a single authenticated client can open up to `max_sessions` concurrent sessions. A per-IP tool-call cost cap (10× the per-session limit) bounds aggregate usage; connections beyond this cap are rejected with HTTP 429.
 - **Physical access to the machine.**
 
 ---
@@ -178,7 +222,7 @@ The redaction level defaults to `moderate` and is configurable via `ai.redaction
 - **HTTP transport is unencrypted** — plain HTTP, no TLS. Auth tokens and resource payloads travel in plaintext over the underlying connection. The `localhost` bind prevents direct LAN access; for encrypted remote access, terminate TLS in a reverse proxy (nginx, Caddy) or wrap the wire in an SSH tunnel. See `docs/mcp.md` Security model for details.
 - **Bearer token authentication** — a random auth token is auto-generated at startup. Set `MCP_AUTH_TOKEN` env var to a fixed value (min 32 chars) to reuse it across restarts. Rotate by clearing the env var and restarting.
 - **Per-session state** — each MCP session is isolated. Session state is not shared between clients or persisted after disconnect.
-- **Rate limiting** — 300 requests/minute per IP on the HTTP transport (configurable in `config.mcp.http_rate_limit`). Additional rate limiting by weighted tool cost prevents expensive operations from exhausting session budgets.
+- **Rate limiting** — 300 requests/minute per IP on the HTTP transport (configurable in `config.mcp.http_rate_limit`). Tool calls are weighted by cost (e.g., `collect_aws_resources` = 10 units), and both a per-session cap and a per-IP aggregate cap (10× the per-session limit) are enforced. This prevents a single IP from exhausting budget across multiple concurrent sessions.
 - **stdio transport** (used by Claude Code, Cursor) communicates exclusively through stdin/stdout — no network port is opened.
 
 ### Configuration File Security
@@ -215,8 +259,10 @@ JavaScript and TypeScript config loaders are **explicitly disabled**. Only `.yam
 
 - **npm provenance** — releases published via GitHub Actions with `id-token: write` permission. Provenance is attestable via `npm audit signatures`.
 - **Lockfile integrity** — CI verifies `package-lock.json` integrity on every run (`npm run lint:lockfile`).
-- **Secret scanning** — `secretlint` runs on every CI build to prevent accidental credential commits (`npm run lint:secrets`).
-- **Dependabot** — dependency updates run weekly (Mondays). AWS SDK, Anthropic SDK, and Ink/React packages are updated as grouped batches.
+- **Secret scanning** — `secretlint` runs on every CI build to prevent accidental credential commits (`npm run lint:secrets`). Patterns cover AWS keys, npm tokens, GCP keys, private key blocks, `.env` files, and Anthropic API keys (`sk-ant-`).
+- **Behavioral supply chain analysis** — CI runs `@socketsecurity/cli check --strict` on every pull request to detect newly-added `postinstall` scripts, unexpected network calls, and malicious patterns that precede CVE assignment. Requires `SOCKET_SECURITY_API_KEY` secret; runs in non-blocking mode until configured.
+- **Exact version pinning for AI SDKs** — `@anthropic-ai/sdk` and `@anthropic-ai/claude-agent-sdk` are pinned to exact versions (no `^` prefix). The MCP SDK is also pinned. Caret ranges on high-value AI packages were removed to prevent silent install of a compromised minor release.
+- **Dependabot** — dependency updates run monthly (Mondays). AWS SDK, Anthropic SDK, and Ink/React packages are updated as grouped batches. A 72-hour minimum review window before auto-merge is recommended via branch protection rules to catch supply chain attacks before they land.
 - **Security audit** — `npm audit --audit-level=high` runs in CI. High-severity advisories block the build.
 - **Minimal permissions** — GitHub Actions workflows use explicit, minimal permissions per job. No `write-all` grants.
 

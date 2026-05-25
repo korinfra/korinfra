@@ -2,7 +2,7 @@
 // Ported from Go: internal/redaction/patterns.go
 
 // AWS access key IDs: AKIA*, ASIA*, AROA*, AIDA*, ANPA*, ANVA*, APKA* (20 chars)
-export const reAccessKey = /\b(A3T[A-Z0-9]|AKIA|ASIA|AROA|AIDA|ANPA|ANVA|APKA|AIRO|ARES)[A-Z0-9]{16}\b/g;
+export const reAccessKey = /\b(A3T[A-Z0-9]|AKIA|AGPA|ASIA|AROA|AIDA|ANPA|ANVA|APKA|AIRO|ARES)[A-Z0-9]{16}\b/g;
 
 // AWS ARNs: arn:aws:service:region:account-id:resource
 export const reARN = /arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:([0-9]{12}):[a-zA-Z0-9/_:.*-]{0,512}/g;
@@ -12,7 +12,7 @@ export const reARN = /arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:([0-9]{12}):[a-zA-Z0-
 // - In JSON account-like fields: "accountId": "123456789012", "owner": "123456789012"
 // - After account/owner/principal labels: owner_id = "123456789012", principal: 123456789012
 // Capture group 1 = leading context, group 2 = the 12-digit ID.
-export const reAccountID = /((?:arn:[a-z0-9-]*:[a-z0-9-]*:[a-z0-9-]*:|(?:account|owner|principal)[_-]?(?:id)?["'\s:=]+|"(?:account|owner|principal)(?:[_-]?id)?"\s*:\s*"))(?<![-:])([0-9]{12})(?![-:])/gi;
+export const reAccountID = /((?:arn:[a-z0-9-]{0,64}:[a-z0-9-]{0,64}:[a-z0-9-]{0,64}:|(?:account|owner|principal)[_-]?(?:id)?["'\s:=]+|"(?:account|owner|principal)(?:[_-]?id)?"\s*:\s*"))(?<![-:])([0-9]{12})(?![-:])/gi;
 
 // All IPv4 addresses — private filtering done in code
 export const rePublicIPv4 = /\b(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9][0-9]|[0-9])\b/g;
@@ -29,7 +29,7 @@ export const rePublicIPv6 =
 
 // Generic secret key patterns (key=value style)
 export const reSecretKey =
-  /(?:secret[_-]?access[_-]?key|secret[_-]?key|secret|password|passwd|pwd|token|api[_-]?key)\s*[=:]\s*["']?([^\s"']{8,})["']?/gi;
+  /\b(?:secret[_-]?access[_-]?key|secret[_-]?key|secret|password|passwd|pwd|token|api[_-]?key)\s*[=:]\s*["']?([^\s"']{8,})["']?/gi;
 
 // JSON-format secret key patterns: "KeyName": "value"
 export const reSecretKeyJson =

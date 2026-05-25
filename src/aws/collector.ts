@@ -69,14 +69,33 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   ]);
 }
 
+// Maps specific AWS error codes to generic categories to avoid leaking
+// infrastructure reachability information (which resources exist, which don't).
+function normalizeAwsErrorCode(code: string): string {
+  if (/^(AccessDenied|AuthFailure|UnauthorizedOperation|InvalidClientTokenId|ExpiredTokenException|InvalidUserID\.NotFound)$/.test(code)) {
+    return 'ACCESS_DENIED';
+  }
+  if (/NotFound|NoSuch|DoesNotExist|InvalidInstance|InvalidSecurityGroup|InvalidSubnet|InvalidVpc/.test(code)) {
+    return 'RESOURCE_NOT_FOUND';
+  }
+  if (/^(Throttling|ThrottlingException|RequestThrottledException|TooManyRequestsException|ProvisionedThroughputExceededException|SlowDown)$/.test(code)) {
+    return 'THROTTLED';
+  }
+  if (/^(ServiceUnavailable|InternalError|InternalFailure|InternalServerError|ServiceUnavailableException)$/.test(code)) {
+    return 'SERVICE_ERROR';
+  }
+  return code;
+}
+
 function toCollectError(err: unknown, collector: string, region?: string): CollectError {
   const message = redact(err instanceof Error ? err.message : String(err), 'moderate');
-  const code =
+  const rawCode =
     err !== null &&
     typeof err === 'object' &&
     ('Code' in err || 'name' in err)
       ? String((err as Record<string, unknown>)['Code'] ?? (err as Record<string, unknown>)['name'])
       : undefined;
+  const code = rawCode !== undefined ? normalizeAwsErrorCode(rawCode) : undefined;
   const result: CollectError = { collector, message };
   if (region) {
     result.region = region;

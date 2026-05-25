@@ -61,7 +61,7 @@ describe('MCP resources — redactObject applied to config (2E)', () => {
   it('redacts api_key_env field (isSensitiveKey matches compound ["api","key"])', () => {
     const configLike = {
       ai: {
-        api_key_env: 'sk-ant-api03-MyRealKey1234567890',
+        api_key_env: 'sk-ant-mock',
         model: 'claude-sonnet-4-6',
       },
     };
@@ -97,12 +97,12 @@ describe('MCP resources — redactObject applied to config (2E)', () => {
     // Verify the full pipeline: redact → serialise → check raw string
     const sensitiveConfig = {
       github: { token_env: 'ghp_ShouldNotAppear1234567890ABCD' },
-      ai: { api_key_env: 'sk-ant-api03-ShouldNotAppear12345' },
+      ai: { api_key_env: 'sk-ant-mock-api' },
     };
 
     const output = JSON.stringify(redactObject(sensitiveConfig, 'moderate'));
 
     expect(output).not.toContain('ghp_ShouldNotAppear1234567890ABCD');
-    expect(output).not.toContain('sk-ant-api03-ShouldNotAppear12345');
+    expect(output).not.toContain('sk-ant-mock-api');
   });
 });

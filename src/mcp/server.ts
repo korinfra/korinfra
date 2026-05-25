@@ -210,14 +210,28 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
       lastActivityAt: number;
       toolCallCost: number; // Accumulated cost instead of call count
       closing: boolean;     // Set on DELETE to block new tool calls while transport drains
+      ip: string;           // Client IP — used for per-IP cost accounting
     }
   >();
+
+  // Per-IP cumulative tool-call cost — prevents one IP from exhausting budget
+  // across many sessions (up to max_sessions each with independent budget).
+  const ipCostMap = new Map<string, number>();
+  const IP_COST_CAP = mcpConfig.session_cost_limit * 10;
+
+  function decrementIpCost(ip: string, cost: number): void {
+    const current = ipCostMap.get(ip) ?? 0;
+    const updated = Math.max(0, current - cost);
+    if (updated === 0) ipCostMap.delete(ip);
+    else ipCostMap.set(ip, updated);
+  }
 
   const SESSION_IDLE_TIMEOUT_MS = mcpConfig.session_idle_timeout_ms;
   setInterval(() => {
     const now = Date.now();
     for (const [id, s] of sessions) {
       if (now - s.lastActivityAt > SESSION_IDLE_TIMEOUT_MS) {
+        decrementIpCost(s.ip, s.toolCallCost);
         void s.transport.close().catch((err: unknown) => {
           logger.debug({ sessionId: id, error: String(err) }, '[mcp] Session close error (non-fatal)');
         });
@@ -236,6 +250,7 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
   // Live re-read is gated on this flag — disabled when MCP_AUTH_TOKEN is set.
   let usingPersistedToken = false;
   let tokenMtimeMs = 0;
+  let tokenVersion = 0;
 
   if (!authToken) {
     if (requireToken) {
@@ -250,6 +265,7 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
       try {
         const rotated = revokeToken();
         authToken = rotated.token;
+        tokenVersion = rotated.version;
         process.stderr.write(`[korinfra] MCP auth token rotated (persisted to ${tokenPath}, v${rotated.version})\n`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -260,9 +276,11 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
       const loaded = readPersistedTokenData();
       if (loaded) {
         authToken = loaded.token;
+        tokenVersion = loaded.version;
         process.stderr.write(`[korinfra] MCP auth token loaded from ${tokenPath} (v${loaded.version})\n`);
       } else {
         authToken = randomBytes(32).toString('hex');
+        tokenVersion = 1;
         try {
           persistTokenData(authToken, 1);
           process.stderr.write(`[korinfra] MCP auth token generated (persisted to ${tokenPath}, v1)\n`);
@@ -284,19 +302,33 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
     process.stderr.write(`[korinfra] MCP HTTP max body size: ${maxBodySize} bytes (${sourceLabel})\n`);
   }
 
+  // Track the last time we forced a full reload regardless of mtime.
+  // This catches rapid rotations that land within the same 1-second mtime granularity
+  // window (where mtime alone would not trigger a re-read).
+  let lastForceReloadAt = 0;
+  const FORCE_RELOAD_INTERVAL_MS = 30_000;
+
   function maybeReloadTokenFromDisk(): void {
     if (!usingPersistedToken) return;
     const statMtime = getTokenFileMtimeMs();
-    // Reload on any mtime change (not just newer) — handles restore-from-backup
-    // where the replacement file may carry an older mtime than the cached one.
-    if (statMtime === 0 || statMtime === tokenMtimeMs) return;
+    const now = Date.now();
+    const isMtimeChanged = statMtime !== 0 && statMtime !== tokenMtimeMs;
+    const isForceReloadDue = now - lastForceReloadAt >= FORCE_RELOAD_INTERVAL_MS;
+
+    // Re-read when mtime changed OR every 30 s to catch same-mtime rapid rotations.
+    if (!isMtimeChanged && !isForceReloadDue) return;
+
     const reloaded = readPersistedTokenData();
-    if (reloaded && reloaded.token !== authToken) {
+    // Use version comparison: a restore-from-backup may carry the same token bytes
+    // but a different version, and a rapid second rotation within the same
+    // mtime-granularity window is only detectable via the monotonic version counter.
+    if (reloaded && reloaded.version !== tokenVersion) {
       authToken = reloaded.token;
+      tokenVersion = reloaded.version;
       logger.debug({ version: reloaded.version }, '[mcp] Reloaded rotated auth token');
     }
-    // Bump even on read failure so we don't retry on every request.
-    tokenMtimeMs = statMtime;
+    if (statMtime !== 0) tokenMtimeMs = statMtime;
+    lastForceReloadAt = now;
   }
 
   const httpServer = http.createServer((req, res) => {
@@ -374,6 +406,7 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
         if (session) {
           session.closing = true;
           sessions.delete(sessionId);
+          decrementIpCost(session.ip, session.toolCallCost);
           await session.transport.close();
         }
         res.writeHead(204);
@@ -443,9 +476,12 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
           }
           if (oldestId !== undefined) {
             const evicted = sessions.get(oldestId);
-            if (evicted) void evicted.transport.close().catch((err: unknown) => {
-              logger.debug({ sessionId: oldestId, error: String(err) }, '[mcp] Evicted session close error (non-fatal)');
-            });
+            if (evicted) {
+              decrementIpCost(evicted.ip, evicted.toolCallCost);
+              void evicted.transport.close().catch((err: unknown) => {
+                logger.debug({ sessionId: oldestId, error: String(err) }, '[mcp] Evicted session close error (non-fatal)');
+              });
+            }
             sessions.delete(oldestId);
             logger.debug({ sessionId: oldestId }, '[mcp] Evicted oldest session (LRU)');
           }
@@ -472,6 +508,7 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
               lastActivityAt: Date.now(),
               toolCallCost: 0,
               closing: false,
+              ip: clientIp,
             });
           },
         });
@@ -482,6 +519,7 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
           lastActivityAt: Date.now(),
           toolCallCost: 0,
           closing: false,
+          ip: clientIp,
         };
         // Store immediately under temp key so concurrent requests can find this session.
         sessions.set(tempKey, session);
@@ -520,13 +558,23 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
         return;
       }
 
-      // Check if this is a tool call and enforce per-session weighted cost limit
+      // Check if this is a tool call and enforce per-session and per-IP weighted cost limits
       const parsedObj = parsed as Record<string, unknown> | undefined;
       if (parsedObj?.['method'] === 'tools/call') {
         const toolName = parsedObj?.['params'] && typeof parsedObj['params'] === 'object'
           ? (parsedObj['params'] as Record<string, unknown>)['name']
           : undefined;
         const weight = typeof toolName === 'string' ? TOOL_CALL_WEIGHTS[toolName] ?? 1 : 1;
+
+        // Per-IP cap: prevents one client from exhausting budget across many parallel sessions.
+        const ipCost = (ipCostMap.get(clientIp) ?? 0) + weight;
+        if (ipCost > IP_COST_CAP) {
+          res.writeHead(429, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Tool call limit exceeded for this IP' }));
+          return;
+        }
+        ipCostMap.set(clientIp, ipCost);
+
         session.toolCallCost += weight;
         if (session.toolCallCost > mcpConfig.session_cost_limit) {
           res.writeHead(429, { 'Content-Type': 'application/json' });
@@ -539,9 +587,10 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
     })();
   });
 
-  // Slowloris hardening — bound time spent reading headers/body
+  // Slowloris hardening — bound time spent reading headers/body.
+  // 15s is sufficient for a localhost-only server receiving small JSON tool results.
   httpServer.headersTimeout = 10_000;
-  httpServer.requestTimeout = 30_000;
+  httpServer.requestTimeout = 15_000;
   httpServer.keepAliveTimeout = 5_000;
 
   await new Promise<void>((resolve, reject) => {
