@@ -8,6 +8,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { execSync } from 'node:child_process';
 
+import { checkNoSymlink } from '../../utils/safe-fs.js';
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface McpServerEntry {
@@ -117,6 +119,7 @@ function checkkorinfraResolution(): string | null {
 }
 
 function readJsonFile(filePath: string): Record<string, unknown> {
+  checkNoSymlink(filePath);
   let content: string;
   try {
     content = fs.readFileSync(filePath, 'utf8');

@@ -10,6 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
+import { checkNoSymlink } from '../utils/safe-fs.js';
+
 export interface TokenData {
   token: string;
   version: number;
@@ -78,6 +80,7 @@ export function readPersistedTokenData(): TokenData | null {
   const filePath = getTokenFilePath();
   let content: string;
   try {
+    checkNoSymlink(filePath);
     content = fs.readFileSync(filePath, 'utf8').trim();
   } catch {
     return null;

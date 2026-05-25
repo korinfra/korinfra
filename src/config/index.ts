@@ -11,7 +11,7 @@ import type { Config } from './types.js';
 import { validate, ConfigValidationError } from './validate.js';
 import { logger } from '../utils/logger.js';
 import { redact } from '../redaction/redactor.js';
-import { safeReadFile } from '../utils/safe-fs.js';
+import { safeReadFile, safeWriteFile } from '../utils/safe-fs.js';
 
 export { ConfigValidationError } from './validate.js';
 export type { Config, AWSConfig, AWSProfile, AIConfig, TerraformConfig, GitHubConfig, OutputConfig, StorageConfig, ScanConfig, AnomalyConfig, MCPConfig } from './types.js';
@@ -368,14 +368,7 @@ export async function loadConfig(configPath?: string): Promise<Config> {
 // ─── Saver ────────────────────────────────────────────────────────────────────
 
 function writeSecureFile(filePath: string, content: string): void {
-  const dir = path.dirname(filePath);
-  try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-  }
-  fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o600 });
-  try { fs.chmodSync(filePath, 0o600); } catch { /* windows */ }
+  safeWriteFile(filePath, content, { mode: 0o600, dirMode: 0o700 });
 }
 
 /**
