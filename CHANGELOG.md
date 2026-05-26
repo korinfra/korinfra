@@ -2,6 +2,102 @@
 
 All notable changes to KorInfra are documented here.
 
+## [0.1.3] — 2026-05-26
+
+No breaking changes. Safe to upgrade from `0.1.2`:
+
+```bash
+npm install -g korinfra@0.1.3
+```
+
+### 🆕 Terraform plan cost-impact analysis
+
+Analyze cost and security impact of a Terraform plan **before you apply it**:
+
+```bash
+korinfra cost-impact --plan-file tfplan.json
+terraform show -json tfplan.binary | korinfra cost-impact --plan-file -
+```
+
+Per-resource before/after monthly cost delta with security rule findings evaluated against the post-apply state. Key flags:
+
+- `--fail-on critical` — exit non-zero on critical findings, ready to gate CI/CD
+- `--fail-on-delta <USD>` — exit non-zero when net monthly cost exceeds threshold (`0` = fail on any increase)
+- `--tfdir <path>` — annotate findings with source file paths, enabling `korinfra fix --from impact.json`
+- `--analyze` — run the AI agent for narrative recommendations on top of rule findings
+
+Also available as MCP tool `analyze_plan`. See [docs/ci-integration.md](docs/ci-integration.md) for a GitHub Actions example. (#40, #63, #64, #65)
+
+### 🆕 Browse and filter all rules with `korinfra rules list`
+
+Inspect the full rule catalog from the CLI:
+
+```bash
+korinfra rules list                       # all 66+ rules, grouped by category
+korinfra rules list --filter ec2 --impact high --json
+```
+
+Supports `--filter` (category or rule ID prefix), `--impact`, `--risk`, and `--json` for machine-readable output. Useful for CI compliance gates, auto-generating documentation, or confirming rule registration. Also available as an interactive TUI panel via `korinfra rules`. (#25)
+
+### 🆕 AWS Compute Optimizer recommendations
+
+```bash
+korinfra recommend --source compute-optimizer
+```
+
+Pulls AWS's ML-based rightsizing recommendations for EC2, Auto Scaling, EBS, Lambda, ECS, and RDS. Returns `status: 'not_enabled'` instead of an error if Compute Optimizer is not active on the account. Also available as MCP tool `get_compute_optimizer_recommendations`. (#42)
+
+### 🆕 New rule: EC2-014 — Spot instance opportunity
+
+Flags long-running on-demand instances as Spot candidates when they have a non-prod `Environment` tag or a stable CPU pattern. Estimated saving: **~70% per instance**. Suppresses EC2-005 (RI candidate) on the same resource to avoid duplicate recommendations. (#42)
+
+### 📤 Multi-format output for every command
+
+`--format json|csv|html` and `--output` / `-f` now work across all four commands:
+
+```bash
+korinfra scan      --format json --output results.json
+korinfra security  --format html --output report.html
+korinfra recommend --format csv  --output recs.csv
+korinfra cost-impact --plan-file plan.json --format json -f impact.json
+```
+
+(#62)
+
+### 🔧 Improvements
+
+**No more $0 fake savings.** 22+ cost rules now skip with a structured warning instead of reporting `estimatedSavings: $0` when cost data is missing — including EC2-001–008, EBS-003, RDS-006–008, DDB-001/002, ECS-001–003, ELC-002, ELB-002, LAM-005, S3-001/002. SNAP-001, SNAP-002, and RDS-003 follow the same pattern, while snapshot rules keep a `size_gb` fallback. **EC2-002 behavior change:** the $5 EBS minimum floor is removed; a stopped instance with no cost data now skips with a warning. (#44, #75)
+
+**`scan --json` now reports skipped resources.** A new `warnings[]` array and `summary.warningCount` field list every resource a rule skipped due to ambiguous data (zero DynamoDB capacity, non-finite metrics, unknown S3 settings). (#44)
+
+**LB-002 estimate fixed.** Removed the hardcoded $16/mo ALB fallback that over-quoted NLBs and LCU-heavy ALBs by 3–4×. (#44)
+
+**`--flag=value` syntax now works everywhere.** All CLI flags accept both `--flag value` and `--flag=value` forms. (#73)
+
+**Expanded pricing coverage.** Added ARM/Graviton instance pricing, Aurora Serverless v2, ElastiCache replication groups, and new ECS security rules. (#96)
+
+### 🔒 Security
+
+**Path traversal prevention in `--config` (CWE-23).** The `--config` flag for `korinfra init` and `korinfra mcp` now validates extensions, rejects null bytes, dereferences symlinks, and enforces a 64 KB size cap before loading. (#85)
+
+**Symlink attack prevention (CWE-59 / CWE-377).** All on-disk paths use `O_NOFOLLOW`-safe operations across the config loader, session files, database, and git tools. (#100, #101, #102)
+
+**ReDoS, injection, and supply chain hardening.** Rule-engine and MCP regex patterns audited and replaced; brace-expansion CVE patched; data-redaction paths tightened. (#106)
+
+**27 additional code-review findings resolved** across correctness, reliability, and security. (#112)
+
+### 📦 Dependencies
+
+| Package | Change |
+|---|---|
+| AWS SDK | 17 packages bumped to the latest `3.x` line |
+| `@anthropic-ai/sdk` | Updated to latest |
+| `ink` | 7.0.3 → 7.0.4 |
+| `qs` | 6.15.1 → 6.15.2 (security fix) |
+| `ws` | 8.20.0 → 8.20.1 |
+| GitHub Actions | `actions/checkout` v6, `codeql-action` 4.36.0, `harden-runner` 2.19.4 |
+| Dev tooling | TypeScript-eslint, vitest, knip updated |
+
 ## [Unreleased]
 
 ### 🔮 New features
