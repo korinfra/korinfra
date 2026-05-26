@@ -142,7 +142,7 @@ describe('parsePlanFile', () => {
   });
 
   it('throws a clear error when the file does not exist', async () => {
-    await expect(parsePlanFile(join(tmpDir, 'missing.json'))).rejects.toThrow(/Failed to read/);
+    await expect(parsePlanFile(join(tmpDir, 'missing.json'))).rejects.toThrow(/Failed to (stat|read)/);
   });
 
   it('throws on malformed JSON', async () => {

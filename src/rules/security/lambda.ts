@@ -53,7 +53,10 @@ export const lambdaRules: SecurityRule[] = [
       'Use IAM execution role instead of hardcoded credentials in environment variables',
   },
   {
-    id: 'LAM-SEC-003',
+    // ID restored to LAMBDA-SEC-001 — the original main-branch ID for this rule.
+    // The PR renamed it to LAM-SEC-003, which is a breaking change for stored scan results
+    // and suppression lists that reference the old ID.
+    id: 'LAMBDA-SEC-001',
     title: 'Lambda function without dead letter queue',
     description: 'Lambda function does not have a dead letter queue configured',
     severity: 'medium',
@@ -62,7 +65,8 @@ export const lambdaRules: SecurityRule[] = [
     recommendation: 'Configure dead_letter_config to capture failed invocations',
   },
   {
-    id: 'LAM-SEC-004',
+    // ID restored to LAMBDA-SEC-002 — the original main-branch ID for this rule.
+    id: 'LAMBDA-SEC-002',
     title: 'Lambda function in VPC without security group',
     description:
       'Lambda function configured with VPC but may have open network access',

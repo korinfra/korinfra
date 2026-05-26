@@ -93,7 +93,8 @@ export function getScan(db: Driver, id: string): Scan | null {
   const row = db.prepare(`
     SELECT id, started_at, completed_at, status, terraform_path,
       aws_profile, aws_region, total_resources, total_cost,
-      total_recommendations, total_savings, scenario_a_count,
+      (SELECT COUNT(*) FROM recommendations WHERE scan_id = scans.id) AS total_recommendations,
+      total_savings, scenario_a_count,
       scenario_b_count, scenario_c_count, metadata, warnings, created_at
     FROM scans WHERE id = ?
   `).get(id) as Record<string, unknown> | undefined;
