@@ -199,7 +199,7 @@ export function sanitizeResourceName(value: string | undefined | null): string {
   if (!value) return '';
   return value
     // eslint-disable-next-line no-control-regex
-    .replace(/[\n\r\x00`]/g, '')
+    .replace(/[\n\r\x00`<>[\]]/g, '')
     .slice(0, 200);
 }
 

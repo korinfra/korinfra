@@ -16,6 +16,8 @@ import { join } from 'node:path';
 
 import { writekorinfraConfig } from '../../../src/cli/commands/init-core.js';
 
+const MOCK_ANTHROPIC_KEY = 'sk-ant-test-mock';
+
 let tmp: string;
 
 beforeEach(() => {
@@ -49,7 +51,7 @@ describe('writekorinfraConfig — file safety on the .env secret', () => {
     await writekorinfraConfig({
       profile: 'default',
       aiProvider: 'anthropic',
-      aiKey: 'sk-ant-api-test-1234567890abcdef',
+      aiKey: MOCK_ANTHROPIC_KEY,
       cwd: tmp,
     });
     const { mode, content } = inspectFile(join(tmp, '.korinfra', '.env'));
@@ -62,7 +64,7 @@ describe('writekorinfraConfig — file safety on the .env secret', () => {
     await writekorinfraConfig({
       profile: 'default',
       aiProvider: 'anthropic',
-      aiKey: 'sk-ant-api-test-1234567890abcdef',
+      aiKey: MOCK_ANTHROPIC_KEY,
       cwd: tmp,
     });
     const fd = openSync(join(tmp, '.korinfra'), 'r');
@@ -85,7 +87,7 @@ describe('writekorinfraConfig — file safety on the .env secret', () => {
     await writekorinfraConfig({
       profile: 'default',
       aiProvider: 'anthropic',
-      aiKey: 'sk-ant-api-test-1234567890abcdef',
+      aiKey: MOCK_ANTHROPIC_KEY,
       cwd: tmp,
     });
     expect(inspectFile(join(korinfraDir, '.env')).mode).toBe(0o600);
@@ -104,7 +106,7 @@ describe('writekorinfraConfig — file safety on the .env secret', () => {
       writekorinfraConfig({
         profile: 'default',
         aiProvider: 'anthropic',
-        aiKey: 'sk-ant-api-test-1234567890abcdef',
+        aiKey: MOCK_ANTHROPIC_KEY,
         cwd: tmp,
       }),
     ).rejects.toThrow(/symlink/i);

@@ -1,6 +1,6 @@
 import { collectAll } from '../aws/collector.js';
 import { loadConfig } from '../config/index.js';
-import { redactObject } from '../redaction/index.js';
+import { redactObject, redact } from '../redaction/index.js';
 import type { RedactionLevel } from '../redaction/index.js';
 import { jsonResult, errorResult } from './types.js';
 import type { ToolDefinition } from './types.js';
@@ -17,28 +17,31 @@ const PROMPT_DELIM_REGEX = /<\||\|>/g;
 /**
  * Sanitize a single tag value to prevent prompt injection.
  * Removes control characters and prompt delimiters, limits length.
+ * Uses the caller's configured redaction level so config behaves consistently.
  */
-function sanitizeTagValue(value: unknown): string {
+function sanitizeTagValue(value: unknown, level: RedactionLevel = 'moderate'): string {
   if (typeof value !== 'string') {
     if (value === null || value === undefined) return '';
     if (typeof value === 'number' || typeof value === 'boolean') return String(value);
     return '';
   }
-  return value
+  // Strip sensitive patterns before prompt assembly
+  const redacted = redact(value, level);
+  return redacted
     .replace(CONTROL_CHAR_REGEX, '?')  // control chars
-    .replace(PROMPT_DELIM_REGEX, '??')           // prompt injection delimiters
+    .replace(PROMPT_DELIM_REGEX, '??') // prompt injection delimiters
     .slice(0, 256);
 }
 
 /**
  * Sanitize AWS tags (object form: { Key: Value }).
  */
-function sanitizeTags(tags: unknown): unknown {
+function sanitizeTags(tags: unknown, level: RedactionLevel = 'moderate'): unknown {
   if (!tags || typeof tags !== 'object' || Array.isArray(tags)) return tags;
   const result: Record<string, string> = {};
   for (const [k, v] of Object.entries(tags as Record<string, unknown>)) {
     const safeKey = k.slice(0, 128).replace(CONTROL_CHAR_REGEX, '?');
-    result[safeKey] = sanitizeTagValue(v);
+    result[safeKey] = sanitizeTagValue(v, level);
   }
   return result;
 }
@@ -46,14 +49,14 @@ function sanitizeTags(tags: unknown): unknown {
 /**
  * Sanitize AWS tags (array form: [{ Key, Value }]).
  */
-function sanitizeAwsTags(tags: unknown): unknown {
-  if (!Array.isArray(tags)) return sanitizeTags(tags);
+function sanitizeAwsTags(tags: unknown, level: RedactionLevel = 'moderate'): unknown {
+  if (!Array.isArray(tags)) return sanitizeTags(tags, level);
   return tags.map((t: unknown) => {
     if (t && typeof t === 'object' && 'Key' in t && 'Value' in t) {
       const tag = t;
       return {
         Key: String((tag as Record<string, unknown>)['Key'] !== null && (tag as Record<string, unknown>)['Key'] !== undefined ? (tag as Record<string, unknown>)['Key'] as string : '').slice(0, 128).replace(CONTROL_CHAR_REGEX, '?'),
-        Value: sanitizeTagValue((tag as Record<string, unknown>)['Value']),
+        Value: sanitizeTagValue((tag as Record<string, unknown>)['Value'], level),
       };
     }
     return t;
@@ -63,7 +66,7 @@ function sanitizeAwsTags(tags: unknown): unknown {
 /**
  * Deep sanitize tags in a resource object.
  */
-function sanitizeResourceTags(resource: unknown): unknown {
+function sanitizeResourceTags(resource: unknown, level: RedactionLevel = 'moderate'): unknown {
   if (!resource || typeof resource !== 'object' || Array.isArray(resource)) {
     return resource;
   }
@@ -72,10 +75,10 @@ function sanitizeResourceTags(resource: unknown): unknown {
 
   // Sanitize both 'tags' and 'Tags' fields (AWS uses both conventions)
   if ('tags' in result && result['tags'] !== undefined) {
-    result['tags'] = sanitizeAwsTags(result['tags']);
+    result['tags'] = sanitizeAwsTags(result['tags'], level);
   }
   if ('Tags' in result && result['Tags'] !== undefined) {
-    result['Tags'] = sanitizeAwsTags(result['Tags']);
+    result['Tags'] = sanitizeAwsTags(result['Tags'], level);
   }
 
   return result;
@@ -247,15 +250,15 @@ export const collectAwsTool: ToolDefinition = {
               : 0;
             const checkFailed = r.configuration?.['_checkFailed'];
             return {
-              id: sanitizeTagValue(r.id),
+              id: sanitizeTagValue(r.id, redactionLevel),
               type: r.type,
-              name: sanitizeTagValue(r.name),
+              name: sanitizeTagValue(r.name, redactionLevel),
               region: r.region,
               state: r.state,
               instance_type: r.instanceType,
               monthly_cost: monthlyCost,
               monthly_cost_source: (r.configuration?.['monthlyCostSource'] as 'cost_explorer' | 'pricing_api' | undefined) ?? null,
-              arn: sanitizeTagValue(r.arn),
+              arn: sanitizeTagValue(r.arn, redactionLevel),
               // Per-service display fields for tabbed resource browser (§5.2.2–3)
               engine: typeof r.configuration?.['engine'] === 'string' ? r.configuration['engine'] : undefined,
               size_gb: typeof r.configuration?.['size_gb'] === 'number' ? r.configuration['size_gb'] : undefined,
@@ -265,7 +268,7 @@ export const collectAwsTool: ToolDefinition = {
                 : {}),
             };
           })
-        : resources.map((r) => sanitizeResourceTags(r));
+        : resources.map((r) => sanitizeResourceTags(r, redactionLevel));
 
       // Limit cost entries to 60 most recent to reduce payload size
       const costsTruncated = result.costs.length > 60;

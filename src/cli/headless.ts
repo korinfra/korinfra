@@ -35,6 +35,7 @@ import { runHeadlessAgent } from './headless-agent.js';
 import { getDb } from '../storage/index.js';
 import { PricingCache } from '../pricing/index.js';
 import { listRules } from '../rules/registry.js';
+import { redact } from '../redaction/index.js';
 import type { RuleInfo } from '../rules/types.js';
 import { getRecommendationById, listPendingRecommendations, listRecommendations } from '../storage/queries/recommendations.js';
 import { buildAgentPrompt, detectGitHubRepo } from './commands/fix-core.js';
@@ -372,7 +373,7 @@ function writeFormattedJson(content: string, format: ReportFormat, absPath: stri
     process.stderr.write(`[korinfra] ${format.toUpperCase()} report written to ${absPath}\n`);
     return null;
   } catch (err: unknown) {
-    process.stdout.write(JSON.stringify({ command, status: 'error', error: `Failed to write output: ${err instanceof Error ? err.message : String(err)}` }) + '\n');
+    process.stdout.write(JSON.stringify({ command, status: 'error', error: `Failed to write output: ${redact(err instanceof Error ? err.message : String(err), 'moderate')}` }) + '\n');
     return 1;
   }
 }
@@ -814,11 +815,11 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       const code = (err as NodeJS.ErrnoException).code;
       process.stderr.write(code === 'ENOENT'
         ? `Error: plan file not found: ${absPlan}\n`
-        : `Error: cannot resolve --plan-file path: ${err instanceof Error ? err.message : String(err)}\n`);
+        : `Error: cannot resolve --plan-file path: ${redact(err instanceof Error ? err.message : String(err), 'moderate')}\n`);
       process.exit(2);
     }
     try { assertInsideRoot(realPlan, '--plan-file'); }
-    catch (e) { process.stderr.write(`Error: ${e instanceof Error ? e.message : String(e)}\n`); process.exit(2); }
+    catch (e) { process.stderr.write(`Error: ${redact(e instanceof Error ? e.message : String(e), 'moderate')}\n`); process.exit(2); }
     let currency = 'USD';
     try {
       const cfg = await loadConfig();
@@ -830,7 +831,7 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
     try {
       context = await runSteps(buildCostImpactPipelineSteps({ planFile: realPlan, currency }));
     } catch (e) {
-      process.stderr.write(`Error: ${e instanceof Error ? e.message : String(e)}\n`);
+      process.stderr.write(`Error: ${redact(e instanceof Error ? e.message : String(e), 'moderate')}\n`);
       process.exit(1);
     }
     const impact = extractCostImpact(context);
@@ -2305,7 +2306,7 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
       try {
         context = await runSteps(buildScanPipelineSteps({}));
       } catch (e) {
-        process.stdout.write(JSON.stringify({ command: 'recommend', status: 'error', error: e instanceof Error ? e.message : String(e) }) + '\n');
+        process.stdout.write(JSON.stringify({ command: 'recommend', status: 'error', error: redact(e instanceof Error ? e.message : String(e), 'moderate') }) + '\n');
         return 1;
       }
       const prompt = buildRecommendAnalysisPrompt(context);

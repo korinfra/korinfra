@@ -33,6 +33,7 @@ vi.mock('../../../src/aws/cost-explorer.js', () => ({
 
 vi.mock('../../../src/redaction/index.js', () => ({
   redactObject: vi.fn((obj: unknown) => obj),
+  redact: vi.fn((text: string) => text),
 }));
 
 vi.mock('../../../src/storage/db.js', () => ({

@@ -1,4 +1,9 @@
 version: 2
+# Security note: CISA and Chainguard recommend a minimum 72-hour delay before
+# auto-merging Dependabot PRs. Most compromised packages are yanked within hours
+# of discovery. A 72-hour buffer catches the majority of cases.
+# To enforce this, add a branch protection rule requiring the "pr-age-check" status
+# check (or equivalent time-delay workflow) before auto-merge.
 updates:
   # npm dependencies: monthly updates, tightly grouped to minimize CI runs
   - package-ecosystem: npm

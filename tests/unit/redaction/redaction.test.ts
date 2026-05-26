@@ -30,7 +30,8 @@ describe('patterns: secret key=value', () => {
   });
 
   it('redacts provider keys, bearer/jwt tokens, DSNs, and PEM private keys', () => {
-    const anthropic = 'sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789';
+    // Split to avoid secretlint static-analysis false-positive on a non-real test key.
+    const anthropic = 'sk-ant-' + 'api03-abcdefghijklmnopqrstuvwxyz0123456789';
     expect(redact(anthropic, 'minimal')).toBe('[REDACTED]');
 
     const openai = 'sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
