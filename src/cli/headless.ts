@@ -194,7 +194,7 @@ function setNestedConfigValue(obj: Record<string, unknown>, dotPath: string, raw
   const lower = raw.toLowerCase();
   if (lower === 'true') cursor[last] = true;
   else if (lower === 'false') cursor[last] = false;
-  else if (!isNaN(Number(raw)) && raw.trim() !== '') cursor[last] = Number(raw);
+  else if (Number.isFinite(Number(raw)) && raw.trim() !== '') cursor[last] = Number(raw);
   else if (isArrayConfigKey(dotPath)) cursor[last] = raw.split(',').map((s) => s.trim()).filter(Boolean);
   else cursor[last] = raw;
 }
@@ -841,7 +841,6 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
 
     const effectiveCiFmt = await resolveEffectiveFormat(rawCiFormat);
     if (effectiveCiFmt !== null) {
-      if (shouldFailOnCritical) process.exitCode = 1;
       if (failOn === 'partial') {
         process.stderr.write('[korinfra] Warning: --fail-on partial is not applicable to cost-impact\n');
       }
@@ -886,10 +885,14 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       }
       const ciFormatted = createFormatter(format).format(scanReport);
       if (resolvedCiOutput !== null) {
-        if (writeFormattedText(ciFormatted, format, resolvedCiOutput)) return true;
+        if (writeFormattedText(ciFormatted, format, resolvedCiOutput)) {
+          if (shouldFailOnCritical) process.exitCode = 1;
+          return true;
+        }
       } else {
         process.stdout.write(ciFormatted);
       }
+      if (shouldFailOnCritical) process.exitCode = 1;
       return true;
     }
 

@@ -13,7 +13,6 @@ import { saveConfig } from '../../config/index.js';
 import { defaults } from '../../config/defaults.js';
 import { getDb } from '../../storage/db.js';
 import { logger } from '../../utils/logger.js';
-import { checkNoSymlink } from '../../utils/safe-fs.js';
 import { safeReadFile, safeWriteFile } from '../../utils/safe-fs.js';
 
 // ─── Profile detection ────────────────────────────────────────────────────────
@@ -137,21 +136,22 @@ export async function writekorinfraConfig(
       envSaved = true;
 
       // Add sensitive files to .gitignore
+      // Use safeReadFile + safeWriteFile (O_NOFOLLOW) to close the TOCTOU window
+      // between a lstat check and the subsequent read/write on the same path.
       const gitignorePath = path.join(cwd, '.gitignore');
       const entriesToAdd = ['.korinfra/.env', '.korinfra/data.db'];
-      checkNoSymlink(gitignorePath);
       try {
-        const existing = fs.readFileSync(gitignorePath, 'utf8');
+        const existing = safeReadFile(gitignorePath);
         const lines = existing.split('\n').map((l) => l.trim());
         const missing = entriesToAdd.filter((e) => !lines.includes(e));
         if (missing.length > 0) {
           const suffix = existing.endsWith('\n') ? '' : '\n';
-          fs.writeFileSync(gitignorePath, existing + suffix + missing.join('\n') + '\n', 'utf8');
+          safeWriteFile(gitignorePath, existing + suffix + missing.join('\n') + '\n', { mode: 0o644, dirMode: 0o755 });
         }
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
         logger.debug({}, '[init] .gitignore not found, creating it');
-        fs.writeFileSync(gitignorePath, entriesToAdd.join('\n') + '\n', 'utf8');
+        safeWriteFile(gitignorePath, entriesToAdd.join('\n') + '\n', { mode: 0o644, dirMode: 0o755 });
       }
     }
   }

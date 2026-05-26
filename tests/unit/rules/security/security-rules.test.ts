@@ -370,15 +370,15 @@ describe('Lambda security rules — VPC, DLQ, hardcoded credentials, SG', () => 
     expect(rule.evaluate(makeTf('aws_lambda_function', { vpc_config: { subnet_ids: ['subnet-abc'], security_group_ids: ['sg-12345678'] } }))).toBe(false);
   });
 
-  it('LAM-SEC-003 fires when DLQ absent, does not fire when present', () => {
-    const rule = lambdaRules.find((r) => r.id === 'LAM-SEC-003')!;
+  it('LAMBDA-SEC-001 fires when DLQ absent, does not fire when present', () => {
+    const rule = lambdaRules.find((r) => r.id === 'LAMBDA-SEC-001')!;
     expect(rule.evaluate(makeTf('aws_lambda_function', { function_name: 'my-func', runtime: 'nodejs20.x' }))).toBe(true);
     expect(rule.evaluate(makeTf('aws_lambda_function', { dead_letter_config: {} }))).toBe(false);
     expect(rule.evaluate(makeTf('aws_lambda_function', { dead_letter_config: { target_arn: 'arn:aws:sqs:us-east-1:123456789012:my-dlq' } }))).toBe(false);
   });
 
-  it('LAM-SEC-004 fires when VPC but no security group, does not fire when SGs present or no VPC', () => {
-    const rule = lambdaRules.find((r) => r.id === 'LAM-SEC-004')!;
+  it('LAMBDA-SEC-002 fires when VPC but no security group, does not fire when SGs present or no VPC', () => {
+    const rule = lambdaRules.find((r) => r.id === 'LAMBDA-SEC-002')!;
     expect(rule.evaluate(makeTf('aws_lambda_function', { vpc_config: { subnet_ids: ['subnet-abc'], security_group_ids: [] } }))).toBe(true);
     expect(rule.evaluate(makeTf('aws_lambda_function', { vpc_config: { subnet_ids: ['subnet-abc'], security_group_ids: ['sg-12345678'] } }))).toBe(false);
     expect(rule.evaluate(makeTf('aws_lambda_function', { function_name: 'no-vpc' }))).toBe(false);

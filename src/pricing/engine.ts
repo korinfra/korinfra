@@ -65,7 +65,12 @@ export class CostEngine {
       }
 
       case 'ebs_snapshot': {
-        const sizeGB = floatValue(cfg['volume_size']) || floatValue(cfg['size_gb']);
+        // Prefer volume_size; fall back to size_gb only when volume_size key is absent —
+        // using || would treat an explicit 0 as absent (falsy-zero bug).
+        const rawVol = cfg['volume_size'];
+        const sizeGB = (rawVol !== null && rawVol !== undefined)
+          ? floatValue(rawVol)
+          : floatValue(cfg['size_gb']);
         const snapshotCost = sizeGB * EBS_SNAPSHOT_PER_GB;
         if (!Number.isFinite(snapshotCost) || snapshotCost < 0) return 0;
         return snapshotCost;
@@ -102,7 +107,13 @@ export class CostEngine {
       }
 
       case 'elasticache_cluster': {
-        const numNodes = Math.floor(floatValue(cfg['num_cache_nodes'])) || 1;
+        // Distinguish absent (→ default 1) from explicit 0 (stopped cluster, still price as 1
+        // since AWS charges for the node count when the cluster is stopped). Using || would
+        // treat explicit 0 the same as absent (falsy-zero bug).
+        const rawNodes = cfg['num_cache_nodes'];
+        const numNodes = (rawNodes !== null && rawNodes !== undefined)
+          ? Math.max(1, Math.floor(floatValue(rawNodes)))
+          : 1;
         return estimateElastiCacheCost(this.client, resource.instanceType, numNodes, resource.region);
       }
 
@@ -141,9 +152,14 @@ export class CostEngine {
         return estimateEIPCost(resource.state === 'associated');
 
       case 'ecs_service': {
-        // For Fargate, estimate based on task CPU/memory if available, otherwise use defaults
-        const taskCpuVcpus = floatValue(cfg['task_cpu']) || 0.25;
-        const taskMemoryGB = floatValue(cfg['task_memory']) / 1024 || 0.5;
+        // For Fargate, estimate based on task CPU/memory if available, otherwise use defaults.
+        // Fargate rejects 0 vCPU / 0 MB memory, so an explicit 0 is treated as invalid and
+        // falls back to the minimum (0.25 vCPU / 0.5 GB). The null/undefined guard distinguishes
+        // absent (key not set → default) from present-but-zero (invalid → also default).
+        const rawCpu = cfg['task_cpu'];
+        const rawMem = cfg['task_memory'];
+        const taskCpuVcpus = (rawCpu !== null && rawCpu !== undefined) ? (floatValue(rawCpu) || 0.25) : 0.25;
+        const taskMemoryGB = (rawMem !== null && rawMem !== undefined) ? (floatValue(rawMem) / 1024 || 0.5) : 0.5;
         const desiredCount = cfg['desired_count'] !== null && cfg['desired_count'] !== undefined ? floatValue(cfg['desired_count']) : 1;
         return estimateECSCost(taskCpuVcpus, taskMemoryGB) * desiredCount;
       }

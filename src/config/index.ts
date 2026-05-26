@@ -168,7 +168,7 @@ function setByPath(obj: Record<string, unknown>, dotPath: string, value: string)
   const lower = value.toLowerCase();
   if (lower === 'true') cursor[last] = true;
   else if (lower === 'false') cursor[last] = false;
-  else if (!isNaN(Number(value)) && value.trim() !== '') cursor[last] = Number(value);
+  else if (Number.isFinite(Number(value)) && value.trim() !== '') cursor[last] = Number(value);
   else if (value.includes(',')) cursor[last] = value.split(',').map((s) => s.trim()).filter(Boolean);
   else cursor[last] = value;
 }

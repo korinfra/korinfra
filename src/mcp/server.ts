@@ -101,8 +101,11 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   try {
     const cfg = await loadConfig();
     mcpConfig = cfg.mcp;
-  } catch {
-    // Use defaults if config load fails
+  } catch (err) {
+    process.stderr.write(
+      `[korinfra] Warning: failed to load MCP config (using defaults): ` +
+      `${err instanceof Error ? err.message : String(err)}\n`,
+    );
     mcpConfig = { session_cost_limit: 1000, max_sessions: 100, http_rate_limit: 300, session_idle_timeout_ms: 1_800_000, max_body_size: 10 * 1024 * 1024 };
   }
 
@@ -502,14 +505,12 @@ async function startHttp(port: number, mcpConfig: { session_cost_limit: number; 
               pendingCleanup.timeout = null;
             }
             sessions.delete(tempKey);
-            sessions.set(id, {
-              server: sessionServer,
-              transport: sessionTransport,
-              lastActivityAt: Date.now(),
-              toolCallCost: 0,
-              closing: false,
-              ip: clientIp,
-            });
+            // Reuse the same object so mutations (e.g. toolCallCost) on the local `session`
+            // reference during this request are visible to future requests under the real ID.
+            // session is always assigned before connect() is called (and thus before this
+            // callback fires) — the non-null assertion is safe.
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+            sessions.set(id, session!);
           },
         });
 

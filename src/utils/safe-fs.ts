@@ -23,7 +23,12 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
-const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+const _rawNoFollow = fsConstants.O_NOFOLLOW;
+// Warn on non-Windows platforms where O_NOFOLLOW should always be present.
+if (_rawNoFollow === undefined && process.platform !== 'win32') {
+  process.stderr.write('[korinfra] WARNING: O_NOFOLLOW not available on this platform — symlink protection is disabled\n');
+}
+const NOFOLLOW: number = _rawNoFollow ?? 0;
 
 function ignoreUnsupported(err: unknown): void {
   const code = (err as NodeJS.ErrnoException).code;

@@ -631,8 +631,8 @@ describe('synthesizeResource — aws_ecs_service', () => {
       },
     });
     const synthBefore = synthesizeResource(serviceChange, 'before', 'us-east-1', index);
-    expect(synthBefore!.costStatus).toBe('partial-unknown');
-    expect(synthBefore!.resource.configuration['task_cpu']).toBeUndefined();
+    expect(synthBefore!.costStatus).toBe('known');
+    expect(synthBefore!.resource.configuration['task_cpu']).toBe(4); // 4096 / 1024
     expect(synthBefore!.warnings).toBeUndefined();
 
     // After side should still resolve correctly.

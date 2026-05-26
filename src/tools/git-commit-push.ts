@@ -8,11 +8,11 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, appendFileSync, realpathSync } from 'node:fs';
+import { closeSync, existsSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { jsonResult, errorResult } from './types.js';
+import { assertInsideRoot, jsonResult, errorResult } from './types.js';
 import type { ToolDefinition } from './types.js';
-import { checkNoSymlink } from '../utils/safe-fs.js';
+import { safeReadFile, safeOpenAppend } from '../utils/safe-fs.js';
 
 function run(args: string[], cwd: string): string {
   const result = spawnSync('git', args, { encoding: 'utf8', cwd, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -21,8 +21,8 @@ function run(args: string[], cwd: string): string {
   return result.stdout;
 }
 
-/** Ensure .korinfra/ is listed in .gitignore at git repo root. */
-function ensureGitignore(cwd: string): void {
+/** Ensure .korinfra/ is listed in .gitignore at git repo root. Returns the repo root. */
+function ensureGitignore(cwd: string): string {
   // Always write to git root, not TF subdirectory — subdirs don't need it.
   let repoRoot: string;
   try {
@@ -32,21 +32,23 @@ function ensureGitignore(cwd: string): void {
   }
   const gitignorePath = path.join(repoRoot, '.gitignore');
   const entry = '.korinfra/';
-  checkNoSymlink(gitignorePath);
-  // Read without a prior existsSync check to avoid TOCTOU race condition.
+  // Use safeReadFile (O_NOFOLLOW) to read; safeOpenAppend (O_NOFOLLOW) to write.
+  // This closes the TOCTOU window between the old checkNoSymlink+readFileSync/appendFileSync pattern.
   let existing = '';
   try {
-    existing = readFileSync(gitignorePath, 'utf8');
+    existing = safeReadFile(gitignorePath);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-    // ENOENT — appendFileSync below will create the file
+    // ENOENT — safeOpenAppend below will create the file
   }
-  if (!existing.includes(entry)) {
-    appendFileSync(gitignorePath,
-      existing.length === 0
-        ? `# korinfra internal files\n${entry}\n`
-        : `\n# korinfra internal files\n${entry}\n`);
+  if (!existing.split('\n').map((l) => l.trim()).includes(entry)) {
+    const content = existing.length === 0
+      ? `# korinfra internal files\n${entry}\n`
+      : `\n# korinfra internal files\n${entry}\n`;
+    const fd = safeOpenAppend(gitignorePath, { mode: 0o644, dirMode: 0o755 });
+    try { writeFileSync(fd, content); } finally { try { closeSync(fd); } catch { /* ignore */ } }
   }
+  return repoRoot;
 }
 
 export const gitCommitPushTool: ToolDefinition = {
@@ -89,6 +91,9 @@ export const gitCommitPushTool: ToolDefinition = {
         if (cwd === '/' || /^[A-Z]:\\?$/i.test(cwd) || /^\\\\./.test(cwd)) {
           return errorResult('cwd must not be a filesystem root');
         }
+        try { assertInsideRoot(cwd, 'cwd'); } catch (e) {
+          return errorResult(e instanceof Error ? e.message : String(e));
+        }
       } else {
         cwd = process.cwd();
       }
@@ -115,8 +120,11 @@ export const gitCommitPushTool: ToolDefinition = {
         return errorResult('branch name contains invalid characters');
       }
 
-      // Ensure .korinfra/ is excluded from git before staging anything
-      ensureGitignore(cwd);
+      // Ensure .korinfra/ is excluded from git before staging anything.
+      // Returns repoRoot so .gitignore can be staged via its absolute path even when
+      // cwd is a TF subdirectory (running `git add .gitignore` from a subdir would
+      // look for the wrong file).
+      const repoRoot = ensureGitignore(cwd);
 
       // Untrack .korinfra/ if it was previously staged/committed (e.g. older git add -A)
       try {
@@ -154,13 +162,17 @@ export const gitCommitPushTool: ToolDefinition = {
       try { run(['add', '--', '*.tf'], cwd); } catch { /* no .tf files changed */ }
       try { run(['add', '--', '*.tf.json'], cwd); } catch { /* no .tf.json files — expected */ }
       try {
-        const gitignoreStatus = run(['status', '--porcelain', '.gitignore'], cwd).trim();
-        if (gitignoreStatus) run(['add', '.gitignore'], cwd);
+        const absGitignore = path.join(repoRoot, '.gitignore');
+        const gitignoreStatus = run(['status', '--porcelain', absGitignore], cwd).trim();
+        if (gitignoreStatus) run(['add', '--', absGitignore], cwd);
       } catch { /* ignore */ }
 
       // Check if there's anything to commit
       const status = run(['status', '--porcelain'], cwd);
       if (!status.trim()) {
+        if (originalBranch && originalBranch !== finalBranch) {
+          try { run(['checkout', originalBranch], cwd); } catch { /* ignore — non-fatal */ }
+        }
         return jsonResult({ branch: finalBranch, committed: false, note: 'No Terraform file changes to commit' });
       }
 

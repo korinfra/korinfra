@@ -126,7 +126,8 @@ function metadataHttpTokens(after: Record<string, unknown>): string {
   return '';
 }
 
-const NOW = new Date().toISOString();
+// NOTE: do not capture a module-level timestamp — synthesizeResource is called
+// in long-running MCP server processes and each call needs a fresh timestamp.
 
 // ---------------------------------------------------------------------------
 // Task-definition index (cross-resource resolution for aws_ecs_service)
@@ -147,7 +148,9 @@ export type TaskDefIndex = Map<string, TaskDefIndexEntry>;
  *   4. ARN ("arn:aws:ecs:...") — only when known at plan time
  *
  * Skips entries with unknown or zero CPU/memory (can't produce a valid cost).
- * Skips destroy/no-op/read actions (their after state is irrelevant).
+ * Destroy actions are indexed using the before state so that the service's
+ * before-side lookup can resolve the task def specs when both resources are
+ * being destroyed in the same plan.
  */
 export function buildTaskDefIndex(
   resourceChanges: readonly TerraformResourceChange[],
@@ -158,24 +161,27 @@ export function buildTaskDefIndex(
   for (const rc of resourceChanges) {
     if (rc.type !== 'aws_ecs_task_definition') continue;
     const action = resolveAction(rc.change.actions);
-    if (action === 'destroy' || action === 'no-op' || action === 'read') continue;
+    if (action === 'no-op' || action === 'read') continue;
 
-    const after = rc.change.after;
-    if (after === null || after === undefined) continue;
+    // For destroy actions, index the before state (what is currently deployed).
+    // For create/update/replace, index the after state (what will be deployed).
+    const payload = action === 'destroy' ? rc.change.before : rc.change.after;
+    if (payload === null || payload === undefined) continue;
 
-    const afterUnknown = rc.change.after_unknown ?? {};
+    // after_unknown only applies to non-destroy actions (before state is fully known).
+    const afterUnknown = action === 'destroy' ? {} : (rc.change.after_unknown ?? {});
 
     if (afterUnknown['cpu'] === true || afterUnknown['memory'] === true) continue;
 
-    const cpuUnits = floatValue(after['cpu']);
-    const memoryMb = floatValue(after['memory']);
+    const cpuUnits = floatValue(payload['cpu']);
+    const memoryMb = floatValue(payload['memory']);
     if (cpuUnits <= 0 || memoryMb <= 0) continue;
 
     const entry: TaskDefIndexEntry = { cpuUnits, memoryMb };
 
     index.set(rc.address, entry);
 
-    const family = asStr(after['family']);
+    const family = asStr(payload['family']);
     if (family !== '' && afterUnknown['family'] !== true) {
       if (!ambiguousFamilies.has(family)) {
         if (index.has(family)) {
@@ -188,13 +194,13 @@ export function buildTaskDefIndex(
           index.set(family, entry);
         }
       }
-      const revision = floatValue(after['revision']);
+      const revision = floatValue(payload['revision']);
       if (revision > 0 && afterUnknown['revision'] !== true) {
         index.set(`${family}:${revision}`, entry);
       }
     }
 
-    const arn = asStr(after['arn']);
+    const arn = asStr(payload['arn']);
     if (arn !== '' && afterUnknown['arn'] !== true) {
       index.set(arn, entry);
     }
@@ -248,6 +254,7 @@ export function synthesizeResource(
   })();
 
   const normalizedType = normalizeResourceType(change.type);
+  const now = new Date().toISOString();
   const baseResource: Omit<Resource, 'type' | 'instanceType' | 'configuration'> = {
     id: change.address,
     arn: '',
@@ -255,8 +262,8 @@ export function synthesizeResource(
     region,
     state: 'planned',
     tags,
-    launchTime: NOW,
-    collectedAt: NOW,
+    launchTime: now,
+    collectedAt: now,
   };
 
   const tfResource: TerraformResource = {
@@ -441,16 +448,41 @@ export function synthesizeResource(
       // Preserve desired_count=0 (stopped service, $0 cost). Only fall back to 1
       // when the field is absent entirely (null/undefined) from the plan.
       const rawDesiredCount = floatValue(after['desired_count']);
-      const desiredCount = after['desired_count'] === null || after['desired_count'] === undefined ? 1 : rawDesiredCount;
+      // after['desired_count'] === true is Terraform's boolean unknown marker — treat as absent.
+      const desiredCount = (after['desired_count'] === null || after['desired_count'] === undefined || after['desired_count'] === true) ? 1 : rawDesiredCount;
       const configuration: Record<string, unknown> = { desired_count: desiredCount };
 
       let costStatus: CostStatus = 'partial-unknown';
       let warnings: string[] | undefined;
 
-      // Only resolve against the index for the after (future) side.
-      // The before state represents deployed reality whose task def is not in
-      // this plan's index — passing the index for before would risk resolving
-      // an old service to new task-def specs when the family name collides.
+      // Resolve task definition specs from the plan index.
+      //
+      // after-side: full resolution with unknown-ARN heuristic and warnings.
+      // before-side: try direct lookup then ARN→family fallback; no warnings.
+      //   The before state represents the currently-deployed service. Its task_definition
+      //   field holds a full ARN (Terraform state) or a bare family name. buildTaskDefIndex
+      //   now includes destroy actions (indexed from before state), so a co-destroyed task
+      //   def is resolvable here. When resolved, costStatus is upgraded to 'known' so
+      //   destroy/replace savings are included in the net-delta total.
+      if (taskDefIndex !== undefined && side === 'before') {
+        const taskDefRef = asStr(after['task_definition']);
+        if (taskDefRef !== '') {
+          let entry = taskDefIndex.get(taskDefRef);
+          // Terraform state stores the full ARN (e.g. arn:aws:ecs:…:task-definition/api:7)
+          // in the before-state, but the index is keyed by family name and after-state ARN.
+          // Fall back to extracting the family from the ARN so destroy/replace savings resolve.
+          if (entry === undefined && taskDefRef.includes(':task-definition/')) {
+            const tdSuffix = taskDefRef.split(':task-definition/')[1] ?? '';
+            const family = tdSuffix.split(':')[0] ?? '';
+            if (family !== '') entry = taskDefIndex.get(family);
+          }
+          if (entry !== undefined) {
+            configuration['task_cpu'] = entry.cpuUnits / 1024;
+            configuration['task_memory'] = entry.memoryMb;
+            costStatus = 'known';
+          }
+        }
+      }
       if (taskDefIndex !== undefined && side === 'after') {
         const taskDefUnknown = isUnknown(afterUnknown, 'task_definition');
         const taskDefRef = taskDefUnknown ? '' : asStr(after['task_definition']);
