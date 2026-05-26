@@ -41,6 +41,8 @@ import { getRecommendationById, listPendingRecommendations, listRecommendations 
 import { buildAgentPrompt, detectGitHubRepo } from './commands/fix-core.js';
 import { fixTools } from '../tools/index.js';
 import { assertInsideRoot } from '../tools/types.js';
+import { getComputeOptimizerRecommendationsTool } from '../tools/get-compute-optimizer-recommendations.js';
+import { readPersistedTokenData, getTokenFilePath, getTokenFileMtimeMs, revokeToken } from '../mcp/token.js';
 import type { PipelineContext, PipelineStep } from './components/DirectPipeline.js';
 import { parseArg, hasFlag } from './utils/parseArgs.js';
 import { validateRegions } from './utils/validateRegions.js';
@@ -88,6 +90,8 @@ function loadHeadlessConfigFile(configFile: string): Record<string, string> {
   let fd: number | undefined;
   try {
     checkNoSymlink(realPath);
+    // lgtm[js/insecure-temporary-file] — O_RDONLY cannot create a file; CodeQL
+    // false-positives here because tests mock process.cwd() to os.tmpdir().
     fd = fs.openSync(realPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) {
@@ -1061,7 +1065,7 @@ export async function runHeadlessTextCommand(command: string, commandArgs: strin
       if (hasFlag(commandArgs, '--refresh')) {
         process.stderr.write('[korinfra] note: --refresh is ignored when --source is set\n');
       }
-      const { getComputeOptimizerRecommendationsTool } = await import('../tools/get-compute-optimizer-recommendations.js');
+      // getComputeOptimizerRecommendationsTool is statically imported above
       const handlerArgs: Record<string, unknown> = {};
       try {
         const cfg = await loadConfig();
@@ -1565,7 +1569,7 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
       const action = commandArgs[1];
 
       if (action === 'status') {
-        const { readPersistedTokenData, getTokenFilePath, getTokenFileMtimeMs } = await import('../mcp/token.js');
+        // readPersistedTokenData, getTokenFilePath, getTokenFileMtimeMs are statically imported above
         const filePath = getTokenFilePath();
         const envOverride = Boolean(process.env['MCP_AUTH_TOKEN']);
         const data = envOverride ? null : readPersistedTokenData();
@@ -1592,7 +1596,7 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
         process.stderr.write('korinfra mcp token: MCP_AUTH_TOKEN is set; unset it to rotate the persisted file.\n');
         process.exit(2);
       }
-      const { revokeToken, getTokenFilePath } = await import('../mcp/token.js');
+      // revokeToken, getTokenFilePath are statically imported above
       try {
         const result = revokeToken();
         writeLines([
@@ -2168,7 +2172,7 @@ export async function runJsonCommand(command: string, commandArgs: string[]): Pr
       if (hasFlag(commandArgs, '--refresh')) {
         process.stderr.write('[korinfra] note: --refresh is ignored when --source is set\n');
       }
-      const { getComputeOptimizerRecommendationsTool } = await import('../tools/get-compute-optimizer-recommendations.js');
+      // getComputeOptimizerRecommendationsTool is statically imported above
       const handlerArgs: Record<string, unknown> = {};
       // loadConfig throws if no .korinfra/config.yaml — treat as "use env defaults"
       try {
@@ -2917,7 +2921,7 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
       const action = commandArgs[1];
 
       if (action === 'status') {
-        const { readPersistedTokenData, getTokenFilePath, getTokenFileMtimeMs } = await import('../mcp/token.js');
+        // readPersistedTokenData, getTokenFilePath, getTokenFileMtimeMs are statically imported above
         const filePath = getTokenFilePath();
         const envOverride = Boolean(process.env['MCP_AUTH_TOKEN']);
         const data = envOverride ? null : readPersistedTokenData();
@@ -2950,7 +2954,7 @@ Output: for each change: resource | tag | value | AWS CLI command | Terraform ed
         }) + '\n');
         return 2;
       }
-      const { revokeToken, getTokenFilePath } = await import('../mcp/token.js');
+      // revokeToken, getTokenFilePath are statically imported above
       try {
         const result = revokeToken();
         process.stdout.write(JSON.stringify({
