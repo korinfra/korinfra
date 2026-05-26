@@ -2,6 +2,10 @@
 
 All notable changes to KorInfra are documented here.
 
+## [0.1.3] — 2026-05-26
+
+<!-- Add release notes for v0.1.3 here before merging the PR -->
+
 ## [Unreleased]
 
 ### 🔮 New features
